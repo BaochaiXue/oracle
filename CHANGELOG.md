@@ -2,6 +2,10 @@
 
 ## 0.17.1 — Unreleased
 
+### Changed
+
+- Dependencies: update OpenAI, Markdansi, Shiki, Hono, Fast URI, protobufjs, Vite, Puppeteer, Chrome DevTools protocol, Oxc tooling, tsx, and pnpm.
+
 ### Fixed
 
 - Browser: keep `--browser-thinking-time extra-high` as Extra High (non-Pro) on GPT-5.6 Sol; reserve `heavy` for explicit Pro selection. Fixes #353.
