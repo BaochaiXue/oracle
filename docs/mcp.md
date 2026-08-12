@@ -6,6 +6,13 @@
 
 Claude Code can call `oracle-mcp` and ask a subscription-backed ChatGPT browser session for a second opinion. Use the `chatgpt-pro-heavy` preset when you want a compact MCP request that targets ChatGPT browser mode, the current Pro picker alias, and Pro Extended thinking time. The preset is intentionally boring at the API layer: it is a shortcut for existing browser-mode fields, not a new model id.
 
+For this fork's unattended GPT-5.6 Pro transport, set
+`browser.transport: "opencli"` in the Oracle user config and call `consult` with
+`engine: "browser"`, `model: "gpt-5-pro"`, and
+`browserModelStrategy: "select"`. Transport selection is an operator-level
+config boundary rather than an agent-supplied MCP field. The current ChatGPT and
+OpenCLI receipt remains the UI-native short label `Pro`.
+
 ## Tools
 
 ### `chatgpt_image`
@@ -39,7 +46,7 @@ Claude Code can call `oracle-mcp` and ask a subscription-backed ChatGPT browser 
 
 #### Long browser consults from agents
 
-Browser-backed GPT-5.5 Pro consults can legitimately run for many minutes. Some MCP clients show little progress while a tool call is active, so agents should treat a long Oracle call as a running browser job, not as a failed step. Start with `dryRun:true` when configuring a new agent, prefer `preset:"chatgpt-pro-heavy"` or `engine:"browser"` explicitly, and use the shared session store (`sessions`, `oracle status`, or `oracle session <id>`) before retrying a prompt. If the browser control plan says Oracle will launch visible Chrome, use attach/remote Chrome when the operator is actively using the computer.
+Browser-backed GPT-5.6 Pro consults can legitimately run for many minutes. Some MCP clients show little progress while a tool call is active, so agents should treat a long Oracle call as a running browser job, not as a failed step. With the OpenCLI transport, use `engine:"browser"` and `model:"gpt-5-pro"` explicitly, then inspect the shared session store (`sessions`, `oracle status`, or `oracle session <id>`) before retrying a prompt. The legacy `chatgpt-pro-heavy` preset retains its upstream model/effort contract. If the selected browser plan says Oracle will launch visible Chrome, that is the explicit CDP path; use attach/remote Chrome only when the operator is present.
 
 #### ChatGPT images from agents
 

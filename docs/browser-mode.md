@@ -2,20 +2,24 @@
 
 Oracle’s `--engine browser` supports four different execution paths:
 
-- **ChatGPT OpenCLI transport** (GPT-\* Pro text consults): delegates the browser boundary to an authenticated OpenCLI Browser Bridge session, without direct CDP attachment or a Chrome debugging approval prompt.
+- **ChatGPT OpenCLI transport** (GPT-5.6 Pro text consults): delegates the browser boundary to an authenticated OpenCLI Browser Bridge session, without direct CDP attachment or a Chrome debugging approval prompt.
 - **ChatGPT launcher mode** (GPT-\* models): Oracle launches Chrome itself and drives the ChatGPT web UI over CDP.
 - **ChatGPT attach-running mode** (GPT-\* models): Oracle attaches to your already-running local Chrome session through Chrome’s local remote-debugging toggle, opens a dedicated tab, and leaves the browser process/profile alone.
 - **Gemini web mode** (Gemini models): talks directly to `gemini.google.com` using your signed-in Chrome cookies (no ChatGPT automation).
 
 If you’re running Gemini, also see `docs/gemini.md`.
 
-## OpenCLI Browser Bridge transport (unattended Pro)
+## OpenCLI Browser Bridge transport (unattended GPT-5.6 Pro)
 
-Use this transport when Oracle should be able to start a ChatGPT Pro consult,
+Use this transport when Oracle should be able to start a GPT-5.6 Pro consult,
 harvest its answer, and continue the same conversation later without a person
 being present to approve direct Chrome debugging. OpenCLI owns browser access;
 Oracle remains the sole owner of prompt assembly, sessions, integrity records,
 transcripts, follow-up lineage, and recovery.
+
+This is the fork's defining architecture choice, not just a browser shortcut.
+See [Why the OpenCLI transport lives inside Oracle](opencli-transport.md) for the
+ownership boundary, sidecar tradeoff, failure states, and privacy contract.
 
 Prerequisites:
 
@@ -43,10 +47,25 @@ Inspect that content first, or use `--replace` when you deliberately want the
 checkout's version. The transport preflights OpenCLI, Browser Bridge, and the
 adapter contract before model selection or submission.
 
+### GPT-5.6 Pro naming
+
+The human-facing target is **GPT-5.6 Pro**. The browser boundary deliberately
+keeps the names that the live UI and OpenCLI expose:
+
+- `gpt-5-pro` is Oracle's stable browser alias for the current Pro picker
+  target. It is not an API model id.
+- `pro` is OpenCLI's model enum.
+- `Pro` is the visible ChatGPT composer label and the exact model evidence in
+  the submission receipt.
+
+Do not rewrite captured `Pro` evidence into a guessed version string. Oracle's
+upstream `gpt-5.5-pro` API model and GPT-5.6 API reasoning mode are separate
+contracts from this browser lane.
+
 For each turn, Oracle writes a mode-0600 sealed payload, manifest, and transport
 journal inside the Oracle session. The private prompt and file contents never
 appear in a subprocess argument. Under one Oracle-owned lock, OpenCLI selects
-Pro, the companion adapter verifies that the exact submission tab visibly says
+the current GPT-5.6 Pro tier, the companion adapter verifies that the exact submission tab visibly says
 `Pro`, transfers only the sealed files, and returns a structured conversation
 receipt. Answer collection uses read-only `chatgpt detail` calls against that
 receipt, and ephemeral OpenCLI tab leases are closed after every command.
@@ -64,7 +83,7 @@ Oracle does not silently resubmit an ambiguous or accepted turn. For a
 follow-up, Oracle records the prior assistant turn's index and digest before
 dispatch so polling cannot mistake the previous answer for the new one.
 
-The OpenCLI transport is deliberately limited to ChatGPT Pro text consults.
+The OpenCLI transport is deliberately limited to GPT-5.6 Pro text consults.
 Image generation, Deep Research, and same-invocation `--browser-follow-up`
 prompts fail before dispatch; use separate `--followup` sessions for multi-turn
 work. There is no silent fallback to CDP. Select `--browser-transport cdp`

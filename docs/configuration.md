@@ -21,7 +21,7 @@ JSON5 parsing, so trailing commas and comments are allowed.
   },
 
   browser: {
-    transport: "cdp", // cdp | opencli; OpenCLI avoids direct Chrome debugging approval
+    transport: "cdp", // cdp | opencli; OpenCLI is the unattended GPT-5.6 Pro browser lane
     opencliPath: null, // user config only; defaults to opencli on PATH
     chromeProfile: "Default",
     chromePath: null,

@@ -1,57 +1,102 @@
 ---
-title: Overview
+title: Oracle × OpenCLI
 permalink: /
-description: "Oracle bundles your prompt and files so a mythical pro agent — GPT-5.5 Pro, Gemini 3.1 Pro, Claude Opus, and friends — can answer with real repository context. CLI, MCP, browser, and API in one tool."
+description: "A recoverable, unattended browser path from coding agents to ChatGPT GPT-5.6 Pro, with Oracle remaining the canonical session authority."
 ---
 
-## Try it
+# GPT-5.6 Pro without browser babysitting
 
-After installing (`brew install steipete/tap/oracle` or `npm i -g @steipete/oracle`), every consult is a one-liner.
+This fork adds an authenticated OpenCLI Browser Bridge transport to Oracle.
+Coding agents can send a sealed, project-grounded consultation to the current
+ChatGPT GPT-5.6 Pro tier, wait for a long answer, reattach after interruption,
+and continue the same conversation—without making a routine Chrome debugging
+approval click part of the workflow.
+
+It is intentionally **not** a wrapper that owns a shadow conversation. Oracle
+still owns the prompt bundle, authorization, session state, transcript,
+follow-up lineage, and recovery. OpenCLI owns only the browser boundary.
+
+## Try the fork
 
 ```bash
-# Browser path — no API key, drives ChatGPT directly (default: GPT-5.5 Pro).
-oracle --engine browser -p "Review the storage layer for schema drift" --file "src/**/*.ts"
-
-# API path — multi-model cross-check in one run.
-oracle -p "Cross-check the data layer assumptions" \
-  --models gpt-5.5-pro,gemini-3-pro,claude-4.6-sonnet \
-  --file "src/**/*.ts"
-
-# Manual fallback — assemble the bundle and copy it to your clipboard.
-oracle --render --copy -p "Architecture review" --file "src/**/*.ts"
-
-# Sessions you can replay or continue.
-oracle status --hours 72
-oracle session <id> --render
-oracle --followup <id> -p "Re-evaluate with this new context" --file "src/**/*.ts"
+git clone https://github.com/IndelibleVivi/oracle.git
+cd oracle
+git switch codex/opencli-browser-transport
+corepack enable
+pnpm install
+pnpm build
+pnpm link -g
+node scripts/install-opencli-submit-file-adapter.mjs
+opencli validate chatgpt/submit-file
 ```
 
-`--render` emits the assembled markdown, sessions persist machine-readable metadata, and progress stays out of saved answers so pipes remain usable.
+Preview the exact context first:
 
-## What Oracle does
+```bash
+oracle --dry-run summary --files-report \
+  --engine browser \
+  --browser-transport opencli \
+  --model gpt-5-pro \
+  -p "Review the storage layer for schema drift" \
+  --file "src/**/*.ts"
+```
 
-- **One CLI to a stable of pro agents.** GPT-5.5 Pro (default), GPT-5.5, GPT-5.4 Pro, GPT-5.4, GPT-5.2 Pro, GPT-5.1 Pro, GPT-5.1 Codex, Gemini 3.1 Pro, Gemini 3.5 Flash, Gemini 3.1 Flash-Lite, Claude Sonnet 4.6, Claude Opus 4.1 — plus any OpenRouter id.
-- **Engines, plural.** API mode for reliability, browser mode (Chrome over CDP) when you don't want to pay or want the Pro tier, `--render --copy` when neither is an option.
-- **Multi-model in one run.** Aggregate cost, token usage, and lineage across providers in a single command.
-- **Recoverable panels.** `doctor --providers`, `--preflight`, `--route`, and `--allow-partial` make provider/key failures clear without losing successful model output.
-- **Followups + lineage.** Continue from any stored session id or `resp_…` response id; `oracle status` shows parent/child trees.
-- **Sessions you can replay.** Every run is stored under `~/.oracle/sessions/<id>/`. Reattach to long browser runs without re-spending tokens.
-- **Built for coding agents.** Use it from Claude Code, Codex, Cursor, or any MCP host via `oracle-mcp`. Plain stdout JSON envelopes for scripting.
-- **Bundles, not chats.** Globs + excludes + size guards + `--files-report` so you know exactly what is shipped to the model.
-- **Traceable startup.** `--perf-trace` records startup and first-output timing when agent handoffs need performance proof.
+Remove `--dry-run summary` to dispatch. Oracle stores the run under
+`~/.oracle/sessions/`, so a long answer can be recovered or continued later:
+
+```bash
+oracle status --hours 72
+oracle session <id> --render
+oracle --followup <id> -p "Challenge the weakest assumption."
+```
+
+## One authority, one narrow handoff
+
+| Layer           | Owner   | Durable result                                                    |
+| --------------- | ------- | ----------------------------------------------------------------- |
+| Context         | Oracle  | Selected files, rendered payload, and sealed manifest             |
+| Authorization   | Oracle  | Payload digest, target, operation reference, and dispatch journal |
+| Browser         | OpenCLI | Verified `Pro` state and explicit ChatGPT tab submission          |
+| Remote identity | Oracle  | Structured conversation id and URL                                |
+| Recovery        | Oracle  | Detail-only reattach, answer, transcript, and follow-up lineage   |
+
+If the handoff may have submitted but no receipt exists, Oracle stops with an
+ambiguous state. If the receipt exists but answer collection fails, Oracle
+retries read-only detail and does not send the prompt twice. OpenCLI never
+silently falls back to direct CDP.
+
+## Why three Pro names appear
+
+- **GPT-5.6 Pro** is the human-facing current browser target.
+- `gpt-5-pro` is Oracle's stable browser alias for that target.
+- `Pro` / `pro` are the current ChatGPT and OpenCLI wire labels and remain exact
+  evidence in receipts.
+
+The upstream `gpt-5.5-pro` API model/default is a separate contract and has not
+been renamed.
 
 ## Pick your path
 
-- **Trying it.** [Install](install.md) → [Quickstart](quickstart.md). Five minutes from `brew install` to your first answer.
-- **Choosing a model.** The [Mythical Pro Agents](mythical-pro-agents.md) lineup covers when to reach for GPT-5.5 Pro vs. Gemini 3.1 Pro vs. Claude Opus, and what each costs.
-- **Wiring up an agent.** [Agents](agents.md) covers Claude Code, Codex, Cursor, and the `oracle` skill. [MCP](mcp.md) plugs Oracle into any MCP-aware client.
-- **Driving ChatGPT without keys.** [Browser mode](browser-mode.md) walks through manual-login profiles, attach-running, remote browsers, and Deep Research.
-- **Long Pro runs.** [Sessions](sessions.md) and the [followup](followup.md) flow handle background runs, reattach, and lineage.
+- **Understand the fork.** [Oracle × OpenCLI](opencli-transport.md) explains the
+  architecture, split-brain tradeoff, failure contract, privacy boundary, and
+  verification surface.
+- **Run the browser lane.** [Browser Mode](browser-mode.md) covers OpenCLI setup,
+  recovery, and the explicit legacy CDP paths.
+- **Wire a coding agent.** [Agents](agents.md) covers Codex, Claude Code, Cursor,
+  CLI, and MCP patterns.
+- **Learn the session model.** [Sessions](sessions.md) and
+  [Follow-ups](followup.md) cover durable runs and conversation lineage.
+- **Use the broader upstream surface.** [Quickstart](quickstart.md),
+  [Configuration](configuration.md), and [CLI reference](cli-reference.md)
+  include API, render, Gemini, and direct browser modes.
 
-## Why "mythical pro agents"?
+## Upstream and project status
 
-The frontier models marked "Pro" — GPT-5.5 Pro, Gemini 3.1 Pro, Claude Opus, OpenAI Deep Research — are slow, expensive, and gated behind ChatGPT Plus / Pro tiers, separate APIs, or per-token bills that scale fast. Oracle is the single entry point: one config, one session store, one set of flags. Bundle the right files, ask the right model, get a second opinion without remembering which provider charges for what.
+This repository preserves the history and MIT license of
+[steipete/oracle](https://github.com/steipete/oracle). The published
+`@steipete/oracle` npm package, Homebrew formula, and
+[askoracle.sh](https://askoracle.sh) describe the upstream distribution; they do
+not yet install this fork's OpenCLI transport.
 
-## Project
-
-Active development under MIT. The [changelog](https://github.com/steipete/oracle/blob/main/CHANGELOG.md) tracks recent releases. Source on [GitHub](https://github.com/steipete/oracle). Not affiliated with OpenAI, Google, or Anthropic.
+The fork is not affiliated with OpenAI or the OpenCLI project. Account access,
+authentication challenges, and model entitlement remain human-controlled.

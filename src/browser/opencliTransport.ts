@@ -743,13 +743,13 @@ function buildOperationRef(sessionId: string, randomId: string): string {
 function assertSupportedRun(options: BrowserRunOptions): void {
   if (options.generateImagePath) {
     throw blockedError(
-      "OpenCLI transport currently supports Oracle Pro text consultations only, not image generation.",
+      "OpenCLI transport currently supports Oracle GPT-5.6 Pro text consultations only, not image generation.",
       "unsupported-operation",
     );
   }
   if (options.config?.researchMode === "deep") {
     throw blockedError(
-      "OpenCLI transport currently supports Oracle Pro text consultations only, not Deep Research.",
+      "OpenCLI transport currently supports Oracle GPT-5.6 Pro text consultations only, not Deep Research.",
       "unsupported-operation",
     );
   }

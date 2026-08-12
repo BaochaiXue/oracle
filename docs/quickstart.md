@@ -1,17 +1,21 @@
 ---
 title: Quickstart
-description: "From install to first Oracle consult in five minutes — pick API or browser mode, send a bundle, replay the session."
+description: "From install to a recoverable Oracle consult — use this fork's unattended GPT-5.6 Pro lane, an API provider, or a local render."
 ---
 
-This walks through the minimum to get a useful answer back. If you haven't installed Oracle yet, start with [Install](install.md).
+This walks through the minimum to get a useful answer back. The published npm
+and Homebrew packages are upstream Oracle; install this fork from source when
+you want the OpenCLI transport described below. See [Install](install.md) for
+the broader upstream installation paths.
 
 ## 1. Pick a mode
 
-| Mode    | When to use it                                                     | What you need                             |
-| ------- | ------------------------------------------------------------------ | ----------------------------------------- |
-| API     | You have an API key and want reliability + multi-model.            | `OPENAI_API_KEY` (or Gemini / Anthropic). |
-| Browser | You have a ChatGPT Plus/Pro account and want GPT-5.5 Pro for free. | Chrome on macOS / Linux / Windows.        |
-| Render  | Air-gapped review, paste into the model of your choice.            | Just Oracle.                              |
+| Mode            | When to use it                                                                 | What you need                                              |
+| --------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| OpenCLI browser | You want recoverable, unattended GPT-5.6 Pro text consults.                    | This fork, OpenCLI 1.8.3+, Browser Bridge, and Pro access. |
+| API             | You have an API key and want reliable provider automation or multi-model runs. | `OPENAI_API_KEY` or another provider key.                  |
+| Legacy browser  | You need direct CDP features, Gemini web, images, or Deep Research.            | Chrome on macOS, Linux, or Windows.                        |
+| Render          | You want to inspect/copy the bundle without contacting a model.                | Just Oracle.                                               |
 
 If both are available Oracle picks API by default (cheaper to short-circuit). Override per-run with `--engine browser`.
 
@@ -28,7 +32,39 @@ oracle -p "Audit the storage layer for race conditions" \
 
 Oracle prints the assistant's reply on stdout and stores the run under `~/.oracle/sessions/<id>/`.
 
-### Browser mode (no API key)
+### OpenCLI browser mode (unattended GPT-5.6 Pro)
+
+Install this fork and its adapter once:
+
+```bash
+git clone https://github.com/IndelibleVivi/oracle.git
+cd oracle
+git switch codex/opencli-browser-transport
+corepack enable
+pnpm install
+pnpm build
+pnpm link -g
+node scripts/install-opencli-submit-file-adapter.mjs
+opencli validate chatgpt/submit-file
+```
+
+Then send a turn through the authenticated Browser Bridge:
+
+```bash
+oracle --engine browser \
+  --browser-transport opencli \
+  --model gpt-5-pro \
+  --browser-model-strategy select \
+  -p "Audit the storage layer for race conditions" \
+  --file "src/storage/**/*.ts"
+```
+
+`gpt-5-pro` is the stable Oracle browser alias for current GPT-5.6 Pro. The
+live ChatGPT/OpenCLI contract reports the exact UI-native short name `Pro`.
+Oracle stores the conversation receipt and uses detail-only recovery rather
+than silently resubmitting an accepted turn.
+
+### Legacy direct browser mode
 
 First run — log in once, browser stays open:
 
@@ -49,7 +85,10 @@ oracle --engine browser --browser-manual-login \
   --file "src/storage/**/*.ts"
 ```
 
-`--browser-manual-login` skips Keychain cookie copy (no permission popups) and reuses a persistent automation profile under `~/.oracle/browser/`.
+`--browser-manual-login` skips Keychain cookie copy and reuses a persistent
+automation profile under `~/.oracle/browser-profile/`. This is the explicit legacy CDP
+path and can still require browser debugging approval; it is separate from the
+OpenCLI lane above.
 
 ### Render and copy
 
@@ -102,15 +141,18 @@ oracle status --hours 24
 oracle session <id> --render
 ```
 
-For browser runs, `--browser-auto-reattach-*` polls the existing ChatGPT tab when the page redirects mid-load. See [Sessions](sessions.md) for the full lifecycle.
+For OpenCLI runs, `oracle session <id> --render` resumes through read-only
+detail when a conversation receipt already exists. Legacy CDP browser runs can
+use `--browser-auto-reattach-*` to poll an existing ChatGPT tab after a redirect
+or timeout. See [Sessions](sessions.md) for the full lifecycle.
 
 ## 6. Wire it into your coding agent
 
 Drop this in `AGENTS.md` or `CLAUDE.md`:
 
 ```
-- Oracle bundles a prompt plus the right files so a Pro model (GPT-5.5 Pro, Gemini 3 Pro, Claude Opus) can answer. Use when stuck, debugging, or reviewing.
-- Run `npx -y @steipete/oracle --help` once per session before first use.
+- This Oracle fork sends sealed project context to ChatGPT GPT-5.6 Pro through OpenCLI Browser Bridge while Oracle owns sessions, recovery, and follow-up lineage. Use it for difficult debugging, architecture, refactoring, or consequential review.
+- Run `oracle --help` once per session before first use. For unattended browser work, select `--engine browser --browser-transport opencli --model gpt-5-pro` and inspect `oracle status` before retrying a long run.
 ```
 
 Or wire MCP — see [MCP](mcp.md) and [Agents](agents.md).

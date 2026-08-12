@@ -80,7 +80,7 @@ See [OpenAI / Azure / OpenRouter](openai-endpoints.md) and [OpenRouter](openrout
 
 | Flag                                                                           | Purpose                                                                                                                      |
 | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `--browser-transport <opencli\|cdp>`                                           | Use authenticated OpenCLI Browser Bridge for unattended Pro, or Oracle's legacy direct CDP path.                             |
+| `--browser-transport <opencli\|cdp>`                                           | Use authenticated OpenCLI Browser Bridge for unattended GPT-5.6 Pro, or Oracle's legacy direct CDP path.                     |
 | `--chatgpt-url <url>`                                                          | Target a ChatGPT workspace / project folder.                                                                                 |
 | `--browser-model-strategy <select\|current\|ignore>`                           | Control ChatGPT model picker.                                                                                                |
 | `--browser-manual-login`                                                       | Use persistent profile + manual login (no Keychain).                                                                         |
