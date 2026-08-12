@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-export const CONTRACT_VERSION = 1;
+export const CONTRACT_VERSION = 2;
 export const MAX_TOTAL_FILE_BYTES = 20 * 1024 * 1024;
 export const FIXED_COMPOSER_INSTRUCTION =
   "Read every attached file in full. The oracle-submission Markdown file contains the complete authorized Oracle request. Answer that request directly and use the other attachments only as its referenced inputs.";
@@ -18,6 +18,64 @@ export function unwrapEvaluateResult(payload) {
     return payload.data;
   }
   return payload;
+}
+
+export function assistantMarkerFromRows(rows) {
+  if (!Array.isArray(rows)) return null;
+  for (let offset = rows.length - 1; offset >= 0; offset -= 1) {
+    const row = rows[offset];
+    const markdown = String(row?.Text ?? "").trim();
+    if (
+      String(row?.Role ?? "")
+        .trim()
+        .toLowerCase() !== "assistant" ||
+      !markdown
+    )
+      continue;
+    return {
+      index: Number.isFinite(row?.Index) ? Number(row.Index) : undefined,
+      markdown,
+      sha256: createHash("sha256").update(markdown).digest("hex"),
+    };
+  }
+  return null;
+}
+
+export function matchesAssistantBaseline(marker, baselineIndex, baselineSha256) {
+  if (!marker || (!Number.isFinite(baselineIndex) && !baselineSha256)) return false;
+  if (baselineSha256 && marker.sha256 !== baselineSha256) return false;
+  if (
+    Number.isFinite(baselineIndex) &&
+    Number.isFinite(marker.index) &&
+    marker.index !== Number(baselineIndex)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function buildGenerationControlScript() {
+  return `(() => {
+    const isVisible = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const style = window.getComputedStyle(element);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+      return !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+    };
+    return Array.from(document.querySelectorAll('button')).some((button) => {
+      if (!isVisible(button)) return false;
+      const label = [
+        button.getAttribute('aria-label'),
+        button.getAttribute('title'),
+        button.getAttribute('data-testid'),
+        button.innerText,
+      ].filter(Boolean).join(' ').replace(/\\s+/g, ' ').trim();
+      return /stop[-_ ]button/iu.test(label)
+        || /stop generating/iu.test(label)
+        || /停止生成|停止回答|正在思考/iu.test(label)
+        || /^thinking(?:\\.{3}|…)?$/iu.test(label);
+    });
+  })()`;
 }
 
 export function loadSubmissionManifest(manifestPath) {

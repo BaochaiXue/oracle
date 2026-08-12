@@ -27,6 +27,7 @@ pnpm build
 pnpm link -g
 node scripts/install-opencli-submit-file-adapter.mjs
 opencli validate chatgpt/submit-file
+opencli validate chatgpt/oracle-wait
 ```
 
 Preview the exact context first:
@@ -57,12 +58,14 @@ oracle --followup <id> -p "Challenge the weakest assumption."
 | Authorization   | Oracle  | Payload digest, target, operation reference, and dispatch journal |
 | Browser         | OpenCLI | Verified `Pro` state and explicit ChatGPT tab submission          |
 | Remote identity | Oracle  | Structured conversation id and URL                                |
-| Recovery        | Oracle  | Detail-only reattach, answer, transcript, and follow-up lineage   |
+| Recovery        | Oracle  | Single-waiter reattach, answer, transcript, and follow-up lineage |
 
 If the handoff may have submitted but no receipt exists, Oracle stops with an
 ambiguous state. If the receipt exists but answer collection fails, Oracle
-retries read-only detail and does not send the prompt twice. OpenCLI never
-silently falls back to direct CDP.
+starts one read-only waiter against that receipt and does not send the prompt
+twice. The waiter owns one tab for its full lifetime instead of opening and
+closing a tab on every observation. OpenCLI never silently falls back to direct
+CDP.
 
 ## Why three Pro names appear
 

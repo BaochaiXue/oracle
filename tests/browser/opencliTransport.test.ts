@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -28,7 +29,6 @@ function successRunner(
   conversationUrl = "https://chatgpt.com/c/conversation-123",
   delayFollowupAnswer = false,
 ): OpenCliCommandRunner {
-  let postDispatchDetailCalls = 0;
   return async (_executable, args) => {
     calls.push(args);
     const key = args.join(" ");
@@ -37,7 +37,14 @@ function successRunner(
     if (args[0] === "chatgpt" && args[1] === "submit-file" && args.includes("--help")) {
       return {
         stdout:
-          "Usage: opencli chatgpt submit-file <manifest> [options]\n\nArguments:\n  manifest  Path to a mode-0600 Oracle OpenCLI submission manifest\n\nOutput columns: ContractVersion, Status, conversationId, conversationUrl, Model, Files\n",
+          "Usage: opencli chatgpt submit-file <manifest> [options]\n\nArguments:\n  manifest  Path to a mode-0600 Oracle OpenCLI submission manifest\n\nOutput columns: ContractVersion, Status, conversationId, conversationUrl, Model, Files, BaselineAssistantIndex, BaselineAssistantSha256\n",
+        stderr: "",
+      };
+    }
+    if (args[0] === "chatgpt" && args[1] === "oracle-wait" && args.includes("--help")) {
+      return {
+        stdout:
+          "Usage: opencli chatgpt oracle-wait <id> [options]\n\nArguments:\n  id  Conversation ID or full /c/<id> URL\n\nOutput columns: ContractVersion, Status, conversationId, conversationUrl, AssistantIndex, AssistantSha256, Markdown, StableSeconds\n",
         stderr: "",
       };
     }
@@ -51,28 +58,35 @@ function successRunner(
       return {
         stdout: JSON.stringify([
           {
-            ContractVersion: 1,
+            ContractVersion: 2,
             Status: "Submitted",
             conversationId: conversationUrl.split("/c/")[1],
             conversationUrl,
             Model: "Pro",
             Files: 1,
+            BaselineAssistantIndex: delayFollowupAnswer ? 2 : undefined,
+            BaselineAssistantSha256: delayFollowupAnswer
+              ? createHash("sha256").update("Previous answer").digest("hex")
+              : undefined,
           },
         ]),
         stderr: "",
       };
     }
-    if (args[0] === "chatgpt" && args[1] === "detail") {
-      events.push("detail");
-      const dispatched = events.includes("dispatch");
-      if (dispatched) postDispatchDetailCalls += 1;
-      const returnBaseline = delayFollowupAnswer && (!dispatched || postDispatchDetailCalls <= 2);
-      const assistantText = returnBaseline ? "Previous answer" : "Pro answer";
-      const assistantIndex = returnBaseline ? 2 : 4;
+    if (args[0] === "chatgpt" && args[1] === "oracle-wait") {
+      events.push("oracle-wait");
       return {
         stdout: JSON.stringify([
-          { Index: 1, Role: "User", Text: "attached request", Generating: false },
-          { Index: assistantIndex, Role: "Assistant", Text: assistantText, Generating: false },
+          {
+            ContractVersion: 2,
+            Status: "Complete",
+            conversationId: conversationUrl.split("/c/")[1],
+            conversationUrl,
+            AssistantIndex: 4,
+            AssistantSha256: createHash("sha256").update("Pro answer").digest("hex"),
+            Markdown: "Pro answer",
+            StableSeconds: 9,
+          },
         ]),
         stderr: "",
       };
@@ -108,7 +122,6 @@ describe("OpenCliBrowserTransport", () => {
         runCommand: successRunner(calls, events),
         resolveSessionDir: async () => sessionDir,
         randomId: () => "turn-1",
-        sleep: async () => undefined,
         acquireLock: async () => {
           events.push("lock-acquired");
           return {
@@ -129,12 +142,19 @@ describe("OpenCliBrowserTransport", () => {
     expect(calls.map((args) => args.join(" ")).join("\n")).not.toContain(privatePrompt);
     expect(events.indexOf("lock-acquired")).toBeLessThan(events.indexOf("model"));
     expect(events.indexOf("dispatch")).toBeLessThan(events.indexOf("lock-released"));
-    expect(events.indexOf("lock-released")).toBeLessThan(events.indexOf("detail"));
+    expect(events.indexOf("lock-released")).toBeLessThan(events.indexOf("oracle-wait"));
     const submitCall = calls.find(
       (args) => args[0] === "chatgpt" && args[1] === "submit-file" && !args.includes("--help"),
     );
     expect(submitCall).toEqual(expect.arrayContaining(["--site-session", "ephemeral"]));
     expect(submitCall).toEqual(expect.arrayContaining(["--keep-tab", "false"]));
+    const waitCalls = calls.filter(
+      (args) => args[0] === "chatgpt" && args[1] === "oracle-wait" && !args.includes("--help"),
+    );
+    expect(waitCalls).toHaveLength(1);
+    expect(waitCalls[0]).toEqual(expect.arrayContaining(["--site-session", "ephemeral"]));
+    expect(waitCalls[0]).toEqual(expect.arrayContaining(["--keep-tab", "false"]));
+    expect(calls.some((args) => args[0] === "chatgpt" && args[1] === "detail")).toBe(false);
     expect(runtimeHints.at(-1)).toMatchObject({
       browserTransport: "opencli",
       conversationId: "conversation-123",
@@ -170,7 +190,6 @@ describe("OpenCliBrowserTransport", () => {
         runCommand: successRunner(calls, events, storedConversation, true),
         resolveSessionDir: async () => sessionDir,
         randomId: () => "turn-2",
-        sleep: async () => undefined,
         acquireLock: async () => ({
           path: "/test/lock",
           lockId: "lock-2",
@@ -184,13 +203,14 @@ describe("OpenCliBrowserTransport", () => {
     );
     expect(submitCall).toEqual(expect.arrayContaining(["--conversation", storedConversation]));
     expect(submitCall).not.toEqual(expect.arrayContaining(["--new", "true"]));
-    expect(events.filter((event) => event === "detail")).toHaveLength(5);
+    expect(events.filter((event) => event === "oracle-wait")).toHaveLength(1);
+    expect(calls.some((args) => args[0] === "chatgpt" && args[1] === "detail")).toBe(false);
     expect(result.answerMarkdown).toBe("Pro answer");
     expect(result.opencliBaselineAssistantIndex).toBe(2);
     expect(result.opencliBaselineAssistantSha256).toMatch(/^[a-f0-9]{64}$/u);
   });
 
-  it("reattaches through detail only and never selects or dispatches again", async () => {
+  it("reattaches through one waiter command and never selects or dispatches again", async () => {
     const calls: string[][] = [];
     const events: string[] = [];
     const runtime: BrowserRuntimeMetadata = {
@@ -205,14 +225,19 @@ describe("OpenCliBrowserTransport", () => {
       runtime,
       { transport: "opencli", timeoutMs: 5_000 },
       (() => {}) as never,
-      { runCommand: successRunner(calls, events), sleep: async () => undefined },
+      { runCommand: successRunner(calls, events) },
     );
 
     expect(result.answerMarkdown).toBe("Pro answer");
-    expect(events).toContain("detail");
+    expect(events).toContain("oracle-wait");
     expect(events).not.toContain("model");
     expect(events).not.toContain("dispatch");
-    expect(calls.filter((args) => args[0] === "chatgpt" && args[1] === "detail")).toHaveLength(2);
+    expect(
+      calls.filter(
+        (args) => args[0] === "chatgpt" && args[1] === "oracle-wait" && !args.includes("--help"),
+      ),
+    ).toHaveLength(1);
+    expect(calls.some((args) => args[0] === "chatgpt" && args[1] === "detail")).toBe(false);
   });
 
   it("fails closed for unsupported OpenCLI versions", () => {
@@ -246,7 +271,7 @@ describe("OpenCliBrowserTransport", () => {
         },
         { runCommand: runner, resolveSessionDir: async () => sessionDir },
       ),
-    ).rejects.toThrow(/adapter is unavailable/u);
+    ).rejects.toThrow(/adapters are unavailable/u);
 
     expect(calls.some((args) => args[0] === "chatgpt" && args[1] === "model")).toBe(false);
   });

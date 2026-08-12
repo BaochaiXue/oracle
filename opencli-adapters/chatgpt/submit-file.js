@@ -6,7 +6,9 @@ import { ArgumentError, CommandExecutionError } from "@jackwener/opencli/errors"
 import {
   CONTRACT_VERSION,
   FIXED_COMPOSER_INSTRUCTION,
+  assistantMarkerFromRows,
   buildDataTransferScript,
+  buildGenerationControlScript,
   extractConversationReceipt,
   loadSubmissionManifest,
   unwrapEvaluateResult,
@@ -82,6 +84,16 @@ async function waitForConversationReceipt(page) {
   );
 }
 
+async function generationControlIsVisible(page) {
+  const result = unwrapEvaluateResult(await page.evaluate(buildGenerationControlScript()));
+  if (typeof result !== "boolean") {
+    throw new CommandExecutionError(
+      "ChatGPT returned an invalid Oracle generation-state observation.",
+    );
+  }
+  return result;
+}
+
 export const submitFileCommand = cli({
   site: "chatgpt",
   name: "submit-file",
@@ -109,7 +121,16 @@ export const submitFileCommand = cli({
       help: "Continue an explicit ChatGPT conversation ID or /c/<id> URL",
     },
   ],
-  columns: ["ContractVersion", "Status", "conversationId", "conversationUrl", "Model", "Files"],
+  columns: [
+    "ContractVersion",
+    "Status",
+    "conversationId",
+    "conversationUrl",
+    "Model",
+    "Files",
+    "BaselineAssistantIndex",
+    "BaselineAssistantSha256",
+  ],
   func: async (page, kwargs) => {
     const useNew = chatGptUtils.normalizeBooleanFlag(kwargs.new, false);
     if (useNew && kwargs.conversation) {
@@ -154,8 +175,18 @@ export const submitFileCommand = cli({
       );
     }
 
-    while (await chatGptUtils.isGenerating(page)) {
+    while (await generationControlIsVisible(page)) {
       await page.wait(3);
+    }
+    const baseline = kwargs.conversation
+      ? assistantMarkerFromRows(
+          (await chatGptUtils.getChatGPTDetailRows(page, { wantMarkdown: true })).rows,
+        )
+      : null;
+    if (kwargs.conversation && !baseline) {
+      throw new CommandExecutionError(
+        "ChatGPT did not expose the prior assistant turn needed to guard this Oracle follow-up; nothing was submitted.",
+      );
     }
     await uploadAuthorizedFiles(page, submission.files);
     const sent = await chatGptUtils.sendChatGPTMessage(page, FIXED_COMPOSER_INSTRUCTION);
@@ -170,6 +201,8 @@ export const submitFileCommand = cli({
         ...receipt,
         Model: "Pro",
         Files: submission.files.length,
+        BaselineAssistantIndex: baseline?.index,
+        BaselineAssistantSha256: baseline?.sha256,
       },
     ];
   },

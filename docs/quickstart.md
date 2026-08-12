@@ -34,7 +34,7 @@ Oracle prints the assistant's reply on stdout and stores the run under `~/.oracl
 
 ### OpenCLI browser mode (unattended GPT-5.6 Pro)
 
-Install this fork and its adapter once:
+Install this fork and its companion adapters once:
 
 ```bash
 git clone https://github.com/IndelibleVivi/oracle.git
@@ -45,6 +45,7 @@ pnpm build
 pnpm link -g
 node scripts/install-opencli-submit-file-adapter.mjs
 opencli validate chatgpt/submit-file
+opencli validate chatgpt/oracle-wait
 ```
 
 Then send a turn through the authenticated Browser Bridge:
@@ -60,8 +61,10 @@ oracle --engine browser \
 
 `gpt-5-pro` is the stable Oracle browser alias for current GPT-5.6 Pro. The
 live ChatGPT/OpenCLI contract reports the exact UI-native short name `Pro`.
-Oracle stores the conversation receipt and uses detail-only recovery rather
-than silently resubmitting an accepted turn.
+Oracle stores the conversation receipt and uses single-waiter recovery rather
+than silently resubmitting an accepted turn. One isolated OpenCLI tab stays with
+the waiter for the whole answer harvest; Oracle does not spawn a new tab every
+few seconds.
 
 ### Legacy direct browser mode
 
@@ -140,8 +143,8 @@ oracle status --hours 24
 oracle session <id> --render
 ```
 
-For OpenCLI runs, `oracle session <id> --render` resumes through read-only
-detail when a conversation receipt already exists. Legacy CDP browser runs can
+For OpenCLI runs, `oracle session <id> --render` resumes through one read-only
+waiter when a conversation receipt already exists. Legacy CDP browser runs can
 use `--browser-auto-reattach-*` to poll an existing ChatGPT tab after a redirect
 or timeout. See [Sessions](sessions.md) for the full lifecycle.
 

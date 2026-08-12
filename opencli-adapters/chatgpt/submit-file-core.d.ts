@@ -1,4 +1,4 @@
-export const CONTRACT_VERSION: 1;
+export const CONTRACT_VERSION: 2;
 export const MAX_TOTAL_FILE_BYTES: number;
 export const FIXED_COMPOSER_INSTRUCTION: string;
 
@@ -11,12 +11,25 @@ export interface AdapterFile {
 }
 
 export interface LoadedSubmissionManifest {
-  contractVersion: 1;
+  contractVersion: 2;
   manifestPath: string;
   files: AdapterFile[];
 }
 
+export interface AssistantMarker {
+  index?: number;
+  markdown: string;
+  sha256: string;
+}
+
 export function unwrapEvaluateResult(payload: unknown): unknown;
+export function assistantMarkerFromRows(rows: unknown): AssistantMarker | null;
+export function matchesAssistantBaseline(
+  marker: AssistantMarker | null,
+  baselineIndex?: number,
+  baselineSha256?: string,
+): boolean;
+export function buildGenerationControlScript(): string;
 export function loadSubmissionManifest(manifestPath: string): LoadedSubmissionManifest;
 export function mimeTypeForPath(filePath: string): string;
 export function buildDataTransferScript(

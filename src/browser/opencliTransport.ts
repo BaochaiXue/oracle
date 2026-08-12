@@ -15,14 +15,15 @@ import type {
 import { computeFileSha256 } from "./artifacts.js";
 import { acquireProfileRunLock } from "./profileState.js";
 import type { BrowserLogger, BrowserRunOptions, BrowserRunResult } from "./types.js";
-import { delay, estimateTokenCount } from "./utils.js";
+import { estimateTokenCount } from "./utils.js";
 
 const execFileAsync = promisify(execFile);
-const OPENCLI_CONTRACT_VERSION = 1;
+const OPENCLI_CONTRACT_VERSION = 2;
 const MIN_OPENCLI_VERSION = [1, 8, 3] as const;
 const DEFAULT_LOCK_TIMEOUT_MS = 300_000;
 const COMMAND_TIMEOUT_MS = 60_000;
 const MODEL_TIMEOUT_MS = 120_000;
+const ORACLE_WAIT_STABLE_SECONDS = 9;
 
 interface CommandResult {
   stdout: string;
@@ -41,7 +42,6 @@ export interface OpenCliTransportDeps {
   resolveSessionDir?: (sessionId: string) => Promise<string>;
   now?: () => Date;
   randomId?: () => string;
-  sleep?: (ms: number) => Promise<void>;
 }
 
 interface OpenCliContext {
@@ -50,18 +50,20 @@ interface OpenCliContext {
   runCommand: OpenCliCommandRunner;
 }
 
-interface DetailRow {
-  Index?: number;
-  Role?: string;
-  Text?: string;
-  Generating?: boolean;
-  StableSeconds?: number;
-}
-
 interface AssistantMarker {
-  answer: string;
   index?: number;
   sha256: string;
+}
+
+interface OracleWaitRow {
+  ContractVersion?: number;
+  Status?: string;
+  conversationId?: string;
+  conversationUrl?: string;
+  AssistantIndex?: number;
+  AssistantSha256?: string;
+  Markdown?: string;
+  StableSeconds?: number;
 }
 
 interface ModelRow {
@@ -163,24 +165,12 @@ export async function runOpenCliBrowserMode(
       );
     }
 
-    if (extractConversationId(targetUrl)) {
-      baselineAssistant = await readLatestAssistantMarker(context, targetUrl);
-      if (!baselineAssistant) {
-        throw blockedError(
-          "OpenCLI could not establish the prior assistant-turn marker for this follow-up; nothing was submitted.",
-          "followup-baseline-missing",
-        );
-      }
-    }
-
     await appendJournal(prepared.journalPath, {
       event: "dispatch-intent",
       operationRef,
       payloadSha256: prepared.sha256,
       target: targetUrl,
       attempt: 1,
-      baselineAssistantIndex: baselineAssistant?.index,
-      baselineAssistantSha256: baselineAssistant?.sha256,
       at: (deps.now?.() ?? new Date()).toISOString(),
     });
     await options.runtimeHintCb?.(
@@ -208,11 +198,14 @@ export async function runOpenCliBrowserMode(
     );
     conversationUrl = receipt.url;
     conversationId = receipt.conversationId;
+    baselineAssistant = receipt.baselineAssistant;
     await appendJournal(prepared.journalPath, {
       event: "submitted",
       operationRef,
       conversationUrl,
       conversationId,
+      baselineAssistantIndex: baselineAssistant?.index,
+      baselineAssistantSha256: baselineAssistant?.sha256,
       at: (deps.now?.() ?? new Date()).toISOString(),
     });
     await options.runtimeHintCb?.(
@@ -281,7 +274,7 @@ export async function runOpenCliBrowserMode(
   };
 
   try {
-    const answer = await captureDetail(context, runtime, config, deps);
+    const answer = await captureDetail(context, runtime, config);
     await appendJournal(prepared.journalPath, {
       event: "complete",
       operationRef,
@@ -301,7 +294,7 @@ export async function runOpenCliBrowserMode(
   } catch (error) {
     if (error instanceof BrowserAutomationError) throw error;
     throw new BrowserAutomationError(
-      "ChatGPT accepted the Oracle turn, but OpenCLI could not harvest the completed answer. Resume this Oracle session to retry detail only.",
+      "ChatGPT accepted the Oracle turn, but OpenCLI could not harvest the completed answer. Resume this Oracle session to retry the waiter only.",
       { stage: "assistant-timeout", runtime },
       error,
     );
@@ -322,7 +315,7 @@ export async function resumeOpenCliBrowserSession(
       { stage: "dispatch-ambiguous", runtime },
     );
   }
-  const answer = await captureDetail(context, runtime, config ?? {}, deps);
+  const answer = await captureDetail(context, runtime, config ?? {});
   return { answerText: answer, answerMarkdown: answer };
 }
 
@@ -356,15 +349,29 @@ async function preflightOpenCli(
     );
     if (
       !/Arguments:\s*\n\s*manifest\b/u.test(adapterHelp.stdout) ||
-      !/Output columns:\s*ContractVersion, Status, conversationId, conversationUrl, Model, Files/u.test(
+      !/Output columns:\s*ContractVersion, Status, conversationId, conversationUrl, Model, Files, BaselineAssistantIndex, BaselineAssistantSha256/u.test(
         adapterHelp.stdout,
       )
     ) {
       throw new Error("The installed chatgpt submit-file adapter has an incompatible contract.");
     }
+    const waiterHelp = await runCommand(
+      context,
+      ["chatgpt", "oracle-wait", "--help"],
+      COMMAND_TIMEOUT_MS,
+      "oracle-wait-adapter",
+    );
+    if (
+      !/Arguments:\s*\n\s*id\b/u.test(waiterHelp.stdout) ||
+      !/Output columns:\s*ContractVersion, Status, conversationId, conversationUrl, AssistantIndex, AssistantSha256, Markdown, StableSeconds/u.test(
+        waiterHelp.stdout,
+      )
+    ) {
+      throw new Error("The installed chatgpt oracle-wait adapter has an incompatible contract.");
+    }
   } catch (error) {
     throw blockedError(
-      "OpenCLI Browser Bridge or the Oracle submit-file adapter is unavailable. Run the Oracle adapter installer before submitting private content.",
+      "OpenCLI Browser Bridge or the Oracle companion adapters are unavailable. Run the Oracle adapter installer before submitting private content.",
       "bridge-unavailable",
       error,
     );
@@ -424,7 +431,11 @@ async function submitAuthorizedFiles(
   adapterManifestPath: string,
   targetUrl: string,
   config: BrowserSessionConfig,
-): Promise<{ url: string; conversationId: string }> {
+): Promise<{
+  url: string;
+  conversationId: string;
+  baselineAssistant?: AssistantMarker;
+}> {
   const existingConversationId = extractConversationId(targetUrl);
   const targetArgs = existingConversationId ? ["--conversation", targetUrl] : ["--new", "true"];
   const rows = await runJsonCommand<
@@ -434,6 +445,8 @@ async function submitAuthorizedFiles(
       conversationId?: string;
       conversationUrl?: string;
       Model?: string;
+      BaselineAssistantIndex?: number;
+      BaselineAssistantSha256?: string;
     }>
   >(
     context,
@@ -467,63 +480,50 @@ async function submitAuthorizedFiles(
   ) {
     throw new Error("OpenCLI submit-file returned an incompatible or incomplete receipt.");
   }
-  return { url: conversationUrl, conversationId };
+  const baselineAssistant =
+    Number.isFinite(row.BaselineAssistantIndex) &&
+    /^[a-f0-9]{64}$/u.test(row.BaselineAssistantSha256 ?? "")
+      ? {
+          index: row.BaselineAssistantIndex,
+          sha256: row.BaselineAssistantSha256!,
+        }
+      : undefined;
+  if (existingConversationId && !baselineAssistant) {
+    throw new Error("OpenCLI submit-file did not return the required follow-up baseline receipt.");
+  }
+  return { url: conversationUrl, conversationId, baselineAssistant };
 }
 
 async function captureDetail(
   context: OpenCliContext,
   runtime: BrowserRuntimeMetadata,
   config: BrowserSessionConfig,
-  deps: OpenCliTransportDeps,
 ): Promise<string> {
   const conversation = runtime.tabUrl ?? runtime.conversationId;
   if (!conversation) {
     throw new Error("Missing ChatGPT conversation receipt.");
   }
   const timeoutMs = config.timeoutMs ?? 1_200_000;
-  const deadline = Date.now() + timeoutMs;
-  const sleep = deps.sleep ?? delay;
-  let lastAnswer = "";
-  let stablePolls = 0;
-  let lastError: unknown;
-  while (Date.now() < deadline) {
-    try {
-      const latest = latestAssistantMarker(await readDetail(context, conversation));
-      if (latest && !matchesBaselineAssistant(latest, runtime)) {
-        const answer = latest.answer;
-        stablePolls = answer === lastAnswer ? stablePolls + 1 : 1;
-        lastAnswer = answer;
-        if (stablePolls >= 2) return answer;
-      } else {
-        stablePolls = 0;
-        lastAnswer = "";
-      }
-    } catch (error) {
-      lastError = error;
-    }
-    await sleep(Math.min(3_000, Math.max(0, deadline - Date.now())));
-  }
-  throw lastError ?? new Error("OpenCLI detail did not return a stable assistant response.");
-}
-
-async function readLatestAssistantMarker(
-  context: OpenCliContext,
-  conversation: string,
-): Promise<AssistantMarker | undefined> {
-  return latestAssistantMarker(await readDetail(context, conversation));
-}
-
-async function readDetail(context: OpenCliContext, conversation: string): Promise<DetailRow[]> {
-  return runJsonCommand<DetailRow[]>(
+  const timeoutSeconds = Math.max(1, Math.ceil(timeoutMs / 1000));
+  const baselineArgs = [
+    ...(runtime.opencliBaselineAssistantIndex !== undefined
+      ? ["--baseline-index", String(runtime.opencliBaselineAssistantIndex)]
+      : []),
+    ...(runtime.opencliBaselineAssistantSha256
+      ? ["--baseline-sha256", runtime.opencliBaselineAssistantSha256]
+      : []),
+  ];
+  const rows = await runJsonCommand<OracleWaitRow[]>(
     context,
     [
       "chatgpt",
-      "detail",
+      "oracle-wait",
       conversation,
-      "--markdown",
-      "true",
-      "--wait",
-      "false",
+      ...baselineArgs,
+      "--timeout",
+      String(timeoutSeconds),
+      "--stable",
+      String(ORACLE_WAIT_STABLE_SECONDS),
       "-f",
       "json",
       "--window",
@@ -533,43 +533,26 @@ async function readDetail(context: OpenCliContext, conversation: string): Promis
       "--keep-tab",
       "false",
     ],
-    COMMAND_TIMEOUT_MS,
-    "detail",
+    timeoutMs + COMMAND_TIMEOUT_MS,
+    "oracle-wait",
   );
-}
-
-function latestAssistantMarker(rows: DetailRow[]): AssistantMarker | undefined {
-  let latest: DetailRow | undefined;
-  for (let index = rows.length - 1; index >= 0; index -= 1) {
-    const row = rows[index];
-    if (
-      row?.Role?.trim().toLowerCase() === "assistant" &&
-      typeof row.Text === "string" &&
-      row.Generating !== true
-    ) {
-      latest = row;
-      break;
-    }
+  const row = rows[0];
+  const answer = row?.Markdown?.trim() ?? "";
+  const conversationId = extractConversationId(row?.conversationUrl);
+  const answerSha256 = answer ? createHash("sha256").update(answer).digest("hex") : "";
+  if (
+    row?.ContractVersion !== OPENCLI_CONTRACT_VERSION ||
+    row?.Status !== "Complete" ||
+    !answer ||
+    !conversationId ||
+    conversationId !== row.conversationId ||
+    row.AssistantSha256 !== answerSha256 ||
+    !Number.isFinite(row.AssistantIndex) ||
+    (row.StableSeconds ?? -1) < ORACLE_WAIT_STABLE_SECONDS
+  ) {
+    throw new Error("OpenCLI oracle-wait returned an incompatible or incomplete result.");
   }
-  const answer = latest?.Text?.trim() ?? "";
-  if (!answer) return undefined;
-  return {
-    answer,
-    index: Number.isFinite(latest?.Index) ? latest?.Index : undefined,
-    sha256: createHash("sha256").update(answer).digest("hex"),
-  };
-}
-
-function matchesBaselineAssistant(
-  latest: AssistantMarker,
-  runtime: BrowserRuntimeMetadata,
-): boolean {
-  const baselineSha256 = runtime.opencliBaselineAssistantSha256;
-  if (!baselineSha256 || latest.sha256 !== baselineSha256) return false;
-  const baselineIndex = runtime.opencliBaselineAssistantIndex;
-  return (
-    baselineIndex === undefined || latest.index === undefined || latest.index === baselineIndex
-  );
+  return answer;
 }
 
 async function prepareSubmission(

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const sourceDir = path.resolve(scriptDir, "../opencli-adapters/chatgpt");
 const targetDir = path.join(os.homedir(), ".opencli", "clis", "chatgpt");
-const filenames = ["submit-file-core.js", "submit-file.js"];
+const filenames = ["submit-file-core.js", "submit-file.js", "oracle-wait.js"];
 const replace = process.argv.includes("--replace");
 
 await fs.mkdir(targetDir, { recursive: true });

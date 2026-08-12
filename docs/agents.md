@@ -105,10 +105,13 @@ Completed runs persist answers, usage, cost, session ids, model choices, and lin
 ## OpenCLI concurrency and account boundaries
 
 OpenCLI consultations share one Oracle-owned transport lock across model
-selection and submission. Each OpenCLI command uses an ephemeral owned tab
-lease and closes it after the structured result is captured. Agents must not
-retry an interrupted submission blindly: check the Oracle session first,
-because a stored conversation receipt changes recovery into a detail-only read.
+selection and submission. Model selection and submission are short-lived
+commands. The long answer harvest is one `chatgpt oracle-wait` command holding
+one isolated ephemeral tab for its entire lifetime; it explicitly releases that
+lease before returning and never polls by launching repeated OpenCLI processes.
+Agents must not retry an interrupted submission blindly: check the Oracle
+session first, because a stored conversation receipt changes recovery into a
+waiter-only read.
 
 Authentication, model entitlement, and account challenges remain human-owned.
 Unattended means routine Chrome debugging approval is absent from the happy

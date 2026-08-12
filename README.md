@@ -44,7 +44,7 @@ Oracle ── seal turn ── persist intent ── own session + recovery
         ▼
 OpenCLI Browser Bridge ── authenticated tab lease ── ChatGPT GPT-5.6 Pro
         │                                                │
-        └──── structured receipt + read-only detail ─────┘
+        └──── receipt + one single-lease waiter ─────────┘
 ```
 
 A sidecar wrapper would look smaller, but it would also become a second session
@@ -60,7 +60,7 @@ Read the complete rationale and failure contract in
 
 The published npm and Homebrew packages are upstream Oracle and do not include
 this transport yet. Install the fork from source together with its companion
-OpenCLI adapter:
+OpenCLI adapters:
 
 ```bash
 git clone https://github.com/IndelibleVivi/oracle.git
@@ -71,6 +71,7 @@ pnpm build
 pnpm link -g
 node scripts/install-opencli-submit-file-adapter.mjs
 opencli validate chatgpt/submit-file
+opencli validate chatgpt/oracle-wait
 ```
 
 Requirements:
@@ -85,6 +86,7 @@ Run a preflight without sending private content:
 ```bash
 opencli doctor
 opencli validate chatgpt/submit-file
+opencli validate chatgpt/oracle-wait
 oracle --dry-run summary --files-report \
   --engine browser \
   --browser-transport opencli \
@@ -138,15 +140,18 @@ approval. It does **not** mean bypassing account controls or pretending browser
 automation can never need a person.
 
 Before submission, Oracle verifies the OpenCLI version, Browser Bridge, adapter
-contract, target host, selected `Pro` state, and sealed artifact identity. Prompt
+contracts, target host, selected `Pro` state, and sealed artifact identity. Prompt
 and file contents are passed through mode-`0600` session artifacts rather than
 shell arguments. Model selection and submission share one Oracle-owned lock.
 
-After submission, Oracle records the conversation receipt before harvesting the
-answer through read-only `chatgpt detail`. If a receipt exists, recovery retries
-detail only and never silently sends the turn twice. If submission may have
-happened but no durable receipt exists, Oracle marks the attempt ambiguous
-instead of guessing. There is no silent fallback to direct CDP.
+After submission, Oracle records the conversation receipt before starting one
+`chatgpt oracle-wait` command. That command owns one isolated ephemeral tab for
+the entire long wait, observes the stored conversation on the same page, and
+explicitly releases the lease before returning Markdown. It does not spawn a
+new OpenCLI process or tab every few seconds. If a receipt exists, recovery
+retries the waiter only and never silently sends the turn twice. If submission
+may have happened but no durable receipt exists, Oracle marks the attempt
+ambiguous instead of guessing. There is no silent fallback to direct CDP.
 
 Human attention can still be required for first-time sign-in, expired sessions,
 account challenges, model entitlement, or an OpenCLI/ChatGPT contract change.
@@ -211,8 +216,8 @@ pnpm docs:check
 ```
 
 The narrow OpenCLI contract tests exercise a sealed new turn, an explicit
-stored-conversation follow-up, and detail-only recovery without touching a real
-account. Manual browser/provider checks remain documented in
+stored-conversation follow-up, and single-waiter recovery without touching a
+real account. Manual browser/provider checks remain documented in
 [docs/manual-tests.md](docs/manual-tests.md).
 
 ## Provenance and license

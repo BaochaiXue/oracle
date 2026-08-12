@@ -18,14 +18,14 @@ transport inside Oracle and leaves the rest of Oracle's authority intact.
 
 ## One authority, two responsibilities
 
-| Oracle owns                               | OpenCLI owns                                   |
-| ----------------------------------------- | ---------------------------------------------- |
-| Prompt construction and file selection    | Authenticated Browser Bridge access            |
-| Sealed payload and manifest identity      | An ephemeral, explicitly targeted tab lease    |
-| Submission intent and operation reference | Selecting the UI-native `Pro` option           |
-| Session state and conversation receipt    | Transferring the sealed files to the exact tab |
-| Answer and transcript persistence         | Returning a structured submission receipt      |
-| Resume and follow-up lineage              | Read-only `chatgpt detail` retrieval           |
+| Oracle owns                               | OpenCLI owns                                           |
+| ----------------------------------------- | ------------------------------------------------------ |
+| Prompt construction and file selection    | Authenticated Browser Bridge access                    |
+| Sealed payload and manifest identity      | Short-lived model-selection and submission leases      |
+| Submission intent and operation reference | Selecting the UI-native `Pro` option                   |
+| Session state and conversation receipt    | Transferring the sealed files to the exact tab         |
+| Answer and transcript persistence         | One isolated waiter lease for the whole answer harvest |
+| Resume and follow-up lineage              | Structured submission and answer receipts              |
 
 The handoff is deliberately narrow:
 
@@ -39,9 +39,12 @@ Oracle buildPrompt
   → recheck sealed payload digest
   → journal dispatch intent
   → submit to new chat or the stored conversation
-  → persist structured conversation receipt
+  → capture the follow-up baseline on that submission tab
+  → persist the structured conversation receipt and baseline
   → release transport lock
-  → poll read-only detail
+  → start one read-only oracle-wait command and one isolated tab lease
+  → observe the same page until the new assistant Markdown is stable
+  → explicitly release the waiter lease
   → persist answer and transcript
 ```
 
@@ -90,7 +93,7 @@ turn:
 | -------------------------------------------------------------- | ------------------------------ | ---------------------------------------- |
 | Preflight, auth, model verification, lock, or bundle integrity | Fails before dispatch          | Fix the reported condition and retry     |
 | Handoff began but no durable receipt was captured              | Marks the attempt ambiguous    | Reconcile manually; do not auto-resubmit |
-| Receipt exists but answer collection timed out                 | Keeps the conversation receipt | Resume detail only                       |
+| Receipt exists but answer collection timed out                 | Keeps the conversation receipt | Resume the waiter only                   |
 | Follow-up baseline cannot be established                       | Fails before dispatch          | Recover the stored conversation first    |
 | Stored remote conversation is missing                          | Stops                          | Never open a replacement chat silently   |
 
@@ -100,10 +103,20 @@ The central invariant is simple:
 > conversation. It does not submit the turn again.
 
 Before each dispatch, Oracle journals the operation reference, payload digest,
-target, attempt, and—on follow-ups—the prior assistant index and digest. The
-adapter returns a versioned row containing the conversation id, conversation
-URL, visible `Pro` evidence, and transferred file count. Unknown versions or
-incomplete receipts fail closed.
+target, and attempt. For a follow-up, the submit adapter captures the prior
+assistant index and Markdown digest on the exact submission tab before sending,
+then returns them with the versioned conversation receipt. The answer adapter
+returns a second versioned row containing the new assistant index, digest,
+stable duration, and Markdown. Unknown versions or incomplete receipts fail
+closed.
+
+The long wait has a separate lifecycle invariant: one Oracle operation starts
+exactly one `chatgpt oracle-wait` process, and that process keeps exactly one
+ephemeral conversation lease until completion or timeout. Generation detection
+looks only at visible generation controls; it never scans answer prose for words
+such as `Thinking`. The adapter explicitly calls `closeWindow()` before it can
+return `Complete`, so cleanup failure is an observable, reattachable error rather
+than a silently abandoned conversation tab.
 
 ## Private data boundary
 
@@ -127,7 +140,7 @@ bypass account controls.
 
 The OpenCLI transport is intentionally a GPT-5.6 Pro **text consultation** lane.
 It supports sealed new turns, explicit stored-conversation follow-ups, durable
-receipts, detail-only answer recovery, and the normal Oracle transcript/session
+receipts, single-waiter answer recovery, and the normal Oracle transcript/session
 store.
 
 It rejects image generation, Deep Research, and same-invocation
@@ -145,7 +158,9 @@ The repository tests cover:
 - manifest/payload digest verification and mutation rejection;
 - explicit new-chat versus stored-conversation targets;
 - follow-up baseline markers;
-- detail-only reattach with no second model selection or dispatch;
+- one waiter command per harvest, with no polling process/tab fan-out;
+- waiter-only reattach with no second model selection or dispatch;
+- generation-control detection that does not inspect answer prose;
 - supported OpenCLI/adapter contract versions;
 - strict ChatGPT receipt parsing.
 

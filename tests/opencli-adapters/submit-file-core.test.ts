@@ -5,9 +5,12 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   CONTRACT_VERSION,
+  assistantMarkerFromRows,
   buildDataTransferScript,
+  buildGenerationControlScript,
   extractConversationReceipt,
   loadSubmissionManifest,
+  matchesAssistantBaseline,
   mimeTypeForPath,
   unwrapEvaluateResult,
 } from "../../opencli-adapters/chatgpt/submit-file-core.js";
@@ -19,6 +22,10 @@ afterEach(async () => {
 });
 
 describe("OpenCLI submit-file adapter core", () => {
+  it("uses the v2 single-waiter receipt contract", () => {
+    expect(CONTRACT_VERSION).toBe(2);
+  });
+
   it("loads an authorized manifest and verifies the sealed payload digest", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "oracle-adapter-test-"));
     tempDirs.push(dir);
@@ -79,5 +86,29 @@ describe("OpenCLI submit-file adapter core", () => {
     });
     expect(extractConversationReceipt("https://example.com/c/conversation_123")).toBeNull();
     expect(mimeTypeForPath("bundle.zip")).toBe("application/zip");
+  });
+
+  it("marks the latest assistant Markdown and distinguishes a follow-up from its baseline", () => {
+    const previous = assistantMarkerFromRows([
+      { Index: 1, Role: "User", Text: "question" },
+      { Index: 2, Role: "Assistant", Text: "Previous answer" },
+    ]);
+    const current = assistantMarkerFromRows([
+      { Index: 2, Role: "Assistant", Text: "Previous answer" },
+      { Index: 3, Role: "User", Text: "follow-up" },
+      { Index: 4, Role: "Assistant", Text: "New **Markdown** answer" },
+    ]);
+
+    expect(previous).toMatchObject({ index: 2, markdown: "Previous answer" });
+    expect(previous?.sha256).toBe(createHash("sha256").update("Previous answer").digest("hex"));
+    expect(matchesAssistantBaseline(previous, previous?.index, previous?.sha256)).toBe(true);
+    expect(matchesAssistantBaseline(current, previous?.index, previous?.sha256)).toBe(false);
+  });
+
+  it("detects generation controls without scanning assistant answer text", () => {
+    const script = buildGenerationControlScript();
+    expect(script).toContain("querySelectorAll('button')");
+    expect(script).toContain("stop generating");
+    expect(script).not.toContain("document.body");
   });
 });
