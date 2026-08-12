@@ -130,6 +130,8 @@ interface CliOptions extends OptionValues {
   browserChromePath?: string;
   browserCookiePath?: string;
   browserAttachRunning?: boolean;
+  browserTransport?: "cdp" | "opencli";
+  opencliPath?: string;
   chatgptUrl?: string;
   browserUrl?: string;
   browserTimeout?: string;
@@ -625,6 +627,18 @@ program
   .option("--azure-api-version <version>", "Azure OpenAI API Version.")
   .addOption(
     new Option("--browser", "(deprecated) Use --engine browser instead.").default(false).hideHelp(),
+  )
+  .addOption(
+    new Option(
+      "--browser-transport <transport>",
+      "Browser transport: opencli uses Browser Bridge without direct CDP approval; cdp keeps the legacy Chrome automation path.",
+    ).choices(["opencli", "cdp"]),
+  )
+  .addOption(
+    new Option(
+      "--opencli-path <path>",
+      "OpenCLI executable path for --browser-transport opencli.",
+    ).hideHelp(),
   )
   .addOption(
     new Option(

@@ -27,6 +27,8 @@ export const DEFAULT_CHATGPT_COOKIE_NAMES = [
 ];
 
 export const DEFAULT_BROWSER_CONFIG: ResolvedBrowserConfig = {
+  transport: "cdp",
+  opencliPath: null,
   chromeProfile: null,
   chromePath: null,
   chromeCookiePath: null,
@@ -107,6 +109,8 @@ export function resolveBrowserConfig(
   return {
     ...DEFAULT_BROWSER_CONFIG,
     ...config,
+    transport: config?.transport ?? DEFAULT_BROWSER_CONFIG.transport,
+    opencliPath: config?.opencliPath ?? DEFAULT_BROWSER_CONFIG.opencliPath,
     url: normalizedUrl,
     chatgptUrl: normalizedUrl,
     timeoutMs: config?.timeoutMs ?? defaultTimeoutMs,

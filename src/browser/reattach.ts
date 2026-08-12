@@ -41,6 +41,7 @@ import {
   type TargetInfoLite,
 } from "./reattachHelpers.js";
 import { waitForDeepResearchCompletion } from "./actions/deepResearch.js";
+import { resumeOpenCliBrowserSession } from "./opencliTransport.js";
 
 export interface ReattachDeps {
   listTargets?: () => Promise<TargetInfoLite[]>;
@@ -67,6 +68,9 @@ export async function resumeBrowserSession(
   logger: BrowserLogger,
   deps: ReattachDeps = {},
 ): Promise<ReattachResult> {
+  if (runtime.browserTransport === "opencli") {
+    return resumeOpenCliBrowserSession(runtime, config, logger);
+  }
   const recoverSession =
     deps.recoverSession ??
     (async (runtimeMeta, configMeta) =>

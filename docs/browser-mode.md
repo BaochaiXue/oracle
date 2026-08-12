@@ -1,14 +1,76 @@
 # Browser Mode
 
-Oracle’s `--engine browser` supports three different execution paths:
+Oracle’s `--engine browser` supports four different execution paths:
 
+- **ChatGPT OpenCLI transport** (GPT-\* Pro text consults): delegates the browser boundary to an authenticated OpenCLI Browser Bridge session, without direct CDP attachment or a Chrome debugging approval prompt.
 - **ChatGPT launcher mode** (GPT-\* models): Oracle launches Chrome itself and drives the ChatGPT web UI over CDP.
 - **ChatGPT attach-running mode** (GPT-\* models): Oracle attaches to your already-running local Chrome session through Chrome’s local remote-debugging toggle, opens a dedicated tab, and leaves the browser process/profile alone.
 - **Gemini web mode** (Gemini models): talks directly to `gemini.google.com` using your signed-in Chrome cookies (no ChatGPT automation).
 
 If you’re running Gemini, also see `docs/gemini.md`.
 
-`oracle --engine browser` routes the assembled prompt bundle through the ChatGPT web UI instead of the Responses API. (Legacy `--browser` still maps to `--engine browser`, but it will be removed.) If you omit `--engine`, Oracle first honors `ORACLE_ENGINE`, then any `engine` value in the effective config, including project `.oracle/config.json` files layered over `~/.oracle/config.json`. It auto-picks API when `OPENAI_API_KEY` is available and falls back to browser otherwise. The CLI writes the same session metadata/logs as API runs, and by default pastes the payload into ChatGPT via a temporary Chrome profile (manual-login mode can reuse a persistent automation profile).
+## OpenCLI Browser Bridge transport (unattended Pro)
+
+Use this transport when Oracle should be able to start a ChatGPT Pro consult,
+harvest its answer, and continue the same conversation later without a person
+being present to approve direct Chrome debugging. OpenCLI owns browser access;
+Oracle remains the sole owner of prompt assembly, sessions, integrity records,
+transcripts, follow-up lineage, and recovery.
+
+Prerequisites:
+
+1. Install OpenCLI 1.8.3 or newer in the 1.x line and connect its Browser Bridge.
+2. From this Oracle checkout, install and validate the companion adapter:
+
+   ```bash
+   node scripts/install-opencli-submit-file-adapter.mjs
+   opencli validate chatgpt/submit-file
+   ```
+
+3. Run Oracle with the transport selected explicitly:
+
+   ```bash
+   oracle --engine browser \
+     --browser-transport opencli \
+     --model gpt-5-pro \
+     --browser-model-strategy select \
+     -p "Audit this change for correctness and missing tests." \
+     --file "src/**"
+   ```
+
+The adapter installer refuses to overwrite different local adapter content.
+Inspect that content first, or use `--replace` when you deliberately want the
+checkout's version. The transport preflights OpenCLI, Browser Bridge, and the
+adapter contract before model selection or submission.
+
+For each turn, Oracle writes a mode-0600 sealed payload, manifest, and transport
+journal inside the Oracle session. The private prompt and file contents never
+appear in a subprocess argument. Under one Oracle-owned lock, OpenCLI selects
+Pro, the companion adapter verifies that the exact submission tab visibly says
+`Pro`, transfers only the sealed files, and returns a structured conversation
+receipt. Answer collection uses read-only `chatgpt detail` calls against that
+receipt, and ephemeral OpenCLI tab leases are closed after every command.
+
+Continue the same ChatGPT conversation through normal Oracle lineage:
+
+```bash
+oracle --followup <session-id> \
+  -p "Challenge your recommendation and return the final decision."
+```
+
+If answer harvesting is interrupted after a receipt exists, resume the Oracle
+session with `oracle session <session-id> --render`. Recovery is detail-only;
+Oracle does not silently resubmit an ambiguous or accepted turn. For a
+follow-up, Oracle records the prior assistant turn's index and digest before
+dispatch so polling cannot mistake the previous answer for the new one.
+
+The OpenCLI transport is deliberately limited to ChatGPT Pro text consults.
+Image generation, Deep Research, and same-invocation `--browser-follow-up`
+prompts fail before dispatch; use separate `--followup` sessions for multi-turn
+work. There is no silent fallback to CDP. Select `--browser-transport cdp`
+explicitly when you need the legacy launcher/attach-running features below.
+
+`oracle --engine browser` routes the assembled prompt bundle through the ChatGPT web UI instead of the Responses API. (Legacy `--browser` still maps to `--engine browser`, but it will be removed.) If you omit `--engine`, Oracle first honors `ORACLE_ENGINE`, then any `engine` value in the effective config, including project `.oracle/config.json` files layered over `~/.oracle/config.json`. It auto-picks API when `OPENAI_API_KEY` is available and falls back to browser otherwise. The CLI writes the same session metadata/logs as API runs. The default `cdp` transport pastes the payload through an Oracle-managed Chrome tab; `opencli` uses the sealed-file Browser Bridge contract described above.
 
 `--preview` now works with `--engine browser`: it renders the composed prompt, lists which files would be uploaded vs inlined, and shows the bundle location when bundling is enabled, without launching Chrome.
 
@@ -91,6 +153,7 @@ Notes:
 ### CLI Options
 
 - `--engine browser`: enables browser mode (legacy `--browser` remains as an alias for now). Without `--engine`, Oracle chooses API when `OPENAI_API_KEY` exists, otherwise browser.
+- `--browser-transport <opencli|cdp>`: choose the ChatGPT browser boundary. `opencli` uses the authenticated Browser Bridge and companion adapter; `cdp` keeps Oracle's legacy direct Chrome automation. The default remains `cdp` unless config selects OpenCLI.
 - `--browser-chrome-profile`, `--browser-chrome-path`: cookie source + binary override (defaults to the standard `"Default"` Chrome profile so existing ChatGPT logins carry over).
 - `--browser-cookie-path`: explicit path to the Chrome/Chromium/Edge `Cookies` SQLite DB. Handy when you launch a fork via `--browser-chrome-path` and want to copy its session cookies; see [docs/chromium-forks.md](chromium-forks.md) for examples.
 - `--browser-attach-running`: attach to a local already-running browser instead of launching Chrome directly. Defaults to `127.0.0.1:9222`; combine with `--remote-chrome <host:port>` to use a different local attach hint.

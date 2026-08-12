@@ -12,6 +12,7 @@ import type {
   BrowserArchiveMode,
   BrowserModelStrategy,
   BrowserResearchMode,
+  BrowserTransport,
 } from "../browser/types.js";
 import type { CookieParam } from "../browser/types.js";
 import { getOracleHomeDir } from "../oracleHome.js";
@@ -50,6 +51,8 @@ const BROWSER_MODEL_LABELS: [ModelName, string][] = [
 ];
 
 export interface BrowserFlagOptions {
+  browserTransport?: BrowserTransport;
+  opencliPath?: string;
   browserChromeProfile?: string;
   browserChromePath?: string;
   browserCookiePath?: string;
@@ -137,6 +140,20 @@ export function normalizeChatGptModelForBrowser(model: ModelName): ModelName {
 export async function buildBrowserConfig(
   options: BrowserFlagOptions,
 ): Promise<BrowserSessionConfig> {
+  const transport = options.browserTransport ?? "cdp";
+  if (transport === "opencli" && options.browserAttachRunning) {
+    throw new Error(
+      "--browser-attach-running is the legacy CDP path and cannot be combined with --browser-transport opencli.",
+    );
+  }
+  if (
+    transport === "opencli" &&
+    (options.copyProfile || options.remoteChrome || options.browserManualLogin)
+  ) {
+    throw new Error(
+      "--browser-transport opencli uses the authenticated Browser Bridge and cannot be combined with Chrome profile, remote Chrome, or manual-login launch options.",
+    );
+  }
   if (options.copyProfile && options.browserKeepBrowser) {
     throw new Error(
       "--copy-profile cannot be combined with --browser-keep-browser: the copied profile is a throwaway that is deleted after the run, so it must not be retained.",
@@ -203,6 +220,8 @@ export async function buildBrowserConfig(
       : mapModelToBrowserLabel(options.model);
 
   return {
+    transport,
+    opencliPath: options.opencliPath ?? null,
     chromeProfile: options.copyProfile
       ? (options.browserChromeProfile ?? null)
       : (options.browserChromeProfile ?? DEFAULT_CHROME_PROFILE),

@@ -7,6 +7,7 @@ import type {
   BrowserArchiveMode,
   BrowserModelStrategy,
   BrowserResearchMode,
+  BrowserTransport,
 } from "./browser/types.js";
 import type { ThinkingTimeLevel, ModelOverridesConfig } from "./oracle/types.js";
 
@@ -19,6 +20,10 @@ export interface NotifyConfig {
 }
 
 export interface BrowserConfigDefaults {
+  /** Browser automation backend. `opencli` avoids direct Chrome CDP attachment. */
+  transport?: BrowserTransport;
+  /** OpenCLI executable path. User-config only; ignored in project config. */
+  opencliPath?: string | null;
   chromeProfile?: string | null;
   chromePath?: string | null;
   chromeCookiePath?: string | null;
@@ -277,6 +282,7 @@ function sanitizeProjectConfig(config: UserConfig): UserConfig {
     sanitized.browser = {};
     const browser = config.browser;
     const allowedBrowserKeys: Array<keyof BrowserConfigDefaults> = [
+      "transport",
       "attachRunning",
       "timeoutMs",
       "inputTimeoutMs",

@@ -10,6 +10,7 @@ import type {
   SessionArtifact,
 } from "../sessionStore.js";
 import { runBrowserMode } from "../browserMode.js";
+import { runOpenCliBrowserMode } from "./opencliTransport.js";
 import type { BrowserRunResult } from "../browserMode.js";
 import { assembleBrowserPrompt } from "./prompt.js";
 import { BrowserAutomationError } from "../oracle/errors.js";
@@ -135,7 +136,6 @@ export async function runBrowserSessionExecution(
   deps: BrowserSessionRunnerDeps = {},
 ): Promise<BrowserExecutionResult> {
   const assemblePrompt = deps.assemblePrompt ?? assembleBrowserPrompt;
-  const executeBrowser = deps.executeBrowser ?? runBrowserMode;
   const promptArtifacts = await assemblePrompt(runOptions, { cwd });
   if (runOptions.verbose) {
     log(
@@ -201,6 +201,9 @@ export async function runBrowserSessionExecution(
   const executionBrowserConfig = runOptions.browserResumeConversationUrl
     ? { ...browserConfig, resumeConversationUrl: runOptions.browserResumeConversationUrl }
     : browserConfig;
+  const executeBrowser =
+    deps.executeBrowser ??
+    (executionBrowserConfig.transport === "opencli" ? runOpenCliBrowserMode : runBrowserMode);
   let browserResult: BrowserRunResult;
   try {
     browserResult = await executeBrowser({
@@ -318,6 +321,11 @@ export async function runBrowserSessionExecution(
       conversationId: browserResult.conversationId,
       promptSubmitted: browserResult.promptSubmitted,
       controllerPid: browserResult.controllerPid ?? process.pid,
+      opencliOperationRef: browserResult.opencliOperationRef,
+      opencliVersion: browserResult.opencliVersion,
+      opencliPayloadSha256: browserResult.opencliPayloadSha256,
+      opencliBaselineAssistantIndex: browserResult.opencliBaselineAssistantIndex,
+      opencliBaselineAssistantSha256: browserResult.opencliBaselineAssistantSha256,
     },
     archive: browserResult.archive,
     modelSelection,

@@ -9,6 +9,45 @@ import type { UserConfig } from "../../src/config.js";
 const source = (_key: keyof BrowserDefaultsOptions) => undefined;
 
 describe("applyBrowserDefaultsFromConfig", () => {
+  test("applies OpenCLI transport defaults from user config", () => {
+    const options: BrowserDefaultsOptions = {};
+    applyBrowserDefaultsFromConfig(
+      options,
+      { browser: { transport: "opencli", opencliPath: "/usr/local/bin/opencli" } },
+      source,
+    );
+
+    expect(options.browserTransport).toBe("opencli");
+    expect(options.opencliPath).toBe("/usr/local/bin/opencli");
+  });
+
+  test("an explicit OpenCLI transport ignores stale CDP launch defaults", () => {
+    const options: BrowserDefaultsOptions = { browserTransport: "opencli" };
+    applyBrowserDefaultsFromConfig(
+      options,
+      {
+        browser: {
+          attachRunning: true,
+          chromePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          headless: true,
+          hideWindow: true,
+          keepBrowser: true,
+          manualLogin: true,
+          manualLoginProfileDir: "/tmp/oracle-profile",
+        },
+      },
+      (key) => (key === "browserTransport" ? "cli" : "default"),
+    );
+
+    expect(options.browserAttachRunning).toBeUndefined();
+    expect(options.browserChromePath).toBeUndefined();
+    expect(options.browserHeadless).toBeUndefined();
+    expect(options.browserHideWindow).toBeUndefined();
+    expect(options.browserKeepBrowser).toBeUndefined();
+    expect(options.browserManualLogin).toBeUndefined();
+    expect(options.browserManualLoginProfileDir).toBeUndefined();
+  });
+
   test("applies chatgptUrl from user config when flags are absent", () => {
     const options: BrowserDefaultsOptions = {};
     const config: UserConfig = {

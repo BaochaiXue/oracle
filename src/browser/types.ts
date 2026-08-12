@@ -11,6 +11,7 @@ import type { ThinkingTimeLevel } from "../oracle/types.js";
 export type ChromeClient = Awaited<ReturnType<typeof CDP>>;
 export type CookieParam = Protocol.Network.CookieParam;
 export type BrowserModelStrategy = "select" | "current" | "ignore";
+export type BrowserTransport = "cdp" | "opencli";
 export type BrowserResearchMode = "off" | "deep";
 export type BrowserArchiveMode = "auto" | "always" | "never";
 
@@ -62,6 +63,10 @@ export interface SavedBrowserFile extends SessionArtifact {
 }
 
 export interface BrowserAutomationConfig {
+  /** Browser automation backend. OpenCLI uses the authenticated Browser Bridge extension. */
+  transport?: BrowserTransport;
+  /** OpenCLI executable path. User-config only; project config cannot override it. */
+  opencliPath?: string | null;
   chromeProfile?: string | null;
   chromePath?: string | null;
   chromeCookiePath?: string | null;
@@ -177,7 +182,7 @@ export interface BrowserRunResult {
   tookMs: number;
   answerTokens: number;
   answerChars: number;
-  browserTransport?: "cdp";
+  browserTransport?: BrowserTransport;
   chromePid?: number;
   chromePort?: number;
   chromeHost?: string;
@@ -189,6 +194,11 @@ export interface BrowserRunResult {
   conversationId?: string;
   promptSubmitted?: boolean;
   controllerPid?: number;
+  opencliOperationRef?: string;
+  opencliVersion?: string;
+  opencliPayloadSha256?: string;
+  opencliBaselineAssistantIndex?: number;
+  opencliBaselineAssistantSha256?: string;
 }
 
 export type ResolvedBrowserConfig = Required<
@@ -206,8 +216,11 @@ export type ResolvedBrowserConfig = Required<
     | "maxConcurrentTabs"
     | "researchMode"
     | "copyProfileSource"
+    | "opencliPath"
   >
 > & {
+  transport: BrowserTransport;
+  opencliPath?: string | null;
   chromeProfile?: string | null;
   chromePath?: string | null;
   chromeCookiePath?: string | null;

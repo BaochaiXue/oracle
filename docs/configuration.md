@@ -21,6 +21,8 @@ JSON5 parsing, so trailing commas and comments are allowed.
   },
 
   browser: {
+    transport: "cdp", // cdp | opencli; OpenCLI avoids direct Chrome debugging approval
+    opencliPath: null, // user config only; defaults to opencli on PATH
     chromeProfile: "Default",
     chromePath: null,
     chromeCookiePath: null,
@@ -105,7 +107,7 @@ ChatGPT Project URL in a package subdirectory.
 Project configs intentionally support only workflow defaults. They cannot set
 provider routing or secret/executable fields such as `apiBaseUrl`, `modelOverrides`, `azure`,
 `browser.remoteHost`, `browser.remoteToken`, `browser.chromePath`, or
-`browser.chromeCookiePath`. Keep tokens and machine-local executable/profile
+`browser.chromeCookiePath`, or `browser.opencliPath`. Keep tokens and machine-local executable/profile
 paths in `~/.oracle/config.json`, environment variables, or explicit CLI flags.
 
 ## Precedence
@@ -114,7 +116,7 @@ CLI flags and explicit override environment variables → effective config (proj
 
 - The effective config starts with `~/.oracle/config.json`, then layers project `.oracle/config.json` files from parent to child. `engine`, `model`, `search`, `filesReport`, `heartbeatSeconds`, `maxFileSizeBytes`, and `apiBaseUrl` in the effective config override auto-detected values unless explicitly set on the CLI or through a supported override environment variable.
 - Project `.oracle/config.json` files can override safe workflow defaults such as `engine`, `model`, `search`, `filesReport`, `heartbeatSeconds`, `maxFileSizeBytes`, `promptSuffix`, and allowed `browser.*` workflow settings.
-- Provider routing and machine-local fields (`apiBaseUrl`, `modelOverrides`, `azure`, remote browser host/token defaults, Chrome binary/profile paths, cookie DB paths, and session retention cleanup) are ignored in project configs and are read only from the user config, environment variables, or explicit CLI flags.
+- Provider routing and machine-local fields (`apiBaseUrl`, `modelOverrides`, `azure`, remote browser host/token defaults, Chrome binary/profile paths, cookie DB paths, the OpenCLI executable path, and session retention cleanup) are ignored in project configs and are read only from the user config, environment variables, or explicit CLI flags.
 - `ORACLE_ENGINE=api|browser` is a global override for engine selection (useful for MCP/Codex setups); it wins over `config.json`.
 - If `azure.endpoint` (or `--azure-endpoint`) is set, Oracle reads `AZURE_OPENAI_API_KEY` first and falls back to `OPENAI_API_KEY` for GPT models.
 - Remote browser defaults follow the same order: `--remote-host/--remote-token` win, then `browser.remoteHost` / `browser.remoteToken` in the config, then `ORACLE_REMOTE_HOST` / `ORACLE_REMOTE_TOKEN` if still unset.
@@ -124,7 +126,7 @@ CLI flags and explicit override environment variables → effective config (proj
 - `sessionRetentionHours` controls the default value for `--retain-hours`. When unset, `ORACLE_RETAIN_HOURS` (if present) becomes the fallback, and the CLI flag still wins over both.
 - `ORACLE_MAX_FILE_SIZE_BYTES` overrides `maxFileSizeBytes` when set. Oracle validates it as a positive integer number of bytes before reading any `--file` inputs.
 - `browser.chatgptUrl` accepts either the root ChatGPT URL (`https://chatgpt.com/`) or a folder/workspace URL (e.g., `https://chatgpt.com/g/.../project`); `browser.url` remains as a legacy alias.
-- Browser automation defaults can be set under `browser.*`, including `browser.manualLogin`, `browser.manualLoginProfileDir`, `browser.attachRunning`, `browser.thinkingTime` (CLI override: `--browser-thinking-time`), and `browser.researchMode` (CLI override: `--browser-research`). On Windows, `browser.manualLogin` defaults to `true` when omitted.
+- Browser automation defaults can be set under `browser.*`, including `browser.transport` (CLI override: `--browser-transport`), `browser.manualLogin`, `browser.manualLoginProfileDir`, `browser.attachRunning`, `browser.thinkingTime` (CLI override: `--browser-thinking-time`), and `browser.researchMode` (CLI override: `--browser-research`). Project configs may select `browser.transport`, but only the user config or hidden `--opencli-path` flag may select a machine-local OpenCLI executable. On Windows, `browser.manualLogin` defaults to `true` when omitted.
 
 If the config is missing or invalid, Oracle falls back to defaults and prints a warning for parse errors.
 

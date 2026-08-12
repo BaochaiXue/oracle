@@ -7,9 +7,12 @@ import type {
   BrowserArchiveMode,
   BrowserModelStrategy,
   BrowserResearchMode,
+  BrowserTransport,
 } from "../browser/types.js";
 
 export interface BrowserDefaultsOptions {
+  browserTransport?: BrowserTransport;
+  opencliPath?: string;
   chatgptUrl?: string;
   browserUrl?: string;
   browserChromeProfile?: string;
@@ -54,9 +57,13 @@ export function applyBrowserDefaultsFromConfig(
     const source = getSource(key);
     return source === undefined || source === "default";
   };
+  const openCliRequested =
+    options.browserTransport === "opencli" ||
+    (isUnset("browserTransport") && browser.transport === "opencli");
   const attachRunningRequested =
-    options.browserAttachRunning === true ||
-    (isUnset("browserAttachRunning") && browser.attachRunning === true);
+    !openCliRequested &&
+    (options.browserAttachRunning === true ||
+      (isUnset("browserAttachRunning") && browser.attachRunning === true));
   const currentModelRequestedByCli =
     options.browserModelStrategy === "current" && getSource("browserModelStrategy") === "cli";
 
@@ -66,24 +73,33 @@ export function applyBrowserDefaultsFromConfig(
     options.chatgptUrl = normalizeChatgptUrl(configuredChatgptUrl ?? "", CHATGPT_URL);
   }
 
+  if (isUnset("browserTransport") && browser.transport !== undefined) {
+    options.browserTransport = browser.transport;
+  }
+  if (isUnset("opencliPath") && browser.opencliPath !== undefined) {
+    options.opencliPath = browser.opencliPath ?? undefined;
+  }
+
   if (
     !attachRunningRequested &&
+    !openCliRequested &&
     isUnset("browserChromeProfile") &&
     browser.chromeProfile !== undefined
   ) {
     options.browserChromeProfile = browser.chromeProfile ?? undefined;
   }
-  if (isUnset("browserChromePath") && browser.chromePath !== undefined) {
+  if (!openCliRequested && isUnset("browserChromePath") && browser.chromePath !== undefined) {
     options.browserChromePath = browser.chromePath ?? undefined;
   }
   if (
     !attachRunningRequested &&
+    !openCliRequested &&
     isUnset("browserCookiePath") &&
     browser.chromeCookiePath !== undefined
   ) {
     options.browserCookiePath = browser.chromeCookiePath ?? undefined;
   }
-  if (isUnset("browserAttachRunning") && browser.attachRunning !== undefined) {
+  if (!openCliRequested && isUnset("browserAttachRunning") && browser.attachRunning !== undefined) {
     options.browserAttachRunning = browser.attachRunning;
   }
   if (isUnset("browserUrl") && options.browserUrl === undefined && browser.url !== undefined) {
@@ -92,7 +108,12 @@ export function applyBrowserDefaultsFromConfig(
   if (isUnset("browserTimeout") && typeof browser.timeoutMs === "number") {
     options.browserTimeout = String(browser.timeoutMs);
   }
-  if (!attachRunningRequested && isUnset("browserPort") && typeof browser.debugPort === "number") {
+  if (
+    !attachRunningRequested &&
+    !openCliRequested &&
+    isUnset("browserPort") &&
+    typeof browser.debugPort === "number"
+  ) {
     options.browserPort = browser.debugPort;
   }
   if (isUnset("browserInputTimeout") && typeof browser.inputTimeoutMs === "number") {
@@ -131,14 +152,20 @@ export function applyBrowserDefaultsFromConfig(
   if (isUnset("browserCookieWait") && typeof browser.cookieSyncWaitMs === "number") {
     options.browserCookieWait = String(browser.cookieSyncWaitMs);
   }
-  if (isUnset("browserHeadless") && browser.headless !== undefined) {
+  if (!openCliRequested && isUnset("browserHeadless") && browser.headless !== undefined) {
     options.browserHeadless = browser.headless;
   }
-  if (!attachRunningRequested && isUnset("browserHideWindow") && browser.hideWindow !== undefined) {
+  if (
+    !attachRunningRequested &&
+    !openCliRequested &&
+    isUnset("browserHideWindow") &&
+    browser.hideWindow !== undefined
+  ) {
     options.browserHideWindow = browser.hideWindow;
   }
   if (
     !attachRunningRequested &&
+    !openCliRequested &&
     isUnset("browserKeepBrowser") &&
     browser.keepBrowser !== undefined
   ) {
@@ -162,6 +189,7 @@ export function applyBrowserDefaultsFromConfig(
   }
   if (
     !attachRunningRequested &&
+    !openCliRequested &&
     isUnset("browserManualLogin") &&
     browser.manualLogin !== undefined
   ) {
@@ -169,6 +197,7 @@ export function applyBrowserDefaultsFromConfig(
   }
   if (
     !attachRunningRequested &&
+    !openCliRequested &&
     isUnset("browserManualLoginProfileDir") &&
     browser.manualLoginProfileDir !== undefined
   ) {

@@ -19,6 +19,8 @@
   },
   "files": [
     "dist/**/*",
+    "opencli-adapters/**/*",
+    "scripts/install-opencli-submit-file-adapter.mjs",
     "assets-oracle-icon.png",
     "vendor/oracle-notifier/OracleNotifier.swift",
     "vendor/oracle-notifier/OracleNotifier.app/**",

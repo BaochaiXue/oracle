@@ -9,6 +9,7 @@ import type {
   BrowserArchiveResult,
   BrowserModelStrategy,
   BrowserResearchMode,
+  BrowserTransport,
   CookieParam,
 } from "./browser/types.js";
 import type {
@@ -31,6 +32,8 @@ import { getOracleHomeDir } from "./oracleHome.js";
 export type SessionMode = "api" | "browser";
 
 export interface BrowserSessionConfig {
+  transport?: BrowserTransport;
+  opencliPath?: string | null;
   chromeProfile?: string | null;
   chromePath?: string | null;
   chromeCookiePath?: string | null;
@@ -88,7 +91,7 @@ export interface BrowserSessionConfig {
 }
 
 export interface BrowserRuntimeMetadata {
-  browserTransport?: "cdp";
+  browserTransport?: BrowserTransport;
   chromePid?: number;
   chromePort?: number;
   chromeHost?: string;
@@ -102,6 +105,16 @@ export interface BrowserRuntimeMetadata {
   promptSubmitted?: boolean;
   /** PID of the controller process that launched this browser run. Helps detect orphaned sessions. */
   controllerPid?: number;
+  /** Oracle-owned operation reference for this OpenCLI dispatch attempt. */
+  opencliOperationRef?: string;
+  /** OpenCLI version verified before dispatch. */
+  opencliVersion?: string;
+  /** SHA-256 of the sealed, mode-0600 submission artifact. */
+  opencliPayloadSha256?: string;
+  /** Latest assistant message index observed before an OpenCLI follow-up dispatch. */
+  opencliBaselineAssistantIndex?: number;
+  /** SHA-256 of the latest assistant text observed before an OpenCLI follow-up dispatch. */
+  opencliBaselineAssistantSha256?: string;
 }
 
 export type BrowserHarvestState = "running" | "completed" | "stalled" | "detached";

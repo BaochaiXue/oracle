@@ -67,6 +67,7 @@ describe("loadUserConfig", () => {
         engine: "api",
         model: "gpt-5.5-pro",
         browser: {
+          opencliPath: "/usr/local/bin/opencli",
           chatgptUrl: "https://chatgpt.com/",
           modelStrategy: "select",
           archiveConversations: "auto",
@@ -83,6 +84,7 @@ describe("loadUserConfig", () => {
       `{
         model: "gpt-5.4",
         browser: {
+          opencliPath: "./fake-opencli",
           chatgptUrl: "https://chatgpt.com/g/g-p-root/project",
           modelStrategy: "current",
           attachmentTimeoutMs: 120000,
@@ -108,6 +110,7 @@ describe("loadUserConfig", () => {
       engine: "browser",
       model: "gpt-5.4",
       browser: {
+        opencliPath: "/usr/local/bin/opencli",
         chatgptUrl: "https://chatgpt.com/g/g-p-root/project",
         modelStrategy: "current",
         attachmentTimeoutMs: 120000,
@@ -186,6 +189,7 @@ describe("loadUserConfig", () => {
         azure: { endpoint: "https://safe.openai.azure.com/" },
         sessionRetentionHours: 72,
         browser: {
+          opencliPath: "/usr/local/bin/opencli",
           chromePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
           remoteHost: "safe-host:9473",
           remoteToken: "safe-token",
@@ -204,6 +208,7 @@ describe("loadUserConfig", () => {
         azure: { endpoint: "https://evil.azure.example/" },
         sessionRetentionHours: 1,
         browser: {
+          opencliPath: "./fake-opencli",
           chromePath: "./fake-chrome",
           chromeCookiePath: "./Cookies",
           remoteHost: "evil.example:9473",
@@ -221,6 +226,7 @@ describe("loadUserConfig", () => {
     expect(result.config.azure?.endpoint).toBe("https://safe.openai.azure.com/");
     expect(result.config.sessionRetentionHours).toBe(72);
     expect(result.config.browser).toMatchObject({
+      opencliPath: "/usr/local/bin/opencli",
       chromePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
       remoteHost: "safe-host:9473",
       remoteToken: "safe-token",

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -36,6 +36,16 @@ try {
     "bin",
     "oracle-cli.js",
   );
+  const packageRoot = join(installDir, "node_modules", "@steipete", "oracle");
+  for (const packagedPath of [
+    "opencli-adapters/chatgpt/submit-file-core.js",
+    "opencli-adapters/chatgpt/submit-file.js",
+    "scripts/install-opencli-submit-file-adapter.mjs",
+  ]) {
+    if (!existsSync(join(packageRoot, packagedPath))) {
+      throw new Error(`packed Oracle is missing ${packagedPath}`);
+    }
+  }
   const help = run(process.execPath, [cliPath, "--help", "--verbose"], { cwd: installDir });
 
   for (const expected of [
@@ -44,6 +54,7 @@ try {
     "--http-timeout",
     "--allow-partial",
     "--preflight",
+    "--browser-transport <transport>",
     "docs",
   ]) {
     if (!help.includes(expected)) {

@@ -38,6 +38,28 @@ npx -y @steipete/oracle --help
 
 See the [installation guide](docs/install.md) for pnpm, updates, API keys, and storage paths.
 
+### Install this fork's OpenCLI transport
+
+The Homebrew and npm commands above install the upstream release. To use this
+fork's unattended ChatGPT Pro transport, install it from source together with
+its companion OpenCLI adapter:
+
+```bash
+git clone https://github.com/IndelibleVivi/oracle.git
+cd oracle
+corepack enable
+pnpm install
+pnpm build
+pnpm link -g
+node scripts/install-opencli-submit-file-adapter.mjs
+opencli validate chatgpt/submit-file
+```
+
+This requires Node.js 24+, OpenCLI 1.8.3 or newer in the 1.x line, and an
+authenticated OpenCLI Browser Bridge. Select it with
+`--browser-transport opencli`; see [Browser Mode](docs/browser-mode.md) for the
+security contract, follow-ups, recovery behavior, and current limitations.
+
 ## Quick start
 
 Build a review bundle locally before connecting any model:
@@ -63,13 +85,13 @@ Oracle chooses API mode when an OpenAI key is available and browser mode otherwi
 
 ## Choose an engine
 
-| Path    | Use it when                                                                 | Setup                                                |
-| ------- | --------------------------------------------------------------------------- | ---------------------------------------------------- |
-| API     | You want provider APIs, reliable automation, or multiple models in one run. | Set the key for the provider you use.                |
-| Browser | You want Oracle to use a signed-in ChatGPT or Gemini browser session.       | Install Chrome and complete the one-time login flow. |
-| Render  | You want to inspect, copy, or paste the bundle yourself.                    | No account or key is required.                       |
+| Path    | Use it when                                                                 | Setup                                                                         |
+| ------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| API     | You want provider APIs, reliable automation, or multiple models in one run. | Set the key for the provider you use.                                         |
+| Browser | You want Oracle to use a signed-in ChatGPT or Gemini browser session.       | Install Chrome, or connect OpenCLI Browser Bridge for unattended ChatGPT Pro. |
+| Render  | You want to inspect, copy, or paste the bundle yourself.                    | No account or key is required.                                                |
 
-API mode supports OpenAI, Azure OpenAI, Anthropic, Gemini, xAI, OpenRouter, and compatible endpoints. Browser mode uses Chrome automation for ChatGPT and a cookie-based Gemini client. See [browser mode](docs/browser-mode.md) and [provider endpoints](docs/openai-endpoints.md) for setup and limits.
+API mode supports OpenAI, Azure OpenAI, Anthropic, Gemini, xAI, OpenRouter, and compatible endpoints. Browser mode supports direct Chrome automation, an authenticated OpenCLI Browser Bridge transport for unattended ChatGPT Pro consults, and a cookie-based Gemini client. See [browser mode](docs/browser-mode.md) and [provider endpoints](docs/openai-endpoints.md) for setup and limits.
 
 ## Control the context
 

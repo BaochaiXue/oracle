@@ -5,6 +5,8 @@ describe("buildBrowserConfig", () => {
   test("uses defaults when optional flags omitted", async () => {
     const config = await buildBrowserConfig({ model: "gpt-5.5-pro" });
     expect(config).toMatchObject({
+      transport: "cdp",
+      opencliPath: null,
       chromeProfile: "Default",
       chromePath: null,
       chromeCookiePath: null,
@@ -22,6 +24,27 @@ describe("buildBrowserConfig", () => {
       researchMode: "off",
       archiveConversations: undefined,
     });
+  });
+
+  test("builds the OpenCLI transport and rejects legacy CDP attachment flags", async () => {
+    await expect(
+      buildBrowserConfig({
+        model: "gpt-5.5-pro",
+        browserTransport: "opencli",
+        opencliPath: "/opt/local/bin/opencli",
+      }),
+    ).resolves.toMatchObject({
+      transport: "opencli",
+      opencliPath: "/opt/local/bin/opencli",
+      attachRunning: false,
+    });
+    await expect(
+      buildBrowserConfig({
+        model: "gpt-5.5-pro",
+        browserTransport: "opencli",
+        browserAttachRunning: true,
+      }),
+    ).rejects.toThrow(/legacy CDP path/u);
   });
 
   test("maps gpt-5.4 browser runs to Thinking 5.4", async () => {
