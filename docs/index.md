@@ -21,7 +21,6 @@ follow-up lineage, and recovery. OpenCLI owns only the browser boundary.
 ```bash
 git clone https://github.com/IndelibleVivi/oracle.git
 cd oracle
-git switch codex/opencli-browser-transport
 corepack enable
 pnpm install
 pnpm build
