@@ -5,6 +5,21 @@ import {
 } from "../../src/browser/controlPlan.js";
 
 describe("browser control plan", () => {
+  test("describes OpenCLI as a non-CDP authenticated bridge", () => {
+    const plan = describeBrowserControlPlan({ transport: "opencli" });
+    const output = formatBrowserControlPlan(plan, "dry-run").join("\n");
+
+    expect(plan).toMatchObject({
+      mode: "opencli",
+      launchesChrome: false,
+      mayFocusWindow: false,
+      summary: "use OpenCLI Browser Bridge",
+    });
+    expect(output).toContain("does not request direct Chrome debugging approval");
+    expect(output).toContain("ephemeral tab leases");
+    expect(output).not.toContain("launch visible Chrome");
+  });
+
   test("describes visible Chrome as a focus-taking launch", () => {
     const plan = describeBrowserControlPlan({});
 

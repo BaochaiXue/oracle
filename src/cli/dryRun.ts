@@ -145,6 +145,14 @@ function logBrowserCookieStrategy(
   label: string,
 ) {
   if (!browserConfig) return;
+  if (browserConfig.transport === "opencli") {
+    log(
+      chalk.bold(
+        `[${label}] Authentication: OpenCLI Browser Bridge (Oracle does not copy Chrome cookies).`,
+      ),
+    );
+    return;
+  }
   const plan = buildCookiePlan(browserConfig);
   log(chalk.bold(`[${label}] ${plan.description}`));
 }

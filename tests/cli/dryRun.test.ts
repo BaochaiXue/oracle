@@ -92,6 +92,45 @@ describe("runDryRunSummary", () => {
     ).toBe(true);
   });
 
+  test("describes the OpenCLI GPT-5.6 Pro lane without CDP guidance", async () => {
+    const log = vi.fn();
+    await runDryRunSummary(
+      {
+        engine: "browser",
+        runOptions: { ...baseRunOptions, model: "gpt-5-pro" },
+        cwd: "/repo",
+        version: "2.0.0",
+        log,
+        browserConfig: {
+          transport: "opencli",
+          desiredModel: "GPT-5.6 Pro",
+          modelStrategy: "select",
+        },
+      },
+      {
+        assembleBrowserPromptImpl: async () => ({
+          markdown: "bundle",
+          composerText: "prompt",
+          estimatedInputTokens: 77,
+          attachments: [],
+          inlineFileCount: 0,
+          tokenEstimateIncludesInlineFiles: false,
+          attachmentsPolicy: "auto",
+          attachmentMode: "inline",
+          fallback: null,
+        }),
+      },
+    );
+
+    const output = log.mock.calls.flat().join("\n");
+    expect(output).toContain("target=GPT-5.6 Pro; requested=gpt-5-pro");
+    expect(output).toContain("Browser control: use OpenCLI Browser Bridge");
+    expect(output).toContain("does not request direct Chrome debugging approval");
+    expect(output).toContain("Authentication: OpenCLI Browser Bridge");
+    expect(output).not.toContain("launch visible Chrome");
+    expect(output).not.toContain("copy from Chrome");
+  });
+
   test("prints browser follow-up summary", async () => {
     const log = vi.fn();
     await runDryRunSummary(

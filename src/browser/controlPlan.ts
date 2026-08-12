@@ -2,6 +2,7 @@ import type { BrowserAutomationConfig } from "./types.js";
 
 type BrowserControlConfig = Pick<
   BrowserAutomationConfig,
+  | "transport"
   | "attachRunning"
   | "browserTabRef"
   | "remoteChrome"
@@ -12,7 +13,13 @@ type BrowserControlConfig = Pick<
 >;
 
 export interface BrowserControlPlan {
-  mode: "attach-running" | "remote-chrome" | "headless" | "hidden-window" | "visible-window";
+  mode:
+    | "opencli"
+    | "attach-running"
+    | "remote-chrome"
+    | "headless"
+    | "hidden-window"
+    | "visible-window";
   launchesChrome: boolean;
   mayFocusWindow: boolean;
   summary: string;
@@ -23,6 +30,20 @@ export function describeBrowserControlPlan(config: BrowserControlConfig = {}): B
   const guidance: string[] = [];
   const tabRef = String(config.browserTabRef ?? "").trim();
   const reusesExistingTab = tabRef.length > 0;
+
+  if (config.transport === "opencli") {
+    guidance.push(
+      "OpenCLI uses the authenticated Browser Bridge and does not request direct Chrome debugging approval.",
+    );
+    guidance.push("OpenCLI owns ephemeral tab leases and closes them after each command.");
+    return {
+      mode: "opencli",
+      launchesChrome: false,
+      mayFocusWindow: false,
+      summary: "use OpenCLI Browser Bridge",
+      guidance,
+    };
+  }
 
   if (config.attachRunning) {
     guidance.push(

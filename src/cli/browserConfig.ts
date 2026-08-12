@@ -23,6 +23,7 @@ const DEFAULT_BROWSER_ATTACHMENT_TIMEOUT_MS = 45_000;
 const DEFAULT_BROWSER_RECHECK_TIMEOUT_MS = 120_000;
 const DEFAULT_BROWSER_AUTO_REATTACH_TIMEOUT_MS = 120_000;
 const DEFAULT_CHROME_PROFILE = "Default";
+const OPENCLI_PRO_TARGET = "GPT-5.6 Pro";
 
 // Ordered array: most specific models first to ensure correct selection.
 // The browser label is passed to the model picker which fuzzy-matches against ChatGPT's UI.
@@ -213,11 +214,14 @@ export async function buildBrowserConfig(
   const rawUrl = options.chatgptUrl ?? options.browserUrl;
   const url = rawUrl ? normalizeChatgptUrl(rawUrl, CHATGPT_URL) : undefined;
 
-  const desiredModel = isChatGptModel
-    ? mapModelToBrowserLabel(options.model)
-    : shouldUseOverride
-      ? desiredModelOverride
-      : mapModelToBrowserLabel(options.model);
+  const desiredModel =
+    transport === "opencli"
+      ? OPENCLI_PRO_TARGET
+      : isChatGptModel
+        ? mapModelToBrowserLabel(options.model)
+        : shouldUseOverride
+          ? desiredModelOverride
+          : mapModelToBrowserLabel(options.model);
 
   return {
     transport,

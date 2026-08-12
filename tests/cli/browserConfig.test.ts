@@ -37,7 +37,21 @@ describe("buildBrowserConfig", () => {
       transport: "opencli",
       opencliPath: "/opt/local/bin/opencli",
       attachRunning: false,
+      desiredModel: "GPT-5.6 Pro",
     });
+
+    await expect(
+      buildBrowserConfig({
+        model: "gpt-5-pro",
+        browserTransport: "opencli",
+        browserModelStrategy: "select",
+      }),
+    ).resolves.toMatchObject({
+      transport: "opencli",
+      desiredModel: "GPT-5.6 Pro",
+      modelStrategy: "select",
+    });
+
     await expect(
       buildBrowserConfig({
         model: "gpt-5.5-pro",
