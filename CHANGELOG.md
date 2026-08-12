@@ -1,20 +1,30 @@
 # Changelog
 
-## 0.17.2 — Unreleased
-
-### Added
-
-- Browser: add a `pro` thinking-time level that selects ChatGPT's Pro effort tier on the model it is already using. It fails closed: an unconfirmed selection aborts the run rather than silently submitting at a cheaper tier.
-
-### Changed
-
-- Dependencies: update Google GenAI, Node types, Chrome DevTools protocol, esbuild, tsx, and related transitive packages.
-- Developer workflow: remove the obsolete scoped-commit helper and allow standard Git commands in isolated worktrees.
+## 0.17.3 — Unreleased
 
 ### Fixed
 
+- Browser: recognize the Japanese `詳細設定` → `推論レベル` controls in ChatGPT's unified Intelligence picker, allowing explicit Pro effort selection without weakening the fail-closed guard for unknown languages.
+
+## 0.17.2 — 2026-08-10
+
+**Highlight:** browser mode works with ChatGPT's redesigned model picker again —
+model selection moved under Advanced → Model, and the `gpt-*-pro` aliases now
+select the right model _and_ the Pro effort tier.
+
+### Fixed
+
+- Browser: navigate ChatGPT's unified picker, where the model version lives under Advanced → Model and effort under Advanced → Effort. The `gpt-5.5-pro` family of aliases now resolves to the GPT-5.5 model with Pro thinking time instead of failing against the removed flat menu; an explicit `--browser-thinking-time` still wins (#362, thanks @shivamiitgoa).
 - Security: restrict existing and newly created session transcripts, model metadata, and browser artifacts to the current user, without following symlinks during upgrade hardening. Thanks @bunlongheng!
-- Browser: select models and reasoning effort in ChatGPT's unified Intelligence picker, where both controls moved behind `Advanced` → `Model` / `Effort` submenus next to a power slider. Model selection no longer mistakes a bare effort pill such as `High` for GPT-5.5, and `gpt-5.5-pro` plus older Pro aliases now select GPT-5.5 with Pro effort while preserving explicit effort overrides. Submenu openers are positively identified so the model and effort flows cannot click each other's controls. Thanks @shivamiitgoa!
+
+### Added
+
+- Browser: a `pro` thinking-time level that selects ChatGPT's Pro effort tier on the model it is already using. It fails closed: an unconfirmed selection aborts the run rather than silently submitting at a cheaper tier.
+
+### Changed
+
+- Dependencies: update Google GenAI, Node types, Chrome DevTools protocol, esbuild, tsx, shiki, tokentally (now pricing cached tokens), hono, protobufjs, vite, and related transitives.
+- Developer workflow: remove the obsolete scoped-commit helper and allow standard Git commands in isolated worktrees.
 
 ## 0.17.1 — 2026-08-02
 
