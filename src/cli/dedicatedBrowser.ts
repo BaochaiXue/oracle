@@ -30,6 +30,7 @@ import { delay } from "../browser/utils.js";
 export interface DedicatedBrowserSetupOptions {
   profileDir: string;
   chromePath?: string;
+  useMockKeychain?: boolean;
   json?: boolean;
   verbose?: boolean;
   onStarted?: (receipt: { profileDir: string; pid?: number }) => void;
@@ -56,6 +57,7 @@ export interface DedicatedBrowserSmokeResult {
   ok: true;
   transport: "direct-cdp";
   profileDir: string;
+  keychainMode: "mock" | "system";
   coldStarts: 2;
   recurringApprovalRequired: false;
   promptSubmitted: false;
@@ -80,6 +82,7 @@ function resolveDedicatedConfig(options: DedicatedBrowserSmokeOptions, hideWindo
     chromePath: options.chromePath,
     headless: false,
     hideWindow,
+    useMockKeychain: options.useMockKeychain,
     keepBrowser: false,
   });
 }
@@ -136,6 +139,7 @@ export async function runDedicatedBrowserSetup(options: DedicatedBrowserSetupOpt
   debugging: false;
   promptSubmitted: false;
   closed: true;
+  keychainMode: "mock" | "system";
 }> {
   const logger = createLogger(options.verbose);
   await ensureDedicatedBrowserProfileDirectory(options.profileDir);
@@ -152,7 +156,7 @@ export async function runDedicatedBrowserSetup(options: DedicatedBrowserSetupOpt
       "No dedicated Chrome executable was found. Run `oracle browser install` or pass a compatible executable with --chrome-path.",
     );
   }
-  const args = buildDedicatedSetupArgs(options.profileDir);
+  const args = buildDedicatedSetupArgs(options.profileDir, options.useMockKeychain);
   const child = spawn(chromePath, args, {
     detached: false,
     stdio: "ignore",
@@ -180,21 +184,26 @@ export async function runDedicatedBrowserSetup(options: DedicatedBrowserSetupOpt
     debugging: false,
     promptSubmitted: false,
     closed: true,
+    keychainMode: options.useMockKeychain ? "mock" : "system",
   };
 }
 
-function buildDedicatedSetupArgs(profileDir: string): string[] {
+function buildDedicatedSetupArgs(profileDir: string, useMockKeychain = false): string[] {
   return [
     `--user-data-dir=${profileDir}`,
     "--no-first-run",
     "--no-default-browser-check",
+    ...(useMockKeychain && process.platform === "darwin" ? ["--use-mock-keychain"] : []),
     "--new-window",
     CHATGPT_URL,
   ];
 }
 
-export function buildDedicatedSetupArgsForTest(profileDir: string): string[] {
-  return buildDedicatedSetupArgs(profileDir);
+export function buildDedicatedSetupArgsForTest(
+  profileDir: string,
+  useMockKeychain = false,
+): string[] {
+  return buildDedicatedSetupArgs(profileDir, useMockKeychain);
 }
 
 export async function runDedicatedBrowserSmoke(
@@ -255,6 +264,7 @@ export async function runDedicatedBrowserSmoke(
     ok: true,
     transport: "direct-cdp",
     profileDir: options.profileDir,
+    keychainMode: options.useMockKeychain ? "mock" : "system",
     coldStarts: 2,
     recurringApprovalRequired: false,
     promptSubmitted: false,
@@ -274,8 +284,9 @@ export function printDedicatedBrowserSetupResult(
     [
       `Oracle sign-in browser completed (pid ${result.pid ?? "unknown"}; CDP disabled).`,
       `Profile: ${result.profileDir}`,
+      `Keychain mode: ${result.keychainMode}`,
       "The whole sign-in browser is now closed. Run `oracle browser smoke` to validate two cold CDP attaches.",
-      "This setup window has no CDP endpoint and no automation flags. No prompt was submitted.",
+      "This setup window has no CDP endpoint or prompt automation. No prompt was submitted.",
     ].join("\n") + "\n",
   );
 }
@@ -293,6 +304,7 @@ export function printDedicatedBrowserSmokeResult(
       `Dedicated Chrome smoke passed: ${result.coldStarts}/2 cold starts attached over loopback CDP.`,
       "The same persistent profile was authenticated on both starts; no prompt was submitted and no recurring browser approval was requested.",
       `Profile: ${result.profileDir}`,
+      `Keychain mode: ${result.keychainMode}`,
     ].join("\n") + "\n",
   );
 }

@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- macOS dedicated browser: add an explicit, user-config-only mock-keychain mode
+  and apply it consistently to setup, two-cold-start smoke, normal runs, and
+  reattach. This avoids recurring Chrome Safe Storage password dialogs for an
+  isolated ChatGPT-only Chrome for Testing profile while documenting the weaker
+  deterministic at-rest cookie protection and fresh-profile requirement.
 - Browser: recognize the Japanese `詳細設定` → `推論レベル` controls in ChatGPT's unified Intelligence picker, allowing explicit Pro effort selection without weakening the fail-closed guard for unknown languages.
 - OpenCLI transport: require OpenCLI 1.8.6, execute Oracle's native `GPT-5.6 Sol` + `Pro` picker in the exact submission tab, replace tab-creating `doctor` preflight with `daemon status`, and let companion adapters hard-close their tabs while suppressing the executor's second lease release so it cannot leave reusable `about:blank` placeholders. Pre-submission failures now persist the sanitized OpenCLI stage, code, exit status, and trace summary path.
 

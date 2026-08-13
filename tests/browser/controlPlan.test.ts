@@ -49,9 +49,14 @@ describe("browser control plan", () => {
   });
 
   test("describes hidden and remote modes distinctly", () => {
-    const hidden = describeBrowserControlPlan({ hideWindow: true });
+    const hidden = describeBrowserControlPlan({
+      hideWindow: true,
+      manualLogin: true,
+      useMockKeychain: true,
+    });
     expect(hidden.mode).toBe("hidden-window");
     expect(hidden.guidance.join(" ")).toContain("off-screen");
+    expect(hidden.guidance.join(" ")).toContain("avoiding recurring password dialogs");
     expect(
       describeBrowserControlPlan({ remoteChrome: { host: "127.0.0.1", port: 9222 } }).mode,
     ).toBe("remote-chrome");

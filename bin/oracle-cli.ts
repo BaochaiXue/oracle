@@ -148,6 +148,7 @@ interface CliOptions extends OptionValues {
   browserInlineCookies?: string;
   browserHeadless?: boolean;
   browserHideWindow?: boolean;
+  browserUseMockKeychain?: boolean;
   browserKeepBrowser?: boolean;
   browserTab?: string;
   browserModelStrategy?: "select" | "current" | "ignore";
@@ -806,6 +807,12 @@ program
     ).hideHelp(),
   )
   .addOption(
+    new Option(
+      "--browser-use-mock-keychain",
+      "Use Chromium's test keychain for an isolated persistent macOS profile.",
+    ).hideHelp(),
+  )
+  .addOption(
     new Option("--browser-keep-browser", "Keep Chrome running after completion.").hideHelp(),
   )
   .addOption(
@@ -1059,12 +1066,21 @@ browserCommand
     "Dedicated Chrome user-data directory (default: browser.manualLoginProfileDir or ~/.oracle/browser-profile).",
   )
   .option("--chrome-path <path>", "Explicit Chrome or Chromium executable path.")
+  .addOption(
+    new Option(
+      "--use-mock-keychain",
+      "Avoid recurring macOS Keychain dialogs for this isolated profile.",
+    ).default(undefined),
+  )
   .option("--json", "Print structured JSON.", false)
   .option("-v, --verbose", "Show browser launch and navigation details.", false)
   .action(async (commandOptions) => {
     const { printDedicatedBrowserSetupResult, runDedicatedBrowserSetup } =
       await import("../src/cli/dedicatedBrowser.js");
-    const userConfig = (await loadUserConfig()).config;
+    const loadedUserConfig = await loadUserConfig({ includeProject: false });
+    const userConfig = loadedUserConfig.config;
+    const useMockKeychain =
+      commandOptions.useMockKeychain ?? userConfig.browser?.useMockKeychain ?? false;
     const result = await runDedicatedBrowserSetup({
       ...commandOptions,
       profileDir:
@@ -1072,17 +1088,32 @@ browserCommand
         userConfig.browser?.manualLoginProfileDir ??
         path.join(os.homedir(), ".oracle", "browser-profile"),
       chromePath: commandOptions.chromePath ?? userConfig.browser?.chromePath ?? undefined,
+      useMockKeychain,
       onStarted: ({ pid, profileDir }) => {
         process.stderr.write(
           [
             `Oracle sign-in browser opened (pid ${pid ?? "unknown"}).`,
             `Profile: ${profileDir}`,
+            `Keychain mode: ${useMockKeychain ? "mock" : "system"}`,
             "Sign in to ChatGPT, then close the entire Chrome for Testing window.",
             "This command waits for that browser to exit so it cannot remain behind as an orphaned link target.",
           ].join("\n") + "\n",
         );
       },
     });
+    if (commandOptions.useMockKeychain === true && userConfig.browser?.useMockKeychain !== true) {
+      const { writeUserConfigFile } = await import("../src/bridge/userConfigFile.js");
+      await writeUserConfigFile(loadedUserConfig.path, {
+        ...userConfig,
+        browser: {
+          ...userConfig.browser,
+          useMockKeychain: true,
+        },
+      });
+      process.stderr.write(
+        `Enabled browser.useMockKeychain in ${loadedUserConfig.path} for subsequent Oracle runs.\n`,
+      );
+    }
     printDedicatedBrowserSetupResult(result, commandOptions.json);
   });
 
@@ -1101,13 +1132,19 @@ browserCommand
     parseIntOption,
   )
   .option("--chrome-path <path>", "Explicit Chrome or Chromium executable path.")
+  .addOption(
+    new Option(
+      "--use-mock-keychain",
+      "Avoid recurring macOS Keychain dialogs for this isolated profile.",
+    ).default(undefined),
+  )
   .option("--visible", "Keep each test window on screen instead of moving it off-screen.", false)
   .option("--json", "Print structured JSON.", false)
   .option("-v, --verbose", "Show browser launch and navigation details.", false)
   .action(async (commandOptions) => {
     const { printDedicatedBrowserSmokeResult, runDedicatedBrowserSmoke } =
       await import("../src/cli/dedicatedBrowser.js");
-    const userConfig = (await loadUserConfig()).config;
+    const userConfig = (await loadUserConfig({ includeProject: false })).config;
     const result = await runDedicatedBrowserSmoke({
       ...commandOptions,
       profileDir:
@@ -1116,6 +1153,8 @@ browserCommand
         path.join(os.homedir(), ".oracle", "browser-profile"),
       port: commandOptions.port ?? userConfig.browser?.debugPort ?? 9333,
       chromePath: commandOptions.chromePath ?? userConfig.browser?.chromePath ?? undefined,
+      useMockKeychain:
+        commandOptions.useMockKeychain ?? userConfig.browser?.useMockKeychain ?? false,
     });
     printDedicatedBrowserSmokeResult(result, commandOptions.json);
   });
@@ -3046,6 +3085,10 @@ function printDebugHelp(cliName: string): void {
     ],
     ["--browser-headless", "Launch Chrome in headless mode."],
     ["--browser-hide-window", "Hide the Chrome window (macOS headful only)."],
+    [
+      "--browser-use-mock-keychain",
+      "Avoid recurring macOS Keychain dialogs for the isolated profile (weaker at-rest protection).",
+    ],
     ["--browser-keep-browser", "Leave Chrome running after completion."],
   ]);
   console.log("");

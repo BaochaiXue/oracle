@@ -35,6 +35,16 @@ describe("dedicated browser setup", () => {
     expect(args).not.toContain("--use-mock-keychain");
   });
 
+  test("uses the mock keychain for unattended macOS cold starts when explicitly enabled", () => {
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    const profileDir = "/Users/example/.oracle/browser-profile";
+    const args = buildDedicatedSetupArgsForTest(profileDir, true);
+
+    expect(args).toContain("--use-mock-keychain");
+    expect(args).not.toContain("--password-store=basic");
+    expect(args.some((arg) => arg.startsWith("--remote-debugging"))).toBe(false);
+  });
+
   test("resumes a retained partial Chrome for Testing archive", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "oracle-cft-resume-"));
     const archivePath = path.join(tmpDir, "chrome.zip");

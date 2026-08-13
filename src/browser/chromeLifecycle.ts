@@ -24,6 +24,7 @@ export async function launchChrome(
     debugBindAddress ?? "127.0.0.1",
     config.hideWindow ?? false,
     persistentProfile,
+    config.useMockKeychain ?? false,
   );
   // copy-profile reuses a copied signed-in profile whose cookies are
   // Keychain-encrypted, so it must launch with the real Keychain (not mocked):
@@ -735,11 +736,12 @@ function buildChromeFlags(
   debugBindAddress?: string | null,
   hideWindow = false,
   persistentProfile = false,
+  useMockKeychain = false,
 ): string[] {
   const persistentProfileFlags = [
     // A dedicated profile may stay alive for a long Pro turn. Keep Chrome's
     // renderer throttling, hang monitor, IPC flood protection, Safe Browsing,
-    // and real macOS Keychain behavior intact.
+    // and Safe Browsing behavior intact. Keychain behavior is selected below.
     "--disable-component-extensions-with-background-pages",
     "--disable-default-apps",
     "--disable-extensions",
@@ -780,6 +782,11 @@ function buildChromeFlags(
 
   if (!persistentProfile && process.platform !== "win32" && !isWsl()) {
     flags.push("--password-store=basic", "--use-mock-keychain");
+  } else if (persistentProfile && useMockKeychain && process.platform === "darwin") {
+    // Chrome for Testing has a different app identity from everyday Chrome.
+    // Opting into Chromium's test keychain avoids a macOS permission dialog on
+    // every cold start while keeping one deterministic key for this profile.
+    flags.push("--use-mock-keychain");
   }
 
   if (debugBindAddress) {
@@ -809,8 +816,15 @@ export function buildChromeFlagsForTest(
   debugBindAddress?: string | null,
   hideWindow = false,
   persistentProfile = false,
+  useMockKeychain = false,
 ): string[] {
-  return buildChromeFlags(headless, debugBindAddress, hideWindow, persistentProfile);
+  return buildChromeFlags(
+    headless,
+    debugBindAddress,
+    hideWindow,
+    persistentProfile,
+    useMockKeychain,
+  );
 }
 
 function resolveChromeLaunchOptions(

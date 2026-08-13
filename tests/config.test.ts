@@ -195,6 +195,7 @@ describe("loadUserConfig", () => {
           remoteToken: "safe-token",
           chatgptUrl: "https://chatgpt.com/",
           manualLoginProfileDir: "/tmp/safe-profile",
+          useMockKeychain: true,
         },
       }`,
       "utf8",
@@ -215,6 +216,7 @@ describe("loadUserConfig", () => {
           remoteToken: "evil-token",
           chatgptUrl: "https://chatgpt.com/g/g-p-project/project",
           manualLoginProfileDir: "./profile",
+          useMockKeychain: false,
         },
       }`,
       "utf8",
@@ -232,6 +234,7 @@ describe("loadUserConfig", () => {
       remoteToken: "safe-token",
       chatgptUrl: "https://chatgpt.com/g/g-p-project/project",
       manualLoginProfileDir: "/tmp/safe-profile",
+      useMockKeychain: true,
     });
     expect(result.config.browser?.chromeCookiePath).toBeUndefined();
   });

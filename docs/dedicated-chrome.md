@@ -81,7 +81,8 @@ After building and linking this fork, run:
 
 ```bash
 oracle browser install
-oracle browser setup
+# macOS unattended mode; persists browser.useMockKeychain=true
+oracle browser setup --use-mock-keychain
 ```
 
 `browser install` downloads the current stable Chrome for Testing into
@@ -97,8 +98,9 @@ executable path.
 
 1. creates `~/.oracle/browser-profile` with owner-only directory permissions on
    Unix-like systems;
-2. launches a normal Chrome for Testing window with that directory, without CDP or
-   automation flags;
+2. launches a normal Chrome for Testing window with that directory, without CDP
+   or prompt automation (`--use-mock-keychain` is added on macOS when explicitly
+   configured);
 3. opens `https://chatgpt.com/` visibly;
 4. submits no prompt and waits while the operator signs in;
 5. returns only after the entire sign-in browser exits.
@@ -107,6 +109,22 @@ Sign in to ChatGPT in that window. Keep this profile narrowly scoped: do not use
 it as a general browser and do not sign unrelated accounts into it. Close the
 Chrome for Testing browser after sign-in so the cold-start validation can own
 the profile exclusively. Closing a single tab is insufficient.
+
+On macOS, the Chrome for Testing app identity does not own everyday Chrome's
+`Chrome Safe Storage` Keychain ACL. System-Keychain mode can therefore ask for
+the login password again on later cold starts. `--use-mock-keychain` makes the
+choice explicit, writes `browser.useMockKeychain:true` to the user config, and
+uses Chromium's deterministic test keychain consistently in setup, smoke,
+normal runs, and reattach. This avoids recurring dialogs but weakens at-rest
+protection for cookies in that profile. Keep the directory mode `0700`, use it
+only for ChatGPT, and never copy or publish it. A profile initialized in system
+mode must not be reused after switching; choose a fresh `--profile-dir`.
+
+This behavior follows Chromium's own macOS test path: its
+[test launcher adds `--use-mock-keychain` to prevent blocking permission dialogs](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/test/base/test_launcher_utils.cc),
+and the [mock Apple Keychain implementation returns a fixed test password](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/crypto/mock_apple_keychain.cc).
+That is why the flag removes the human gate and also why the security tradeoff
+must remain explicit.
 
 Use an explicit profile path when required:
 
@@ -123,8 +141,9 @@ begins only when the smoke or a normal Oracle run starts.
 
 This separation is deliberate. Persistent CDP runs also ignore
 `chrome-launcher`'s aggressive short-test defaults: Chrome's renderer
-throttling, hang monitor, IPC flood protection, Safe Browsing, and real macOS
-Keychain remain enabled. If an Oracle Chrome ever shows abnormal memory growth,
+throttling, hang monitor, IPC flood protection, and Safe Browsing remain
+enabled. The configured `system` or `mock` keychain mode is the only keychain
+choice changed. If an Oracle Chrome ever shows abnormal memory growth,
 force-quit that isolated Chrome, do not submit a duplicate consultation, and
 inspect the profile/process receipt before retrying.
 
@@ -188,6 +207,7 @@ configuration records the full local policy:
     "debugPort": 9333,
     "cookieSync": false,
     "hideWindow": true,
+    "useMockKeychain": true,
     "keepBrowser": false,
     "modelStrategy": "select",
     "thinkingTime": "pro",
@@ -214,6 +234,10 @@ Important fields:
   default whenever the dedicated profile is active.
 - `hideWindow:true` positions normal headful Chrome off-screen on macOS. The
   setup command remains visible. Set it to `false` for visibly debuggable runs.
+- `useMockKeychain:true` is a user-config-only macOS unattended-mode choice. It
+  avoids recurring Keychain approval dialogs for the isolated profile at the
+  cost of deterministic, weaker at-rest cookie encryption. Do not enable it for
+  an existing system-Keychain profile; create a fresh profile directory.
 - `keepBrowser:false` lets completed one-shots clean up the owned process.
 - `profileLockTimeoutMs` serializes the short profile/composer mutation window.
 - `maxConcurrentTabs` caps simultaneous ChatGPT targets in the shared profile.

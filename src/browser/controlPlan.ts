@@ -8,6 +8,7 @@ type BrowserControlConfig = Pick<
   | "remoteChrome"
   | "headless"
   | "hideWindow"
+  | "useMockKeychain"
   | "keepBrowser"
   | "manualLogin"
 >;
@@ -88,6 +89,7 @@ export function describeBrowserControlPlan(config: BrowserControlConfig = {}): B
 
   if (config.headless) {
     guidance.push("Headless mode avoids visible UI but may be blocked by ChatGPT or Cloudflare.");
+    appendKeychainGuidance(guidance, config);
     return {
       mode: "headless",
       launchesChrome: true,
@@ -104,6 +106,7 @@ export function describeBrowserControlPlan(config: BrowserControlConfig = {}): B
     guidance.push(
       "The first-time `oracle browser setup` flow is intentionally visible; ordinary runs follow this hidden-window policy.",
     );
+    appendKeychainGuidance(guidance, config);
     return {
       mode: "hidden-window",
       launchesChrome: true,
@@ -118,6 +121,7 @@ export function describeBrowserControlPlan(config: BrowserControlConfig = {}): B
       ? "Oracle launches its own persistent profile visibly for this run; it does not attach to personal Chrome."
       : "A visible automation Chrome window may take focus while Oracle controls ChatGPT.",
   );
+  appendKeychainGuidance(guidance, config);
   guidance.push(
     "Use --browser-hide-window, --browser-attach-running, or --remote-chrome to reduce desktop disruption.",
   );
@@ -134,6 +138,14 @@ export function describeBrowserControlPlan(config: BrowserControlConfig = {}): B
     summary: "launch visible Chrome",
     guidance,
   };
+}
+
+function appendKeychainGuidance(guidance: string[], config: BrowserControlConfig): void {
+  if (config.manualLogin && config.useMockKeychain) {
+    guidance.push(
+      "The isolated persistent profile uses Chromium's mock keychain on macOS, avoiding recurring password dialogs with weaker at-rest cookie protection.",
+    );
+  }
 }
 
 export function formatBrowserControlPlan(plan: BrowserControlPlan, label = "browser"): string[] {

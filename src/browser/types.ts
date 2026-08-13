@@ -103,6 +103,8 @@ export interface BrowserAutomationConfig {
   headless?: boolean;
   keepBrowser?: boolean;
   hideWindow?: boolean;
+  /** Avoid macOS Keychain permission prompts for an isolated persistent profile. */
+  useMockKeychain?: boolean;
   desiredModel?: string | null;
   modelStrategy?: BrowserModelStrategy;
   debug?: boolean;

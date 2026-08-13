@@ -53,6 +53,7 @@ JSON5 parsing, so trailing commas and comments are allowed.
     manualLoginProfileDir: "/Users/you/.oracle/browser-profile", // or ORACLE_BROWSER_PROFILE_DIR
     headless: false,
     hideWindow: true, // macOS normal runs: headful but off-screen; setup remains visible
+    useMockKeychain: true, // macOS isolated profile only; avoids recurring Keychain dialogs
     keepBrowser: false,
     manualLoginCookieSync: false, // keep false to preserve the personal-profile boundary
   },
@@ -106,10 +107,12 @@ values. This lets a parent folder set broad defaults and override a specific
 ChatGPT Project URL in a package subdirectory.
 
 Project configs intentionally support only workflow defaults. They cannot set
-provider routing or secret/executable fields such as `apiBaseUrl`, `modelOverrides`, `azure`,
-`browser.remoteHost`, `browser.remoteToken`, `browser.chromePath`, or
-`browser.chromeCookiePath`, or `browser.opencliPath`. Keep tokens and machine-local executable/profile
-paths in `~/.oracle/config.json`, environment variables, or explicit CLI flags.
+provider routing or secret/executable/security fields such as `apiBaseUrl`,
+`modelOverrides`, `azure`, `browser.remoteHost`, `browser.remoteToken`,
+`browser.chromePath`, `browser.chromeCookiePath`, `browser.opencliPath`, or
+`browser.useMockKeychain`. Keep tokens, machine-local executable/profile paths,
+and the macOS keychain-mode choice in `~/.oracle/config.json`, environment
+variables, or explicit CLI flags.
 
 ## Precedence
 
@@ -142,7 +145,8 @@ Initialize and validate the dedicated profile outside a consultation:
 
 ```bash
 oracle browser install
-oracle browser setup --profile-dir "/Users/you/.oracle/browser-profile"
+oracle browser setup --use-mock-keychain \
+  --profile-dir "/Users/you/.oracle/browser-profile"
 # sign in and close the entire Chrome for Testing browser
 oracle browser smoke --profile-dir "/Users/you/.oracle/browser-profile" --port 9333
 ```

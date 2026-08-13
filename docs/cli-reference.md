@@ -80,11 +80,11 @@ See [OpenAI / Azure / OpenRouter](openai-endpoints.md) and [OpenRouter](openrout
 
 Profile lifecycle commands:
 
-| Command                                                                  | Purpose                                                                                                             |
-| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| `oracle browser install [--cache-dir …] [--no-write-config] [--json]`    | Install or resume official stable Chrome for Testing and persist its separate executable identity after validation. |
-| `oracle browser setup [--profile-dir …] [--chrome-path …]`               | Open Chrome for Testing for sign-in and wait for the whole browser to close; no CDP/prompt.                         |
-| `oracle browser smoke [--profile-dir …] [--port …] [--visible] [--json]` | Cold-start and attach twice with the same profile; verify login without submitting a prompt.                        |
+| Command                                                                                        | Purpose                                                                                                                                                 |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `oracle browser install [--cache-dir …] [--no-write-config] [--json]`                          | Install or resume official stable Chrome for Testing and persist its separate executable identity after validation.                                     |
+| `oracle browser setup [--profile-dir …] [--chrome-path …] [--use-mock-keychain]`               | Open Chrome for Testing for sign-in and wait for the whole browser to close; no CDP/prompt. The macOS mock-keychain option is persisted to user config. |
+| `oracle browser smoke [--profile-dir …] [--port …] [--visible] [--use-mock-keychain] [--json]` | Cold-start and attach twice with the same profile; verify login without submitting a prompt.                                                            |
 
 | Flag                                                                           | Purpose                                                                                                                      |
 | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -92,6 +92,7 @@ Profile lifecycle commands:
 | `--chatgpt-url <url>`                                                          | Target a ChatGPT workspace / project folder.                                                                                 |
 | `--browser-model-strategy <select\|current\|ignore>`                           | Control ChatGPT model picker.                                                                                                |
 | `--browser-manual-login`                                                       | Use the persistent isolated Oracle profile (direct-CDP default; historical flag name).                                       |
+| `--browser-use-mock-keychain`                                                  | macOS isolated-profile opt-in that avoids recurring Keychain dialogs; weaker deterministic at-rest cookie protection.        |
 | `--browser-attach-running`                                                     | Attach to your already-running Chrome via DevTools.                                                                          |
 | `--browser-tab <ref>`                                                          | Reuse an existing tab (`current`, id, URL, title substring).                                                                 |
 | `--browser-thinking-time <light\|standard\|extended\|extra-high\|pro\|heavy>`  | Effort intensity; `pro` selects the Pro tier and fails closed if unconfirmed, other unmatched tiers keep the current effort. |

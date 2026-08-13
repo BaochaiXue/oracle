@@ -19,8 +19,9 @@ Drop this into the project's `AGENTS.md` or `CLAUDE.md`:
   direct loopback CDP for ChatGPT GPT-5.6 Pro. Oracle owns browser actions,
   sessions, recovery, transcripts, and follow-up lineage; it does not attach to
   personal Chrome by default.
-- The operator must complete `oracle browser install`, `oracle browser setup`,
-  and `oracle browser smoke` once before unattended work. Agents use
+- The operator must complete `oracle browser install`, `oracle browser setup
+  --use-mock-keychain` on macOS, and `oracle browser smoke` once before
+  unattended work. Agents use
   `--engine browser --browser-transport cdp --model gpt-5-pro`, preview private
   bundles, and inspect `oracle status` before retrying a quiet/interrupted run.
 - Treat every Pro reply captured in under 60 seconds as rejected evidence. Do

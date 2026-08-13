@@ -41,7 +41,7 @@ pnpm build
 npm link
 
 oracle browser install
-oracle browser setup
+oracle browser setup --use-mock-keychain # unattended macOS profile
 # sign in to ChatGPT, then close the entire browser
 oracle browser smoke
 ```

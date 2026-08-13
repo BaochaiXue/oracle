@@ -28,7 +28,7 @@ changes:
 
 ```bash
 oracle browser install
-oracle browser setup
+oracle browser setup --use-mock-keychain
 oracle browser smoke --json
 ```
 

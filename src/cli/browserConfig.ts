@@ -79,6 +79,7 @@ export interface BrowserFlagOptions {
   browserInlineCookies?: string;
   browserHeadless?: boolean;
   browserHideWindow?: boolean;
+  browserUseMockKeychain?: boolean;
   browserKeepBrowser?: boolean;
   browserManualLogin?: boolean;
   browserManualLoginProfileDir?: string | null;
@@ -309,6 +310,7 @@ export async function buildBrowserConfig(
     manualLoginProfileDir: options.browserManualLoginProfileDir ?? undefined,
     copyProfileSource: options.copyProfile ?? undefined,
     hideWindow: options.browserHideWindow ? true : undefined,
+    useMockKeychain: options.browserUseMockKeychain ? true : undefined,
     desiredModel,
     modelStrategy,
     debug: options.verbose ? true : undefined,
@@ -355,6 +357,7 @@ function validateAttachRunningOptions(
     options.browserCookiePath ? "--browser-cookie-path" : null,
     options.browserNoCookieSync ? "--browser-no-cookie-sync" : null,
     options.browserHideWindow ? "--browser-hide-window" : null,
+    options.browserUseMockKeychain ? "--browser-use-mock-keychain" : null,
     options.browserKeepBrowser ? "--browser-keep-browser" : null,
     options.browserManualLogin ? "--browser-manual-login" : null,
     options.browserManualLoginProfileDir ? "--browser-manual-login-profile-dir" : null,

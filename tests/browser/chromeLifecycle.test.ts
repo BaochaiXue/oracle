@@ -140,6 +140,18 @@ describe("persistent-profile launch flags", () => {
     expect(options.chromeFlags).not.toContain("--use-mock-keychain");
     expect(options.chromeFlags).not.toContain("--password-store=basic");
   });
+
+  test("can opt a persistent macOS profile into the non-interactive mock keychain", async () => {
+    const { buildChromeFlagsForTest } = await import("../../src/browser/chromeLifecycle.js");
+    const flags = buildChromeFlagsForTest(false, "127.0.0.1", false, true, true);
+
+    if (process.platform === "darwin") {
+      expect(flags).toContain("--use-mock-keychain");
+      expect(flags).not.toContain("--password-store=basic");
+    } else {
+      expect(flags).not.toContain("--use-mock-keychain");
+    }
+  });
 });
 
 describe("hidden-window launch flags", () => {

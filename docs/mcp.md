@@ -11,7 +11,7 @@ the Oracle-only Chrome profile outside MCP:
 
 ```bash
 oracle browser install
-oracle browser setup
+oracle browser setup --use-mock-keychain # unattended macOS profile
 # sign in, close the entire Chrome for Testing browser
 oracle browser smoke
 ```

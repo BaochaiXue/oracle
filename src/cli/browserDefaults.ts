@@ -34,6 +34,7 @@ export interface BrowserDefaultsOptions {
   browserPort?: number;
   browserHeadless?: boolean;
   browserHideWindow?: boolean;
+  browserUseMockKeychain?: boolean;
   browserKeepBrowser?: boolean;
   browserModelStrategy?: BrowserModelStrategy;
   browserThinkingTime?: ThinkingTimeLevel;
@@ -162,6 +163,14 @@ export function applyBrowserDefaultsFromConfig(
     browser.hideWindow !== undefined
   ) {
     options.browserHideWindow = browser.hideWindow;
+  }
+  if (
+    !attachRunningRequested &&
+    !openCliRequested &&
+    isUnset("browserUseMockKeychain") &&
+    browser.useMockKeychain !== undefined
+  ) {
+    options.browserUseMockKeychain = browser.useMockKeychain;
   }
   if (
     !attachRunningRequested &&

@@ -33,8 +33,9 @@ Chrome for Testing ── ~/.oracle/browser-profile ── ChatGPT GPT-5.6 Pro
 
 The installer supplies an official Chrome for Testing binary whose application
 identity is separate from everyday Chrome. Setup opens the Oracle profile in
-that browser as a normal window: no CDP endpoint and no automation flags. The
-operator signs in to ChatGPT and closes the whole browser; the setup command
+that browser as a normal window: no CDP endpoint and no prompt automation. On
+macOS, the explicit mock-keychain mode adds only Chromium's keychain test flag.
+The operator signs in to ChatGPT and closes the whole browser; the setup command
 waits for that exit instead of leaving an orphan process. Later runs launch the
 same binary and profile with a loopback debugging port,
 connect directly through CDP, select the requested model and reasoning tier,
@@ -123,7 +124,8 @@ oracle browser install
 Open the dedicated profile for the one-time sign-in:
 
 ```bash
-oracle browser setup
+# macOS unattended mode: persists browser.useMockKeychain=true
+oracle browser setup --use-mock-keychain
 ```
 
 The command remains attached while the sign-in window is open. Sign in to
@@ -139,6 +141,16 @@ connects over `127.0.0.1`, verifies that ChatGPT is authenticated and the
 composer is ready, submits no prompt, closes Chrome, and waits for the endpoint
 to disappear before the second cycle. A passing result is direct evidence that
 the persisted login and unattended CDP attachment work after restart.
+
+On macOS, `--use-mock-keychain` is the explicit unattended-mode tradeoff. It
+prevents Chrome for Testing from repeatedly requesting access to the everyday
+Chrome Safe Storage item and persists the setting for setup, smoke, normal
+runs, and reattach. Chromium's mock keychain uses a deterministic test secret,
+so the dedicated profile has weaker at-rest cookie protection than a
+system-Keychain-backed profile. Keep the profile owner-only and ChatGPT-only.
+If a profile was previously opened with the system Keychain, use a fresh
+`manualLoginProfileDir` when switching modes; the old encrypted cookies are not
+portable between the two modes.
 
 Port `9333` is used by the smoke and ordinary CDP runs by default. Setup does
 not open a debugging port. If `9333` is occupied, choose another explicit port
@@ -165,6 +177,7 @@ deliberately explicit macOS configuration looks like this:
     "debugPort": 9333,
     "cookieSync": false,
     "hideWindow": true,
+    "useMockKeychain": true,
     "modelStrategy": "select",
     "thinkingTime": "pro",
     "profileLockTimeoutMs": 300000,
@@ -179,8 +192,9 @@ off-screen so ChatGPT still renders and trusted CDP clicks continue to work.
 `oracle browser setup` is always visible because signing in is a human action;
 it is an ordinary isolated Chrome launch with CDP disabled. Persistent CDP
 runs retain Chrome's renderer throttling, hang monitor, IPC flood protection,
-Safe Browsing, and real macOS Keychain behavior instead of inheriting the
-aggressive flags intended for short browser test jobs.
+and Safe Browsing instead of inheriting the aggressive flags intended for
+short browser test jobs. `useMockKeychain:true` changes only the macOS keychain
+backend for the isolated profile.
 Set `hideWindow:false` when you want every normal run visible for debugging.
 
 If ChatGPT displays a request-frequency gate before the user turn enters the

@@ -25,7 +25,7 @@ profile and connect directly over `127.0.0.1`.
 
 ```bash
 oracle browser install
-oracle browser setup
+oracle browser setup --use-mock-keychain # recommended for unattended macOS use
 # sign in to ChatGPT, then close the entire Chrome for Testing browser
 oracle browser smoke
 ```
@@ -42,6 +42,14 @@ for Testing under `~/.oracle/browsers` and records its executable. A separate
 prevents the Oracle process from receiving ordinary URLs intended for everyday
 `Google Chrome.app`. Canonical dedicated runs fail closed if configured with
 the shared `com.google.Chrome` app identity.
+
+Chrome for Testing can otherwise request access to everyday Chrome's Safe
+Storage Keychain item again on each macOS cold start. The explicit
+`--use-mock-keychain` setup option persists `browser.useMockKeychain:true` and
+keeps setup, smoke, normal runs, and reattach on Chromium's deterministic test
+keychain. This removes recurring permission dialogs but weakens at-rest cookie
+protection; keep the profile owner-only, ChatGPT-only, and use a fresh directory
+when switching modes.
 
 Run a consultation:
 
@@ -374,7 +382,7 @@ it by sending a dummy consultation. Use the non-submitting lifecycle commands:
 
 ```bash
 oracle browser install
-oracle browser setup
+oracle browser setup --use-mock-keychain # recommended for unattended macOS use
 # sign in, close the entire Chrome for Testing browser
 oracle browser smoke
 ```
@@ -388,6 +396,10 @@ oracle browser smoke
 - Normal runs reuse that profile and preserve it after Chrome closes.
 - `browser.hideWindow:true` makes ordinary macOS runs headful/off-screen;
   setup is intentionally visible.
+- `browser.useMockKeychain:true` avoids recurring macOS Keychain prompts for
+  this isolated profile. It is user-config-only and trades OS-bound encryption
+  for Chromium's deterministic test key; do not reuse a system-keychain profile
+  after changing the mode.
 - Oracle automatically discovers and reuses a reachable DevTools endpoint for
   the exact profile. Do not add `--remote-chrome` merely to reuse Oracle Chrome.
 - A non-setup run fails fast with `oracle browser setup` guidance when the

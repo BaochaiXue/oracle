@@ -35,6 +35,7 @@ describe("resolveBrowserConfig", () => {
     expect(resolved.cookieSync).toBe(false);
     expect(resolved.cookieNames).toEqual(DEFAULT_CHATGPT_COOKIE_NAMES);
     expect(resolved.headless).toBe(false);
+    expect(resolved.useMockKeychain).toBe(false);
     expect(resolved.manualLogin).toBe(true);
     expect(resolved.manualLoginProfileDir).toBe(
       path.join(os.homedir(), ".oracle", "browser-profile"),
@@ -71,6 +72,7 @@ describe("resolveBrowserConfig", () => {
       attachmentTimeoutMs: 789,
       cookieSync: false,
       headless: true,
+      useMockKeychain: true,
       desiredModel: "Custom",
       chromeProfile: "Profile 1",
       chromePath: "/Applications/Chrome",
@@ -86,6 +88,7 @@ describe("resolveBrowserConfig", () => {
     expect(resolved.attachmentTimeoutMs).toBe(789);
     expect(resolved.cookieSync).toBe(false);
     expect(resolved.headless).toBe(true);
+    expect(resolved.useMockKeychain).toBe(true);
     expect(resolved.desiredModel).toBe("Custom");
     expect(resolved.chromeProfile).toBe("Profile 1");
     expect(resolved.chromePath).toBe("/Applications/Chrome");

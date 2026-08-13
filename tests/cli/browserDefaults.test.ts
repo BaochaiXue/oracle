@@ -31,6 +31,7 @@ describe("applyBrowserDefaultsFromConfig", () => {
           chromePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
           headless: true,
           hideWindow: true,
+          useMockKeychain: true,
           keepBrowser: true,
           manualLogin: true,
           manualLoginProfileDir: "/tmp/oracle-profile",
@@ -43,6 +44,7 @@ describe("applyBrowserDefaultsFromConfig", () => {
     expect(options.browserChromePath).toBeUndefined();
     expect(options.browserHeadless).toBeUndefined();
     expect(options.browserHideWindow).toBeUndefined();
+    expect(options.browserUseMockKeychain).toBeUndefined();
     expect(options.browserKeepBrowser).toBeUndefined();
     expect(options.browserManualLogin).toBeUndefined();
     expect(options.browserManualLoginProfileDir).toBeUndefined();
@@ -102,6 +104,7 @@ describe("applyBrowserDefaultsFromConfig", () => {
         cookieSyncWaitMs: 4_000,
         headless: true,
         hideWindow: true,
+        useMockKeychain: true,
         keepBrowser: true,
       },
     };
@@ -119,6 +122,7 @@ describe("applyBrowserDefaultsFromConfig", () => {
     expect(options.browserCookieWait).toBe("4000");
     expect(options.browserHeadless).toBe(true);
     expect(options.browserHideWindow).toBe(true);
+    expect(options.browserUseMockKeychain).toBe(true);
     expect(options.browserKeepBrowser).toBe(true);
   });
 
@@ -293,6 +297,7 @@ describe("applyBrowserDefaultsFromConfig", () => {
         debugPort: 9222,
         timeoutMs: 120_000,
         hideWindow: true,
+        useMockKeychain: true,
         keepBrowser: true,
         manualLogin: true,
         manualLoginProfileDir: "/tmp/oracle-profile",
@@ -309,6 +314,7 @@ describe("applyBrowserDefaultsFromConfig", () => {
     expect(options.browserCookiePath).toBeUndefined();
     expect(options.browserPort).toBeUndefined();
     expect(options.browserHideWindow).toBeUndefined();
+    expect(options.browserUseMockKeychain).toBeUndefined();
     expect(options.browserKeepBrowser).toBeUndefined();
     expect(options.browserManualLogin).toBeUndefined();
     expect(options.browserManualLoginProfileDir).toBeUndefined();

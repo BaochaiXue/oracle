@@ -45,7 +45,8 @@ Install official Chrome for Testing, then open Oracle's dedicated profile:
 
 ```bash
 oracle browser install
-oracle browser setup
+# macOS unattended mode; persists browser.useMockKeychain=true
+oracle browser setup --use-mock-keychain
 ```
 
 Sign in to ChatGPT in that window, then close the entire Chrome for Testing
@@ -89,6 +90,7 @@ Add an explicit policy to `~/.oracle/config.json`:
     "debugPort": 9333,
     "cookieSync": false,
     "hideWindow": true,
+    "useMockKeychain": true,
     "modelStrategy": "select",
     "thinkingTime": "pro"
   }
@@ -98,7 +100,10 @@ Add an explicit policy to `~/.oracle/config.json`:
 Use the real absolute profile path for your account. On macOS,
 `hideWindow:true` keeps ordinary runs headful but off-screen. First-time setup
 is always visible. Use `hideWindow:false` while debugging selector or account
-state.
+state. On macOS, `useMockKeychain:true` prevents recurring Keychain password
+dialogs for this isolated profile, with weaker deterministic at-rest cookie
+protection. Keep the profile owner-only and use a fresh directory when changing
+between system and mock keychain modes.
 
 The fork defaults to `transport:"cdp"`, `manualLogin:true`, and
 `cookieSync:false` even when these fields are omitted. Writing them explicitly

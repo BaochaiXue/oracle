@@ -515,12 +515,14 @@ function listIgnoredRemoteChromeFlags(config: {
   attachRunning?: ResolvedBrowserConfig["attachRunning"];
   headless?: ResolvedBrowserConfig["headless"];
   hideWindow?: ResolvedBrowserConfig["hideWindow"];
+  useMockKeychain?: ResolvedBrowserConfig["useMockKeychain"];
   keepBrowser?: ResolvedBrowserConfig["keepBrowser"];
   chromePath?: ResolvedBrowserConfig["chromePath"];
 }): string[] {
   return [
     config.headless ? "--browser-headless" : null,
     config.hideWindow ? "--browser-hide-window" : null,
+    config.useMockKeychain ? "--browser-use-mock-keychain" : null,
     config.keepBrowser ? "--browser-keep-browser" : null,
     !config.attachRunning && config.chromePath ? "--browser-chrome-path" : null,
   ].filter((value): value is string => Boolean(value));

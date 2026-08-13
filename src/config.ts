@@ -60,6 +60,11 @@ export interface BrowserConfigDefaults {
   cookieSyncWaitMs?: number;
   headless?: boolean;
   hideWindow?: boolean;
+  /**
+   * Use Chromium's deterministic test keychain for Oracle's isolated persistent
+   * profile on macOS. User-config only; ignored in project config.
+   */
+  useMockKeychain?: boolean;
   keepBrowser?: boolean;
   modelStrategy?: BrowserModelStrategy;
   /** Thinking time intensity (ChatGPT Thinking/Pro models): 'light', 'standard', 'extended', 'heavy' */
