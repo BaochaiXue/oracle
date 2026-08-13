@@ -959,17 +959,30 @@ export function buildThinkingTimeExpression(
     }
     if (composerEffortPill) {
       if (attemptedModelButton && attemptedModelButton !== composerEffortPill) closeOpenMenus();
+      const currentComposerEffortLabel = normalize(
+        (composerEffortPill.getAttribute?.('aria-label') ?? '') +
+          ' ' +
+          (composerEffortPill.textContent ?? ''),
+      );
+      // Once the GPT-5.6 model picker has been verified, a bare Pro composer pill
+      // is the selected Intelligence tier, not a model label. Accept that exact
+      // state without reopening the slider/Advanced submenu: doing so is both
+      // stronger evidence and avoids racing a portal that is still mounting.
+      if (
+        TARGET_IS_GPT56_MODEL &&
+        TARGET_LEVEL === 'pro' &&
+        currentComposerEffortLabel === 'pro'
+      ) {
+        closeOpenMenus();
+        return { status: 'already-selected', label: composerEffortPill.textContent?.trim?.() || 'Pro' };
+      }
       // In the unified Intelligence picker the composer pill shows the current
       // EFFORT ("Pro", "High"), not the model. Reading a Pro *model* out of it would
       // lift the Pro-row exclusion in findOptionInMenu and let a lower-tier request
       // settle on Pro. Only a pill naming a tier and nothing else qualifies: legacy
       // pills read "Pro Extended" (model + effort) and must keep naming their model,
       // or a Pro Extended user asking for extended would be moved down to High.
-      const pillLabel = normalize(
-        (composerEffortPill.getAttribute?.('aria-label') ?? '') +
-          ' ' +
-          (composerEffortPill.textContent ?? ''),
-      );
+      const pillLabel = currentComposerEffortLabel;
       const pillIsBareEffortTier = Object.values(TARGET_LEVEL_TOKENS).some((tokens) =>
         tokens.some((token) => normalize(token) === pillLabel),
       );

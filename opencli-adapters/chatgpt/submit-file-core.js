@@ -20,6 +20,11 @@ export function unwrapEvaluateResult(payload) {
   return payload;
 }
 
+export function isAlreadyClosedPageError(error) {
+  const message = String(error?.message ?? error ?? "").trim();
+  return /\bstale page identity\b/iu.test(message) || /^Page not found:\s*\S+/iu.test(message);
+}
+
 export function assistantMarkerFromRows(rows) {
   if (!Array.isArray(rows)) return null;
   for (let offset = rows.length - 1; offset >= 0; offset -= 1) {

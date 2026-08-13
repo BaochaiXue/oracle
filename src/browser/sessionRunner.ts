@@ -183,7 +183,7 @@ export async function runBrowserSessionExecution(
     if (typeof message !== "string") return;
     const shouldAlwaysPrint =
       message.startsWith("[browser] ") &&
-      /archive|fallback|follow-up|retry|thinking|waiting for chatgpt|browser slot|browser control|browser guidance|model selection|model picker/i.test(
+      /archive|fallback|follow-up|retry|thinking|waiting for chatgpt|browser slot|browser control|browser guidance|model selection|model picker|window policy/i.test(
         message,
       );
     if (!runOptions.verbose && !shouldAlwaysPrint) return;
@@ -324,6 +324,9 @@ export async function runBrowserSessionExecution(
       opencliOperationRef: browserResult.opencliOperationRef,
       opencliVersion: browserResult.opencliVersion,
       opencliPayloadSha256: browserResult.opencliPayloadSha256,
+      opencliWindowMode: browserResult.opencliWindowMode,
+      opencliDispatchAt: browserResult.opencliDispatchAt,
+      opencliResponseElapsedMs: browserResult.opencliResponseElapsedMs,
       opencliBaselineAssistantIndex: browserResult.opencliBaselineAssistantIndex,
       opencliBaselineAssistantSha256: browserResult.opencliBaselineAssistantSha256,
     },

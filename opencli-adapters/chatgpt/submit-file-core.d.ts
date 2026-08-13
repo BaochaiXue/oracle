@@ -31,6 +31,7 @@ export interface AssistantMarker {
 }
 
 export function unwrapEvaluateResult(payload: unknown): unknown;
+export function isAlreadyClosedPageError(error: unknown): boolean;
 export function assistantMarkerFromRows(rows: unknown): AssistantMarker | null;
 export function matchesAssistantBaseline(
   marker: AssistantMarker | null,

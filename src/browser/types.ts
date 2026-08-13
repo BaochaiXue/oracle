@@ -197,6 +197,9 @@ export interface BrowserRunResult {
   opencliOperationRef?: string;
   opencliVersion?: string;
   opencliPayloadSha256?: string;
+  opencliWindowMode?: "background" | "foreground";
+  opencliDispatchAt?: string;
+  opencliResponseElapsedMs?: number;
   opencliBaselineAssistantIndex?: number;
   opencliBaselineAssistantSha256?: string;
 }

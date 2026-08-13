@@ -11,6 +11,7 @@ import {
   buildDataTransferScript,
   buildGenerationControlScript,
   extractConversationReceipt,
+  isAlreadyClosedPageError,
   loadSubmissionManifest,
   requireOracleGpt56SolModelOutcome,
   requireOracleProThinkingOutcome,
@@ -140,6 +141,7 @@ async function closeOwnedSubmissionTab(page) {
   try {
     await page.closeTab();
   } catch (error) {
+    if (isAlreadyClosedPageError(error)) return;
     throw new CommandExecutionError(
       `OpenCLI failed to close the Oracle submission tab: ${String(error?.message ?? error)}`,
       "The dispatch journal still records whether submission may have occurred. Inspect or reattach the Oracle session; do not resubmit it blindly.",

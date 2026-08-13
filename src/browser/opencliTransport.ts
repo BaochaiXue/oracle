@@ -25,6 +25,8 @@ const COMMAND_TIMEOUT_MS = 60_000;
 const MODEL_TIMEOUT_MS = 120_000;
 const DEFAULT_ATTACHMENT_TIMEOUT_MS = 45_000;
 const ORACLE_WAIT_STABLE_SECONDS = 9;
+const OPENCLI_WINDOW_MODE = "background" as const;
+const MIN_TRUSTED_PRO_RESPONSE_MS = 60_000;
 
 interface CommandResult {
   stdout: string;
@@ -103,6 +105,9 @@ export async function runOpenCliBrowserMode(
   const startedAt = Date.now();
   const logger = options.log ?? (() => {});
   const config = options.config ?? {};
+  logger(
+    "[browser] OpenCLI window policy: background/no-focus (Chrome may remain visibly open behind other windows).",
+  );
   assertSupportedRun(options);
   const sessionId = options.sessionId?.trim();
   if (!sessionId) {
@@ -127,6 +132,7 @@ export async function runOpenCliBrowserMode(
     operationRef,
     payloadSha256: prepared.sha256,
     target: targetUrl,
+    windowMode: OPENCLI_WINDOW_MODE,
     at: (deps.now?.() ?? new Date()).toISOString(),
   });
 
@@ -139,6 +145,7 @@ export async function runOpenCliBrowserMode(
   let conversationId: string | undefined;
   let modelSelection: BrowserModelSelectionEvidence | undefined;
   let baselineAssistant: AssistantMarker | undefined;
+  let dispatchAt: string | undefined;
   let submitCommandStarted = false;
 
   try {
@@ -174,6 +181,7 @@ export async function runOpenCliBrowserMode(
         opencliOperationRef: operationRef,
         opencliVersion: context.version,
         opencliPayloadSha256: prepared.sha256,
+        opencliWindowMode: OPENCLI_WINDOW_MODE,
         opencliBaselineAssistantIndex: baselineAssistant?.index,
         opencliBaselineAssistantSha256: baselineAssistant?.sha256,
       },
@@ -192,6 +200,9 @@ export async function runOpenCliBrowserMode(
     baselineAssistant = receipt.baselineAssistant;
     modelSelection = receipt.modelSelection;
     dispatchMayHaveOccurred = true;
+    dispatchAt = await journalEventAt(prepared.journalPath, operationRef, "dispatch-intent").catch(
+      () => undefined,
+    );
     await appendJournal(prepared.journalPath, {
       event: "submitted",
       operationRef,
@@ -211,6 +222,8 @@ export async function runOpenCliBrowserMode(
         opencliOperationRef: operationRef,
         opencliVersion: context.version,
         opencliPayloadSha256: prepared.sha256,
+        opencliWindowMode: OPENCLI_WINDOW_MODE,
+        opencliDispatchAt: dispatchAt,
         opencliBaselineAssistantIndex: baselineAssistant?.index,
         opencliBaselineAssistantSha256: baselineAssistant?.sha256,
       },
@@ -244,6 +257,8 @@ export async function runOpenCliBrowserMode(
             opencliOperationRef: operationRef,
             opencliVersion: context.version,
             opencliPayloadSha256: prepared.sha256,
+            opencliWindowMode: OPENCLI_WINDOW_MODE,
+            opencliDispatchAt: dispatchAt,
             opencliBaselineAssistantIndex: baselineAssistant?.index,
             opencliBaselineAssistantSha256: baselineAssistant?.sha256,
           } satisfies BrowserRuntimeMetadata,
@@ -269,17 +284,56 @@ export async function runOpenCliBrowserMode(
     opencliOperationRef: operationRef,
     opencliVersion: context.version,
     opencliPayloadSha256: prepared.sha256,
+    opencliWindowMode: OPENCLI_WINDOW_MODE,
+    opencliDispatchAt: dispatchAt,
     opencliBaselineAssistantIndex: baselineAssistant?.index,
     opencliBaselineAssistantSha256: baselineAssistant?.sha256,
   };
+  if (!runtime.opencliDispatchAt) {
+    throw new BrowserAutomationError(
+      "OpenCLI returned a conversation receipt without the durable dispatch timestamp required by Oracle's Pro response-quality gate.",
+      {
+        stage: "model-quality-gate",
+        code: "dispatch-timestamp-missing",
+        runtime,
+      },
+    );
+  }
 
   try {
     const answer = await captureDetail(context, runtime, config);
+    const capturedAt = deps.now?.() ?? new Date();
+    const responseElapsedMs = elapsedSinceDispatch(runtime.opencliDispatchAt, capturedAt);
+    const completedRuntime: BrowserRuntimeMetadata = {
+      ...runtime,
+      opencliResponseElapsedMs: responseElapsedMs,
+    };
+    await appendJournal(prepared.journalPath, {
+      event: "answer-captured",
+      operationRef,
+      conversationUrl,
+      assistantSha256: createHash("sha256").update(answer).digest("hex"),
+      responseElapsedMs,
+      at: capturedAt.toISOString(),
+    });
+    if (responseElapsedMs !== undefined && responseElapsedMs < MIN_TRUSTED_PRO_RESPONSE_MS) {
+      await appendJournal(prepared.journalPath, {
+        event: "rejected",
+        operationRef,
+        conversationUrl,
+        code: "pro-fast-response-untrusted",
+        responseElapsedMs,
+        thresholdMs: MIN_TRUSTED_PRO_RESPONSE_MS,
+        at: capturedAt.toISOString(),
+      }).catch(() => undefined);
+    }
+    assertTrustedProResponse(answer, completedRuntime, capturedAt);
     await appendJournal(prepared.journalPath, {
       event: "complete",
       operationRef,
       conversationUrl,
-      at: (deps.now?.() ?? new Date()).toISOString(),
+      responseElapsedMs,
+      at: capturedAt.toISOString(),
     });
     return {
       answerText: answer,
@@ -289,7 +343,7 @@ export async function runOpenCliBrowserMode(
       tookMs: Date.now() - startedAt,
       answerTokens: estimateTokenCount(answer),
       answerChars: answer.length,
-      ...runtime,
+      ...completedRuntime,
     };
   } catch (error) {
     if (error instanceof BrowserAutomationError) throw error;
@@ -316,6 +370,8 @@ export async function resumeOpenCliBrowserSession(
     );
   }
   const answer = await captureDetail(context, runtime, config ?? {});
+  const capturedAt = deps.now?.() ?? new Date();
+  assertTrustedProResponse(answer, runtime, capturedAt);
   return { answerText: answer, answerMarkdown: answer };
 }
 
@@ -435,7 +491,7 @@ async function submitAuthorizedFiles(
       "--trace",
       "retain-on-failure",
       "--window",
-      "background",
+      OPENCLI_WINDOW_MODE,
       "--site-session",
       "ephemeral",
       "--keep-tab",
@@ -520,7 +576,7 @@ async function captureDetail(
       "-f",
       "json",
       "--window",
-      "background",
+      OPENCLI_WINDOW_MODE,
       "--site-session",
       "ephemeral",
       "--keep-tab",
@@ -636,6 +692,70 @@ async function journalHasEvent(
       return false;
     }
   });
+}
+
+async function journalEventAt(
+  journalPath: string,
+  operationRef: string,
+  event: string,
+): Promise<string | undefined> {
+  const contents = await fs.readFile(journalPath, "utf8");
+  for (const line of contents.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const record = JSON.parse(line) as {
+        event?: unknown;
+        operationRef?: unknown;
+        at?: unknown;
+      };
+      if (
+        record.event === event &&
+        record.operationRef === operationRef &&
+        typeof record.at === "string" &&
+        Number.isFinite(Date.parse(record.at))
+      ) {
+        return record.at;
+      }
+    } catch {
+      // A malformed non-authoritative line does not invalidate a later exact event.
+    }
+  }
+  return undefined;
+}
+
+function elapsedSinceDispatch(
+  dispatchAt: string | undefined,
+  completedAt: Date,
+): number | undefined {
+  if (!dispatchAt) return undefined;
+  const dispatchMs = Date.parse(dispatchAt);
+  const elapsedMs = completedAt.getTime() - dispatchMs;
+  return Number.isFinite(elapsedMs) && elapsedMs >= 0 ? elapsedMs : undefined;
+}
+
+function assertTrustedProResponse(
+  answer: string,
+  runtime: BrowserRuntimeMetadata,
+  capturedAt: Date,
+): void {
+  // Preserve the first capture decision across reattach. Otherwise the same
+  // sub-minute answer could become admissible merely because it was harvested
+  // again after the wall clock crossed the threshold.
+  const responseElapsedMs =
+    runtime.opencliResponseElapsedMs ?? elapsedSinceDispatch(runtime.opencliDispatchAt, capturedAt);
+  if (responseElapsedMs === undefined || responseElapsedMs >= MIN_TRUSTED_PRO_RESPONSE_MS) return;
+  const seconds = Math.max(0, Math.round(responseElapsedMs / 1000));
+  throw new BrowserAutomationError(
+    `Oracle rejected an assistant reply captured ${seconds}s after dispatch because sub-minute replies are not trusted as GPT-5.6 Pro output.`,
+    {
+      stage: "model-quality-gate",
+      code: "pro-fast-response-untrusted",
+      runtime: { ...runtime, opencliResponseElapsedMs: responseElapsedMs },
+      responseElapsedMs,
+      thresholdMs: MIN_TRUSTED_PRO_RESPONSE_MS,
+      assistantSha256: createHash("sha256").update(answer).digest("hex"),
+    },
+  );
 }
 
 async function runJsonCommand<T>(

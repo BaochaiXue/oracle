@@ -11,6 +11,7 @@ import {
   CONTRACT_VERSION,
   assistantMarkerFromRows,
   buildGenerationControlScript,
+  isAlreadyClosedPageError,
   matchesAssistantBaseline,
   unwrapEvaluateResult,
 } from "./submit-file-core.js";
@@ -140,6 +141,7 @@ async function closeOwnedLease(page) {
   try {
     await page.closeTab();
   } catch (error) {
+    if (isAlreadyClosedPageError(error)) return;
     throw new CommandExecutionError(
       `OpenCLI failed to close the Oracle waiter tab: ${String(error?.message ?? error)}`,
       "The conversation receipt is still safe. Reattach the Oracle session after inspecting the Browser Bridge.",

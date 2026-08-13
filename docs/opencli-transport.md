@@ -46,7 +46,9 @@ Oracle buildPrompt
   → start one read-only oracle-wait command and one isolated tab lease
   → observe the same page until the new assistant Markdown is stable
   → explicitly close the waiter tab
-  → persist answer and transcript
+  → measure dispatch intent to stable answer
+      ↳ sub-minute: record digest/timing and terminate as untrusted
+      ↳ admitted: persist answer and transcript
 ```
 
 Model selection happens for every turn and shares a lock with submission.
@@ -103,6 +105,7 @@ turn:
 | Preflight, auth, model verification, lock, or bundle integrity | Fails before dispatch          | Fix the reported condition and retry     |
 | Handoff began but no durable receipt was captured              | Marks the attempt ambiguous    | Reconcile manually; do not auto-resubmit |
 | Receipt exists but answer collection timed out                 | Keeps the conversation receipt | Resume the waiter only                   |
+| Stable answer arrives less than 60 seconds after dispatch      | Rejects it as untrusted        | Do not use it as Pro advice              |
 | Follow-up baseline cannot be established                       | Fails before dispatch          | Recover the stored conversation first    |
 | Stored remote conversation is missing                          | Stops                          | Never open a replacement chat silently   |
 
@@ -119,6 +122,17 @@ returns a second versioned row containing the new assistant index, digest,
 stable duration, and Markdown. Unknown versions or incomplete receipts fail
 closed.
 
+Model-picker evidence is request-side evidence, not server-routing proof. This
+fork applies an additional opinionated admission rule: it reads the durable
+`dispatch-intent` timestamp, measures until the stable assistant answer is
+captured, and rejects any result below 60 seconds with
+`pro-fast-response-untrusted`. Only the answer digest and timing evidence are
+kept; the text is not surfaced or persisted as a trusted transcript. Passing
+the threshold does not prove Pro routing—it only avoids this known-fast failure
+class. The first captured elapsed time is retained in session runtime metadata,
+so waiting a minute and reattaching cannot make the same rejected answer
+admissible.
+
 The long wait has a separate lifecycle invariant: one Oracle operation starts
 exactly one `chatgpt oracle-wait` process, and that process keeps exactly one
 ephemeral conversation tab until completion or timeout. Generation detection
@@ -127,7 +141,20 @@ such as `Thinking`. Both companion commands explicitly close their exact tab;
 they run with `--keep-tab true` so OpenCLI's executor does not perform a second
 lease release after the adapter has closed the tab. The flag is intentionally
 counterintuitive here: the adapter owns final cleanup, and skipping the executor's
-fallback prevents a reusable `about:blank` placeholder from being created.
+fallback prevents a second close from racing the adapter. If cleanup discovers
+that the exact page identity is already gone, `Page not found` / `stale page
+identity` is treated as idempotent success; other close failures remain errors.
+A retained OpenCLI failure trace is exported after adapter cleanup, so its final
+screenshot/state may legitimately show `about:blank`. That placeholder is not a
+conversation receipt. Oracle's transport journal and stored conversation URL are
+the authoritative recovery evidence.
+
+All submission and waiter leases use OpenCLI's `background` window mode. The
+contract is **do not focus the automation window**, not “run headless” or “make
+Chrome physically invisible.” Depending on macOS window stacking and the
+existing Browser Bridge window, a Chrome window may be noticeable or may remain
+behind other apps. Oracle records `opencliWindowMode: background` so every run
+has one explicit policy.
 
 ## Private data boundary
 
@@ -170,12 +197,14 @@ The repository tests cover:
 - explicit new-chat versus stored-conversation targets;
 - follow-up baseline markers;
 - one waiter command per harvest, with no polling process/tab fan-out;
+- hard rejection of sub-minute GPT-5.6 Pro answers measured from dispatch intent;
 - waiter-only reattach with no second model selection or dispatch;
 - generation-control detection that does not inspect answer prose;
 - supported OpenCLI/adapter contract versions;
 - same-tab `GPT-5.6 Sol` model plus `Pro` reasoning selection through Oracle's
   generated native picker;
 - tab-free Browser Bridge preflight and exact target cleanup;
+- idempotent cleanup when OpenCLI reports an already-closed stale page identity;
 - sanitized OpenCLI failure stage, code, exit status, and trace-path persistence;
 - strict ChatGPT receipt parsing.
 

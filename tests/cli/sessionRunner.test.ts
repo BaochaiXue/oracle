@@ -1247,12 +1247,76 @@ describe("performSessionRun", () => {
     expect(sessionStoreMock.updateModelRun).toHaveBeenCalledWith(
       baseSessionMeta.id,
       "gpt-5.2-pro",
-      expect.objectContaining({ status: "error" }),
+      expect.objectContaining({
+        status: "error",
+        error: expect.objectContaining({
+          category: "browser-automation",
+          message: "automation failed",
+        }),
+      }),
+    );
+    const modelErrorCallIndex = sessionStoreMock.updateModelRun.mock.calls.findIndex(
+      ([, , update]) => update?.status === "error",
+    );
+    expect(modelErrorCallIndex).toBeGreaterThanOrEqual(0);
+    expect(sessionStoreMock.updateSession.mock.invocationCallOrder.at(-1)).toBeGreaterThan(
+      sessionStoreMock.updateModelRun.mock.invocationCallOrder[modelErrorCallIndex] ?? 0,
     );
     const logLines = log.mock.calls.map((c) => String(c[0])).join("\n");
     expect(logLines).not.toContain("Next steps (browser fallback)");
     expect(logLines).not.toContain("--engine api");
     expect(logLines).not.toContain("This run did not return cleanly");
+  });
+
+  test("terminalizes a rejected fast Pro answer without offering reattach", async () => {
+    const automationError = new BrowserAutomationError(
+      "Oracle rejected an assistant reply captured 42s after dispatch.",
+      {
+        stage: "model-quality-gate",
+        code: "pro-fast-response-untrusted",
+        responseElapsedMs: 42_000,
+        runtime: {
+          browserTransport: "opencli",
+          tabUrl: "https://chatgpt.com/c/fast-mini-answer",
+          conversationId: "fast-mini-answer",
+          promptSubmitted: true,
+        },
+      },
+    );
+    vi.mocked(runBrowserSessionExecution).mockRejectedValueOnce(automationError);
+
+    await expect(
+      performSessionRun({
+        sessionMeta: baseSessionMeta,
+        runOptions: baseRunOptions,
+        mode: "browser",
+        browserConfig: { transport: "opencli" },
+        cwd: "/tmp",
+        log,
+        write,
+        version: cliVersion,
+      }),
+    ).rejects.toThrow(/rejected an assistant reply/u);
+
+    expect(sessionStoreMock.updateModelRun).toHaveBeenCalledWith(
+      baseSessionMeta.id,
+      "gpt-5.2-pro",
+      expect.objectContaining({
+        status: "error",
+        error: expect.objectContaining({
+          details: expect.objectContaining({ code: "pro-fast-response-untrusted" }),
+        }),
+      }),
+    );
+    expect(sessionStoreMock.updateSession.mock.calls.at(-1)?.[1]).toMatchObject({
+      status: "error",
+      error: expect.objectContaining({
+        details: expect.objectContaining({ code: "pro-fast-response-untrusted" }),
+      }),
+    });
+    const logLines = log.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(logLines).not.toContain("This run did not return cleanly");
+    expect(logLines).not.toContain("oracle session sess-1 --render");
   });
 
   test("preserves persisted runtime hints when browser automation fails without runtime details", async () => {

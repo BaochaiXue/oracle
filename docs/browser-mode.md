@@ -78,6 +78,18 @@ isolated ephemeral tab remains open for the whole wait and is explicitly closed
 before the adapter returns; Oracle does not launch a fresh process or tab every
 few seconds.
 
+Oracle pins both commands to OpenCLI `background` window mode. In OpenCLI this
+means the owned window is not focused; it does not mean headless or guaranteed
+invisible. Chrome can remain visibly open behind other windows. The policy is
+written to `browser.runtime.opencliWindowMode` for every run.
+
+The verified picker labels show that the submission tab requested `GPT-5.6 Sol`
+plus `Pro`; they cannot prove server-side routing. This fork therefore treats a
+stable answer captured in less than 60 seconds from durable dispatch intent as
+untrusted, marks both the Oracle session and model run as an error, and does not
+print or persist the text as a trusted transcript. Sixty seconds or more is not
+proof of Pro; it only passes this fast-response exclusion.
+
 Continue the same ChatGPT conversation through normal Oracle lineage:
 
 ```bash
@@ -181,7 +193,7 @@ Notes:
 ### CLI Options
 
 - `--engine browser`: enables browser mode (legacy `--browser` remains as an alias for now). Without `--engine`, Oracle chooses API when `OPENAI_API_KEY` exists, otherwise browser.
-- `--browser-transport <opencli|cdp>`: choose the ChatGPT browser boundary. `opencli` uses the authenticated Browser Bridge and companion adapters; `cdp` keeps Oracle's legacy direct Chrome automation. The default remains `cdp` unless config selects OpenCLI.
+- `--browser-transport <opencli|cdp>`: choose the ChatGPT browser boundary. `opencli` uses the authenticated Browser Bridge and companion adapters; `cdp` keeps Oracle's legacy direct Chrome automation. Oracle's OpenCLI lane always requests background/no-focus window mode, though Chrome may remain physically visible. The default remains `cdp` unless config selects OpenCLI.
 - `--browser-chrome-profile`, `--browser-chrome-path`: cookie source + binary override (defaults to the standard `"Default"` Chrome profile so existing ChatGPT logins carry over).
 - `--browser-cookie-path`: explicit path to the Chrome/Chromium/Edge `Cookies` SQLite DB. Handy when you launch a fork via `--browser-chrome-path` and want to copy its session cookies; see [docs/chromium-forks.md](chromium-forks.md) for examples.
 - `--browser-attach-running`: attach to a local already-running browser instead of launching Chrome directly. Defaults to `127.0.0.1:9222`; combine with `--remote-chrome <host:port>` to use a different local attach hint.
@@ -191,7 +203,7 @@ Notes:
 - `--browser-reuse-wait`: wait for a shared Chrome profile (DevToolsActivePort) to appear before launching a new Chrome. Helps multiple parallel runs reuse the same Chromium instance.
 - `--browser-profile-lock-timeout`: wait for the shared manual-login profile lock before sending, serializing parallel runs that share a Chrome profile.
 - `--browser-max-concurrent-tabs`: soft limit for simultaneous ChatGPT tabs sharing one manual-login profile (default `3`). Set `ORACLE_BROWSER_MAX_CONCURRENT_TABS` for a per-host default; explicit CLI/config values win. Additional runs wait up to the browser timeout for a slot and log `[browser] Waiting for ChatGPT browser slot...`.
-- `--browser-auto-reattach-delay`, `--browser-auto-reattach-interval`, `--browser-auto-reattach-timeout`: after a timeout, start periodic auto-reattach attempts (delay before first attempt, repeat interval, per-attempt timeout). This lets Oracle keep polling a finished Pro response without manual `oracle session` runs.
+- `--browser-auto-reattach-delay`, `--browser-auto-reattach-interval`, `--browser-auto-reattach-timeout`: after an actual timeout, start periodic auto-reattach attempts (delay before first attempt, repeat interval, per-attempt timeout). The normal OpenCLI run instead owns one long-lived, tool-side waiter; it does not repeatedly wake the coding model or create new polling processes/tabs. Auto-reattach is disabled by default.
 - `--heartbeat`: browser mode uses this interval to emit long-run ChatGPT status. When ChatGPT exposes a Thinking/Reasoning disclosure, Oracle opens it and logs only liveness metadata such as sidecar presence, UI progress percentage, elapsed time, and last-change age. It does not log the reasoning text.
 - If an assistant response still times out (common with long Pro runs), Oracle marks the session as an incomplete capture, stores reattach/runtime diagnostics, and keeps enough browser metadata for `oracle session <id>` to recover the final answer. Visible ChatGPT rate-limit, temporary-unavailable, and authentication/challenge warnings are included in the error and session metadata instead of being reduced to a generic timeout. Increase `--browser-timeout` only when the browser session is truly unrecoverable.
 - `--browser-model-strategy <select|current|ignore>`: control ChatGPT model selection. `select` (default) switches to the requested model; `current` keeps the active model and logs its label; `ignore` skips the picker entirely. (Ignored for Gemini web runs.)

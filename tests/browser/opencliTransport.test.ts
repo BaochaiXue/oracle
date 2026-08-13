@@ -28,6 +28,7 @@ function successRunner(
   events: string[],
   conversationUrl = "https://chatgpt.com/c/conversation-123",
   delayFollowupAnswer = false,
+  dispatchAt = new Date(Date.now() - 120_000).toISOString(),
 ): OpenCliCommandRunner {
   return async (_executable, args) => {
     calls.push(args);
@@ -62,7 +63,11 @@ function successRunner(
       events.push("model");
       await fs.appendFile(
         manifest.journalPath,
-        `${JSON.stringify({ event: "dispatch-intent", operationRef: manifest.operationRef })}\n`,
+        `${JSON.stringify({
+          event: "dispatch-intent",
+          operationRef: manifest.operationRef,
+          at: dispatchAt,
+        })}\n`,
       );
       events.push("dispatch");
       events.push("receipt");
@@ -152,6 +157,9 @@ describe("OpenCliBrowserTransport", () => {
 
     expect(result.answerMarkdown).toBe("Pro answer");
     expect(result.browserTransport).toBe("opencli");
+    expect(result.opencliWindowMode).toBe("background");
+    expect(result.opencliDispatchAt).toBeTruthy();
+    expect(result.opencliResponseElapsedMs).toBeGreaterThanOrEqual(60_000);
     expect(result.tabUrl).toBe("https://chatgpt.com/c/conversation-123");
     expect(calls.flat()).not.toContain(privatePrompt);
     expect(calls.map((args) => args.join(" ")).join("\n")).not.toContain(privatePrompt);
@@ -163,6 +171,7 @@ describe("OpenCliBrowserTransport", () => {
     );
     expect(submitCall).toEqual(expect.arrayContaining(["--site-session", "ephemeral"]));
     expect(submitCall).toEqual(expect.arrayContaining(["--keep-tab", "true"]));
+    expect(submitCall).toEqual(expect.arrayContaining(["--window", "background"]));
     expect(submitCall).toEqual(
       expect.arrayContaining(["--timeout", "225", "--trace", "retain-on-failure"]),
     );
@@ -173,6 +182,7 @@ describe("OpenCliBrowserTransport", () => {
     expect(waitCalls).toHaveLength(1);
     expect(waitCalls[0]).toEqual(expect.arrayContaining(["--site-session", "ephemeral"]));
     expect(waitCalls[0]).toEqual(expect.arrayContaining(["--keep-tab", "true"]));
+    expect(waitCalls[0]).toEqual(expect.arrayContaining(["--window", "background"]));
     expect(calls.some((args) => args[0] === "chatgpt" && args[1] === "detail")).toBe(false);
     expect(runtimeHints.at(-1)).toMatchObject({
       browserTransport: "opencli",
@@ -229,6 +239,106 @@ describe("OpenCliBrowserTransport", () => {
     expect(result.opencliBaselineAssistantSha256).toMatch(/^[a-f0-9]{64}$/u);
   });
 
+  it("rejects a stable assistant answer captured less than one minute after dispatch", async () => {
+    const sessionDir = await createTempDir();
+    const calls: string[][] = [];
+    const events: string[] = [];
+    const dispatchAt = "2026-08-13T01:00:00.000Z";
+    const capturedAt = new Date("2026-08-13T01:00:42.000Z");
+
+    await expect(
+      runOpenCliBrowserMode(
+        {
+          prompt: "architecture review",
+          sessionId: "fast-mini-gate",
+          config: {
+            transport: "opencli",
+            desiredModel: "GPT-5.6 Pro",
+            modelStrategy: "select",
+            timeoutMs: 5_000,
+          },
+        },
+        {
+          runCommand: successRunner(
+            calls,
+            events,
+            "https://chatgpt.com/c/fast-mini-answer",
+            false,
+            dispatchAt,
+          ),
+          resolveSessionDir: async () => sessionDir,
+          now: () => capturedAt,
+          randomId: () => "fast-turn",
+          acquireLock: async () => ({
+            path: "/test/lock",
+            lockId: "fast-lock",
+            release: async () => undefined,
+          }),
+        },
+      ),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("sub-minute replies are not trusted"),
+      details: {
+        stage: "model-quality-gate",
+        code: "pro-fast-response-untrusted",
+        responseElapsedMs: 42_000,
+        thresholdMs: 60_000,
+      },
+    });
+
+    const artifactsDir = path.join(sessionDir, "artifacts");
+    const journalName = (await fs.readdir(artifactsDir)).find((name) =>
+      name.startsWith("opencli-transport-"),
+    );
+    expect(journalName).toBeTruthy();
+    const journal = await fs.readFile(path.join(artifactsDir, journalName!), "utf8");
+    expect(journal).toContain('"event":"answer-captured"');
+    expect(journal).toContain('"event":"rejected"');
+    expect(journal).not.toContain('"event":"complete"');
+  });
+
+  it("refuses to harvest when a successful receipt lacks a durable dispatch timestamp", async () => {
+    const sessionDir = await createTempDir();
+    const calls: string[][] = [];
+    const events: string[] = [];
+
+    await expect(
+      runOpenCliBrowserMode(
+        {
+          prompt: "architecture review",
+          sessionId: "missing-dispatch-time",
+          config: {
+            transport: "opencli",
+            desiredModel: "GPT-5.6 Pro",
+            modelStrategy: "select",
+          },
+        },
+        {
+          runCommand: successRunner(
+            calls,
+            events,
+            "https://chatgpt.com/c/missing-dispatch-time",
+            false,
+            "not-a-timestamp",
+          ),
+          resolveSessionDir: async () => sessionDir,
+          acquireLock: async () => ({
+            path: "/test/lock",
+            lockId: "missing-time-lock",
+            release: async () => undefined,
+          }),
+        },
+      ),
+    ).rejects.toMatchObject({
+      details: {
+        stage: "model-quality-gate",
+        code: "dispatch-timestamp-missing",
+      },
+    });
+
+    expect(events).not.toContain("oracle-wait");
+  });
+
   it("reattaches through one waiter command and never selects or dispatches again", async () => {
     const calls: string[][] = [];
     const events: string[] = [];
@@ -257,6 +367,41 @@ describe("OpenCliBrowserTransport", () => {
       ),
     ).toHaveLength(1);
     expect(calls.some((args) => args[0] === "chatgpt" && args[1] === "detail")).toBe(false);
+  });
+
+  it("keeps a previously captured sub-minute answer rejected on later reattach", async () => {
+    const calls: string[][] = [];
+    const events: string[] = [];
+    const runtime: BrowserRuntimeMetadata = {
+      browserTransport: "opencli",
+      tabUrl: "https://chatgpt.com/c/fast-mini-answer",
+      conversationId: "fast-mini-answer",
+      promptSubmitted: true,
+      opencliVersion: "1.8.6",
+      opencliDispatchAt: "2026-08-13T01:00:00.000Z",
+      opencliResponseElapsedMs: 42_000,
+    };
+
+    await expect(
+      resumeOpenCliBrowserSession(
+        runtime,
+        { transport: "opencli", timeoutMs: 5_000 },
+        (() => {}) as never,
+        {
+          runCommand: successRunner(calls, events),
+          now: () => new Date("2026-08-13T01:10:00.000Z"),
+        },
+      ),
+    ).rejects.toMatchObject({
+      details: {
+        stage: "model-quality-gate",
+        code: "pro-fast-response-untrusted",
+        responseElapsedMs: 42_000,
+      },
+    });
+
+    expect(events).toContain("oracle-wait");
+    expect(events).not.toContain("dispatch");
   });
 
   it("fails closed for unsupported OpenCLI versions", () => {

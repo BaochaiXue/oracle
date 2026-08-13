@@ -10,6 +10,7 @@ import {
   buildDataTransferScript,
   buildGenerationControlScript,
   extractConversationReceipt,
+  isAlreadyClosedPageError,
   loadSubmissionManifest,
   matchesAssistantBaseline,
   mimeTypeForPath,
@@ -27,6 +28,18 @@ afterEach(async () => {
 describe("OpenCLI submit-file adapter core", () => {
   it("uses the v3 same-tab native-picker receipt contract", () => {
     expect(CONTRACT_VERSION).toBe(3);
+  });
+
+  it("treats an already-closed OpenCLI page identity as idempotent cleanup", () => {
+    expect(
+      isAlreadyClosedPageError(
+        new Error("Page not found: 72C85A3C22F85A7D5D61F05D8B8C9F40 — stale page identity"),
+      ),
+    ).toBe(true);
+    expect(
+      isAlreadyClosedPageError(new Error("Page not found: 72C85A3C22F85A7D5D61F05D8B8C9F40")),
+    ).toBe(true);
+    expect(isAlreadyClosedPageError(new Error("Browser Bridge disconnected"))).toBe(false);
   });
 
   it("loads an authorized manifest and verifies the sealed payload digest", async () => {

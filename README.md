@@ -156,6 +156,20 @@ retries the waiter only and never silently sends the turn twice. If submission
 may have happened but no durable receipt exists, Oracle marks the attempt
 ambiguous instead of guessing. There is no silent fallback to direct CDP.
 
+The picker receipt proves what Oracle requested in the submission tab; it cannot
+prove how ChatGPT routed the response server-side. This fork therefore measures
+from durable `dispatch-intent` to the captured stable answer and **rejects every
+sub-minute reply** as untrusted for GPT-5.6 Pro. The answer is not printed or
+stored as a trusted transcript. A slower reply is still not proof by timing
+alone—it remains subject to normal source and architecture review.
+
+Every Oracle-owned OpenCLI browser command internally requests background
+window mode. This is a no-focus policy, not headless browsing: Chrome may still
+be visibly open behind other windows or on the current desktop, but Oracle does
+not intentionally bring it to the foreground. The chosen policy is stored in
+session runtime metadata so mixed behavior can be audited instead of guessed
+from whether a window happened to be noticeable.
+
 Human attention can still be required for first-time sign-in, expired sessions,
 account challenges, model entitlement, or an OpenCLI/ChatGPT contract change.
 
@@ -168,6 +182,7 @@ account challenges, model entitlement, or an OpenCLI/ChatGPT contract change.
 | Durable conversation receipt          | Yes                       |
 | Answer recovery without resubmission  | Yes                       |
 | Oracle `--followup` lineage           | Yes                       |
+| Sub-minute Pro-answer admission       | Hard reject               |
 | Same-invocation `--browser-follow-up` | Not yet; use `--followup` |
 | Deep Research                         | No; fails before dispatch |
 | Image generation                      | No; fails before dispatch |

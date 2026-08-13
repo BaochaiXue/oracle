@@ -111,6 +111,12 @@ export interface BrowserRuntimeMetadata {
   opencliVersion?: string;
   /** SHA-256 of the sealed, mode-0600 submission artifact. */
   opencliPayloadSha256?: string;
+  /** Browser Bridge window policy used for every tab lease in this operation. */
+  opencliWindowMode?: "background" | "foreground";
+  /** Durable dispatch-intent timestamp used for Pro response-quality admission. */
+  opencliDispatchAt?: string;
+  /** Elapsed wall time from dispatch intent to the captured stable assistant answer. */
+  opencliResponseElapsedMs?: number;
   /** Latest assistant message index observed before an OpenCLI follow-up dispatch. */
   opencliBaselineAssistantIndex?: number;
   /** SHA-256 of the latest assistant text observed before an OpenCLI follow-up dispatch. */

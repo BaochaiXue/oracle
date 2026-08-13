@@ -522,6 +522,9 @@ export async function performSessionRun({
     const cloudflareChallenge =
       userError?.category === "browser-automation" &&
       (userError.details as { stage?: string } | undefined)?.stage === "cloudflare-challenge";
+    const modelQualityRejected =
+      userError?.category === "browser-automation" &&
+      (userError.details as { stage?: string } | undefined)?.stage === "model-quality-gate";
     const browserCanReattach = !browserConfig?.copyProfileSource;
     let reattachGuidanceLogged = false;
     const logBrowserReattachGuidance = (
@@ -744,12 +747,31 @@ export async function performSessionRun({
       mode === "browser" && browserCanReattach
         ? (userError?.details as { runtime?: BrowserRuntimeMetadata } | undefined)?.runtime
         : undefined;
-    if (!cloudflareChallenge && browserCanReattach) {
+    if (!cloudflareChallenge && !modelQualityRejected && browserCanReattach) {
       logBrowserReattachGuidance(browserRuntime ?? currentBrowser?.runtime);
+    }
+    const completedAt = new Date().toISOString();
+    const modelError = userError
+      ? {
+          category: userError.category,
+          message: userError.message,
+          details: userError.details,
+        }
+      : undefined;
+    // Terminalize the child run before publishing the parent terminal state so
+    // status readers never observe error/complete at the session level while its
+    // only model still appears to be running.
+    if (modelForStatus) {
+      await sessionStore.updateModelRun(sessionMeta.id, modelForStatus, {
+        status: "error",
+        completedAt,
+        response: responseMetadata,
+        error: modelError,
+      });
     }
     await sessionStore.updateSession(sessionMeta.id, {
       status: "error",
-      completedAt: new Date().toISOString(),
+      completedAt,
       errorMessage: message,
       mode,
       browser: browserConfig
@@ -761,20 +783,8 @@ export async function performSessionRun({
         : undefined,
       response: responseMetadata,
       transport: transportMetadata,
-      error: userError
-        ? {
-            category: userError.category,
-            message: userError.message,
-            details: userError.details,
-          }
-        : undefined,
+      error: modelError,
     });
-    if (modelForStatus) {
-      await sessionStore.updateModelRun(sessionMeta.id, modelForStatus, {
-        status: "error",
-        completedAt: new Date().toISOString(),
-      });
-    }
     throw error;
   }
 }

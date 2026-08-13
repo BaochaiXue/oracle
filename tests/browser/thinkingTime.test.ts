@@ -3008,6 +3008,8 @@ describe("unified Intelligence picker with Advanced -> Effort submenu", () => {
       status: "already-selected",
       label: "Pro",
     });
+    expect(dom.advancedToggle.clicks).toBe(0);
+    expect(dom.effortOpener.clicks).toBe(0);
     const proRow = dom.tierRows[4];
     expect(proRow?.clicks).toBe(0);
   });
