@@ -191,7 +191,7 @@ async function evaluateThinkingTimeSelection(
   return outcome.result?.value as ThinkingTimeOutcome | undefined;
 }
 
-function buildThinkingTimeExpression(
+export function buildThinkingTimeExpression(
   level: ThinkingTimeLevel,
   desiredModel?: string | null,
 ): string {

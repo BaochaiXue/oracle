@@ -6,13 +6,20 @@ import { ArgumentError, CommandExecutionError } from "@jackwener/opencli/errors"
 import {
   CONTRACT_VERSION,
   FIXED_COMPOSER_INSTRUCTION,
+  appendTransportJournalEvent,
   assistantMarkerFromRows,
   buildDataTransferScript,
   buildGenerationControlScript,
   extractConversationReceipt,
   loadSubmissionManifest,
+  requireOracleGpt56SolModelOutcome,
+  requireOracleProThinkingOutcome,
   unwrapEvaluateResult,
 } from "./submit-file-core.js";
+import {
+  ORACLE_GPT56_SOL_MODEL_EXPRESSION,
+  ORACLE_PRO_THINKING_EXPRESSION,
+} from "./oracle-picker.generated.js";
 
 const registryPath = fileURLToPath(import.meta.resolve("@jackwener/opencli/registry"));
 const openCliPackageRoot = path.resolve(path.dirname(registryPath), "../..");
@@ -94,11 +101,57 @@ async function generationControlIsVisible(page) {
   return result;
 }
 
+async function selectAndVerifyOraclePro(page) {
+  if (!ORACLE_GPT56_SOL_MODEL_EXPRESSION || !ORACLE_PRO_THINKING_EXPRESSION) {
+    throw new CommandExecutionError(
+      "Oracle's generated Pro picker is missing. Run the Oracle OpenCLI adapter installer.",
+    );
+  }
+
+  const deadline = Date.now() + 8_000;
+  let rawModel = unwrapEvaluateResult(await page.evaluate(ORACLE_GPT56_SOL_MODEL_EXPRESSION));
+  while (rawModel?.status === "button-missing" && Date.now() < deadline) {
+    await page.wait(0.25);
+    rawModel = unwrapEvaluateResult(await page.evaluate(ORACLE_GPT56_SOL_MODEL_EXPRESSION));
+  }
+
+  let model;
+  let thinking;
+  try {
+    model = requireOracleGpt56SolModelOutcome(rawModel);
+    thinking = requireOracleProThinkingOutcome(
+      unwrapEvaluateResult(await page.evaluate(ORACLE_PRO_THINKING_EXPRESSION)),
+    );
+  } catch (error) {
+    throw new CommandExecutionError(
+      `Oracle native Pro selection failed before submission: ${String(error?.message ?? error)}`,
+    );
+  }
+  return { model, thinking };
+}
+
+async function closeOwnedSubmissionTab(page) {
+  if (typeof page.closeTab !== "function") {
+    throw new CommandExecutionError(
+      "OpenCLI cannot explicitly close the Oracle submission tab.",
+      "Update OpenCLI before using the unattended Oracle transport.",
+    );
+  }
+  try {
+    await page.closeTab();
+  } catch (error) {
+    throw new CommandExecutionError(
+      `OpenCLI failed to close the Oracle submission tab: ${String(error?.message ?? error)}`,
+      "The dispatch journal still records whether submission may have occurred. Inspect or reattach the Oracle session; do not resubmit it blindly.",
+    );
+  }
+}
+
 export const submitFileCommand = cli({
   site: "chatgpt",
   name: "submit-file",
   description:
-    "Submit a sealed Oracle file manifest to ChatGPT and return a conversation receipt without waiting for the answer",
+    "Use Oracle picker contract v3 to select GPT-5.6 Pro in the submission tab, submit a sealed file manifest, and return a conversation receipt",
   access: "write",
   example:
     "opencli chatgpt submit-file ~/.oracle/sessions/example/artifacts/opencli-submit.json --new true -f json",
@@ -114,6 +167,12 @@ export const submitFileCommand = cli({
       required: true,
       help: "Path to a mode-0600 Oracle OpenCLI submission manifest",
     },
+    {
+      name: "timeout",
+      type: "number",
+      default: 225,
+      help: "Maximum seconds for navigation, Oracle Pro selection, attachment, and submission",
+    },
     { name: "new", type: "boolean", default: false, help: "Start a new ChatGPT conversation" },
     {
       name: "conversation",
@@ -127,84 +186,88 @@ export const submitFileCommand = cli({
     "conversationId",
     "conversationUrl",
     "Model",
+    "ModelStatus",
+    "ModelLabel",
+    "ThinkingStatus",
+    "ThinkingLabel",
     "Files",
     "BaselineAssistantIndex",
     "BaselineAssistantSha256",
   ],
   func: async (page, kwargs) => {
-    const useNew = chatGptUtils.normalizeBooleanFlag(kwargs.new, false);
-    if (useNew && kwargs.conversation) {
-      throw new ArgumentError(
-        "chatgpt submit-file cannot combine --new and --conversation.",
-        "Choose one explicit Oracle conversation target.",
-      );
-    }
-    if (!useNew && !kwargs.conversation) {
-      throw new ArgumentError(
-        "chatgpt submit-file requires --new true or --conversation <id>.",
-        "Oracle submissions never rely on the currently active tab.",
-      );
-    }
+    try {
+      const useNew = chatGptUtils.normalizeBooleanFlag(kwargs.new, false);
+      if (useNew && kwargs.conversation) {
+        throw new ArgumentError(
+          "chatgpt submit-file cannot combine --new and --conversation.",
+          "Choose one explicit Oracle conversation target.",
+        );
+      }
+      if (!useNew && !kwargs.conversation) {
+        throw new ArgumentError(
+          "chatgpt submit-file requires --new true or --conversation <id>.",
+          "Oracle submissions never rely on the currently active tab.",
+        );
+      }
 
-    const submission = loadSubmissionManifest(kwargs.manifest);
-    if (kwargs.conversation) {
-      await chatGptUtils.openChatGPTConversation(page, kwargs.conversation);
-    } else {
-      await chatGptUtils.startNewChat(page);
-    }
-    await chatGptUtils.ensureChatGPTComposer(
-      page,
-      "ChatGPT submit-file requires an authenticated Browser Bridge session.",
-    );
-
-    const modelButtons = unwrapEvaluateResult(
-      await page.evaluate(`(() => Array.from(document.querySelectorAll('form button')).map((button) => ({
-        text: (button.innerText || button.textContent || '').replace(/\\s+/g, ' ').trim(),
-        visible: !!(button.offsetWidth || button.offsetHeight || button.getClientRects().length),
-      })))()`),
-    );
-    const proVisible = Array.isArray(modelButtons)
-      ? modelButtons.some(
-          (button) =>
-            button?.visible !== false && String(button?.text ?? "").toLowerCase() === "pro",
-        )
-      : false;
-    if (!proVisible) {
-      throw new CommandExecutionError(
-        "The exact ChatGPT submission tab did not visibly confirm Pro; nothing was submitted.",
+      const submission = loadSubmissionManifest(kwargs.manifest);
+      if (kwargs.conversation) {
+        await chatGptUtils.openChatGPTConversation(page, kwargs.conversation);
+      } else {
+        await chatGptUtils.startNewChat(page);
+      }
+      await chatGptUtils.ensureChatGPTComposer(
+        page,
+        "ChatGPT submit-file requires an authenticated Browser Bridge session.",
       );
-    }
 
-    while (await generationControlIsVisible(page)) {
-      await page.wait(3);
+      const selection = await selectAndVerifyOraclePro(page);
+      appendTransportJournalEvent(submission, "model-ready", {
+        reportedModel: selection.model.label,
+        reportedThinking: selection.thinking.label,
+      });
+
+      while (await generationControlIsVisible(page)) {
+        await page.wait(3);
+      }
+      const baseline = kwargs.conversation
+        ? assistantMarkerFromRows(
+            (await chatGptUtils.getChatGPTDetailRows(page, { wantMarkdown: true })).rows,
+          )
+        : null;
+      if (kwargs.conversation && !baseline) {
+        throw new CommandExecutionError(
+          "ChatGPT did not expose the prior assistant turn needed to guard this Oracle follow-up; nothing was submitted.",
+        );
+      }
+      await uploadAuthorizedFiles(page, submission.files);
+      appendTransportJournalEvent(submission, "dispatch-intent", {
+        payloadSha256: submission.payloadSha256,
+        attempt: 1,
+      });
+      const sent = await chatGptUtils.sendChatGPTMessage(page, FIXED_COMPOSER_INSTRUCTION);
+      if (!sent) {
+        throw new CommandExecutionError("ChatGPT did not accept the authorized Oracle turn.");
+      }
+      const receipt = await waitForConversationReceipt(page);
+      return [
+        {
+          ContractVersion: CONTRACT_VERSION,
+          Status: "Submitted",
+          ...receipt,
+          Model: "GPT-5.6 Pro",
+          ModelStatus: selection.model.status,
+          ModelLabel: selection.model.label,
+          ThinkingStatus: selection.thinking.status,
+          ThinkingLabel: selection.thinking.label,
+          Files: submission.files.length,
+          BaselineAssistantIndex: baseline?.index,
+          BaselineAssistantSha256: baseline?.sha256,
+        },
+      ];
+    } finally {
+      await closeOwnedSubmissionTab(page);
     }
-    const baseline = kwargs.conversation
-      ? assistantMarkerFromRows(
-          (await chatGptUtils.getChatGPTDetailRows(page, { wantMarkdown: true })).rows,
-        )
-      : null;
-    if (kwargs.conversation && !baseline) {
-      throw new CommandExecutionError(
-        "ChatGPT did not expose the prior assistant turn needed to guard this Oracle follow-up; nothing was submitted.",
-      );
-    }
-    await uploadAuthorizedFiles(page, submission.files);
-    const sent = await chatGptUtils.sendChatGPTMessage(page, FIXED_COMPOSER_INSTRUCTION);
-    if (!sent) {
-      throw new CommandExecutionError("ChatGPT did not accept the authorized Oracle turn.");
-    }
-    const receipt = await waitForConversationReceipt(page);
-    return [
-      {
-        ContractVersion: CONTRACT_VERSION,
-        Status: "Submitted",
-        ...receipt,
-        Model: "Pro",
-        Files: submission.files.length,
-        BaselineAssistantIndex: baseline?.index,
-        BaselineAssistantSha256: baseline?.sha256,
-      },
-    ];
   },
 });
 

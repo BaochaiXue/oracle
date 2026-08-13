@@ -32,12 +32,14 @@ function successRunner(
   return async (_executable, args) => {
     calls.push(args);
     const key = args.join(" ");
-    if (key === "--version") return { stdout: "1.8.3\n", stderr: "" };
-    if (key === "doctor") return { stdout: "Browser Bridge connected\n", stderr: "" };
+    if (key === "--version") return { stdout: "1.8.6\n", stderr: "" };
+    if (key === "daemon status") {
+      return { stdout: "Daemon: running\nExtension: connected (v1.0.22)\n", stderr: "" };
+    }
     if (args[0] === "chatgpt" && args[1] === "submit-file" && args.includes("--help")) {
       return {
         stdout:
-          "Usage: opencli chatgpt submit-file <manifest> [options]\n\nArguments:\n  manifest  Path to a mode-0600 Oracle OpenCLI submission manifest\n\nOutput columns: ContractVersion, Status, conversationId, conversationUrl, Model, Files, BaselineAssistantIndex, BaselineAssistantSha256\n",
+          "Usage: opencli chatgpt submit-file <manifest> [options]\n\nUse Oracle picker contract v3 to select GPT-5.6 Pro in the submission tab.\n\nArguments:\n  manifest  Path to a mode-0600 Oracle OpenCLI submission manifest\n\nOutput columns: ContractVersion, Status, conversationId, conversationUrl, Model, ModelStatus, ModelLabel, ThinkingStatus, ThinkingLabel, Files, BaselineAssistantIndex, BaselineAssistantSha256\n",
         stderr: "",
       };
     }
@@ -48,21 +50,34 @@ function successRunner(
         stderr: "",
       };
     }
-    if (args[0] === "chatgpt" && args[1] === "model") {
-      events.push("model");
-      return { stdout: JSON.stringify([{ Status: "Already selected", Model: "Pro" }]), stderr: "" };
-    }
     if (args[0] === "chatgpt" && args[1] === "submit-file") {
+      const manifest = JSON.parse(await fs.readFile(args[2]!, "utf8")) as {
+        journalPath: string;
+        operationRef: string;
+      };
+      await fs.appendFile(
+        manifest.journalPath,
+        `${JSON.stringify({ event: "model-ready", operationRef: manifest.operationRef })}\n`,
+      );
+      events.push("model");
+      await fs.appendFile(
+        manifest.journalPath,
+        `${JSON.stringify({ event: "dispatch-intent", operationRef: manifest.operationRef })}\n`,
+      );
       events.push("dispatch");
       events.push("receipt");
       return {
         stdout: JSON.stringify([
           {
-            ContractVersion: 2,
+            ContractVersion: 3,
             Status: "Submitted",
             conversationId: conversationUrl.split("/c/")[1],
             conversationUrl,
-            Model: "Pro",
+            Model: "GPT-5.6 Pro",
+            ModelStatus: "already-selected",
+            ModelLabel: "GPT-5.6 Sol",
+            ThinkingStatus: "already-selected",
+            ThinkingLabel: "Pro",
             Files: 1,
             BaselineAssistantIndex: delayFollowupAnswer ? 2 : undefined,
             BaselineAssistantSha256: delayFollowupAnswer
@@ -78,7 +93,7 @@ function successRunner(
       return {
         stdout: JSON.stringify([
           {
-            ContractVersion: 2,
+            ContractVersion: 3,
             Status: "Complete",
             conversationId: conversationUrl.split("/c/")[1],
             conversationUrl,
@@ -147,13 +162,17 @@ describe("OpenCliBrowserTransport", () => {
       (args) => args[0] === "chatgpt" && args[1] === "submit-file" && !args.includes("--help"),
     );
     expect(submitCall).toEqual(expect.arrayContaining(["--site-session", "ephemeral"]));
-    expect(submitCall).toEqual(expect.arrayContaining(["--keep-tab", "false"]));
+    expect(submitCall).toEqual(expect.arrayContaining(["--keep-tab", "true"]));
+    expect(submitCall).toEqual(
+      expect.arrayContaining(["--timeout", "225", "--trace", "retain-on-failure"]),
+    );
+    expect(calls.some((args) => args[0] === "chatgpt" && args[1] === "model")).toBe(false);
     const waitCalls = calls.filter(
       (args) => args[0] === "chatgpt" && args[1] === "oracle-wait" && !args.includes("--help"),
     );
     expect(waitCalls).toHaveLength(1);
     expect(waitCalls[0]).toEqual(expect.arrayContaining(["--site-session", "ephemeral"]));
-    expect(waitCalls[0]).toEqual(expect.arrayContaining(["--keep-tab", "false"]));
+    expect(waitCalls[0]).toEqual(expect.arrayContaining(["--keep-tab", "true"]));
     expect(calls.some((args) => args[0] === "chatgpt" && args[1] === "detail")).toBe(false);
     expect(runtimeHints.at(-1)).toMatchObject({
       browserTransport: "opencli",
@@ -218,7 +237,7 @@ describe("OpenCliBrowserTransport", () => {
       tabUrl: "https://chatgpt.com/c/pending-123",
       conversationId: "pending-123",
       promptSubmitted: true,
-      opencliVersion: "1.8.3",
+      opencliVersion: "1.8.6",
     };
 
     const result = await resumeOpenCliBrowserSession(
@@ -241,19 +260,19 @@ describe("OpenCliBrowserTransport", () => {
   });
 
   it("fails closed for unsupported OpenCLI versions", () => {
-    expect(() => __test__.parseCompatibleVersion("1.8.2")).toThrow(/1\.8\.3 or newer/u);
+    expect(() => __test__.parseCompatibleVersion("1.8.5")).toThrow(/1\.8\.6 or newer/u);
     expect(() => __test__.parseCompatibleVersion("2.0.0")).toThrow(/incompatible/u);
-    expect(__test__.parseCompatibleVersion("1.8.3\n")).toBe("1.8.3");
+    expect(__test__.parseCompatibleVersion("1.8.6\n")).toBe("1.8.6");
     expect(__test__.parseCompatibleVersion("1.9.0")).toBe("1.9.0");
   });
 
-  it("fails before model selection when the installed adapter contract is incompatible", async () => {
+  it("fails before submission when the installed same-tab picker contract is incompatible", async () => {
     const calls: string[][] = [];
     const sessionDir = await createTempDir();
     const runner: OpenCliCommandRunner = async (_executable, args) => {
       calls.push(args);
-      if (args.join(" ") === "--version") return { stdout: "1.8.3\n", stderr: "" };
-      if (args.join(" ") === "doctor") {
+      if (args.join(" ") === "--version") return { stdout: "1.8.6\n", stderr: "" };
+      if (args.join(" ") === "daemon status") {
         return { stdout: "Browser Bridge connected\n", stderr: "" };
       }
       if (args.includes("--help")) {
@@ -273,7 +292,67 @@ describe("OpenCliBrowserTransport", () => {
       ),
     ).rejects.toThrow(/adapters are unavailable/u);
 
-    expect(calls.some((args) => args[0] === "chatgpt" && args[1] === "model")).toBe(false);
+    expect(
+      calls.some(
+        (args) => args[0] === "chatgpt" && args[1] === "submit-file" && !args.includes("--help"),
+      ),
+    ).toBe(false);
+  });
+
+  it("persists sanitized same-tab picker failure evidence without marking a submission", async () => {
+    const calls: string[][] = [];
+    const events: string[] = [];
+    const sessionDir = await createTempDir();
+    const baseRunner = successRunner(calls, events);
+    const runner: OpenCliCommandRunner = async (executable, args, options) => {
+      if (args[0] === "chatgpt" && args[1] === "submit-file" && !args.includes("--help")) {
+        throw Object.assign(new Error("Command failed: opencli chatgpt submit-file"), {
+          code: 77,
+          stderr: [
+            "ok: false",
+            "error:",
+            "  code: MODEL_UNCONFIRMED",
+            "  message: Oracle native Pro selection failed before submission.",
+            "trace:",
+            "  summaryPath: /tmp/opencli-submit-trace/summary.md",
+          ].join("\n"),
+        });
+      }
+      return baseRunner(executable, args, options);
+    };
+
+    await expect(
+      runOpenCliBrowserMode(
+        {
+          prompt: "private prompt",
+          sessionId: "model-failure-evidence",
+          config: { transport: "opencli", modelStrategy: "select" },
+        },
+        {
+          runCommand: runner,
+          resolveSessionDir: async () => sessionDir,
+          acquireLock: async () => ({
+            path: "/test/lock",
+            lockId: "model-failure-lock",
+            release: async () => undefined,
+          }),
+        },
+      ),
+    ).rejects.toMatchObject({
+      details: {
+        stage: "opencli-blocked",
+        reason: "opencli-blocked",
+        submitted: false,
+        opencliFailure: {
+          stage: "submit-file",
+          code: "MODEL_UNCONFIRMED",
+          message: "Oracle native Pro selection failed before submission.",
+          exitCode: 77,
+          traceSummaryPath: "/tmp/opencli-submit-trace/summary.md",
+        },
+      },
+    });
+    expect(events).not.toContain("dispatch");
   });
 
   it("accepts only explicit ChatGPT conversation receipts", () => {

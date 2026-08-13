@@ -23,7 +23,7 @@ ownership boundary, sidecar tradeoff, failure states, and privacy contract.
 
 Prerequisites:
 
-1. Install OpenCLI 1.8.3 or newer in the 1.x line and connect its Browser Bridge.
+1. Install OpenCLI 1.8.6 or newer in the 1.x line and connect its Browser Bridge.
 2. From this Oracle checkout, install and validate the companion adapters:
 
    ```bash
@@ -46,29 +46,33 @@ Prerequisites:
 The adapter installer refuses to overwrite different local adapter content.
 Inspect that content first, or use `--replace` when you deliberately want the
 checkout's version. The transport preflights OpenCLI, Browser Bridge, and the
-adapter contracts before model selection or submission.
+adapter contracts before model selection or submission. Preflight uses
+`opencli daemon status`, which does not borrow or create a Chrome tab. The
+companion submit adapter executes picker expressions generated from Oracle's
+native browser implementation in the exact submission tab; it does not call
+OpenCLI's separate `chatgpt model` command or its preference endpoint.
 
 ### GPT-5.6 Pro naming
 
 The human-facing target is **GPT-5.6 Pro**. The browser boundary deliberately
 keeps the names that the live UI and OpenCLI expose:
 
-- `gpt-5-pro` is Oracle's stable browser alias for the current Pro picker
+- `gpt-5-pro` is Oracle's stable browser alias for the current effective Pro
   target. It is not an API model id.
-- `pro` is OpenCLI's model enum.
-- `Pro` is the visible ChatGPT composer label and the exact model evidence in
-  the submission receipt.
+- `GPT-5.6 Sol` is the model selected in ChatGPT's model submenu.
+- `Pro` is the reasoning tier selected in the Intelligence control.
+- `GPT-5.6 Pro` is the verified effective label stored in Oracle's receipt,
+  alongside the two exact underlying UI labels above.
 
-Do not rewrite captured `Pro` evidence into a guessed version string. Oracle's
-upstream `gpt-5.5-pro` API model and GPT-5.6 API reasoning mode are separate
-contracts from this browser lane.
+Oracle's upstream `gpt-5.5-pro` API model and GPT-5.6 API reasoning mode are
+separate contracts from this browser lane.
 
 For each turn, Oracle writes a mode-0600 sealed payload, manifest, and transport
 journal inside the Oracle session. The private prompt and file contents never
-appear in a subprocess argument. Under one Oracle-owned lock, OpenCLI selects
-the current GPT-5.6 Pro tier, the submit adapter verifies that the exact
-submission tab visibly says `Pro`, transfers only the sealed files, captures a
-follow-up baseline when needed, and returns a structured conversation receipt.
+appear in a subprocess argument. Under one Oracle-owned lock, the submit adapter
+selects and verifies `GPT-5.6 Sol` plus `Pro` in the exact submission tab,
+transfers only the sealed files, captures a follow-up baseline when needed, and
+returns a structured conversation receipt.
 Answer collection then uses one read-only `chatgpt oracle-wait` command. Its one
 isolated ephemeral tab remains open for the whole wait and is explicitly closed
 before the adapter returns; Oracle does not launch a fresh process or tab every

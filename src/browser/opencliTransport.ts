@@ -18,16 +18,25 @@ import type { BrowserLogger, BrowserRunOptions, BrowserRunResult } from "./types
 import { estimateTokenCount } from "./utils.js";
 
 const execFileAsync = promisify(execFile);
-const OPENCLI_CONTRACT_VERSION = 2;
-const MIN_OPENCLI_VERSION = [1, 8, 3] as const;
+const OPENCLI_CONTRACT_VERSION = 3;
+const MIN_OPENCLI_VERSION = [1, 8, 6] as const;
 const DEFAULT_LOCK_TIMEOUT_MS = 300_000;
 const COMMAND_TIMEOUT_MS = 60_000;
 const MODEL_TIMEOUT_MS = 120_000;
+const DEFAULT_ATTACHMENT_TIMEOUT_MS = 45_000;
 const ORACLE_WAIT_STABLE_SECONDS = 9;
 
 interface CommandResult {
   stdout: string;
   stderr: string;
+}
+
+interface OpenCliFailureEvidence {
+  stage?: string;
+  code?: string;
+  message?: string;
+  exitCode?: number;
+  traceSummaryPath?: string;
 }
 
 export type OpenCliCommandRunner = (
@@ -64,11 +73,6 @@ interface OracleWaitRow {
   AssistantSha256?: string;
   Markdown?: string;
   StableSeconds?: number;
-}
-
-interface ModelRow {
-  Status?: string;
-  Model?: string;
 }
 
 interface PreparedSubmission {
@@ -135,6 +139,7 @@ export async function runOpenCliBrowserMode(
   let conversationId: string | undefined;
   let modelSelection: BrowserModelSelectionEvidence | undefined;
   let baselineAssistant: AssistantMarker | undefined;
+  let submitCommandStarted = false;
 
   try {
     lock = await acquireLock(lockDir, {
@@ -149,13 +154,7 @@ export async function runOpenCliBrowserMode(
       );
     }
 
-    modelSelection = await ensureProModel(context, config);
-    await appendJournal(prepared.journalPath, {
-      event: "model-ready",
-      operationRef,
-      reportedModel: modelSelection.resolvedLabel,
-      at: (deps.now?.() ?? new Date()).toISOString(),
-    });
+    assertOpenCliModelStrategy(config);
 
     const currentPayloadHash = await computeFileSha256(prepared.path);
     if (currentPayloadHash !== prepared.sha256) {
@@ -165,14 +164,6 @@ export async function runOpenCliBrowserMode(
       );
     }
 
-    await appendJournal(prepared.journalPath, {
-      event: "dispatch-intent",
-      operationRef,
-      payloadSha256: prepared.sha256,
-      target: targetUrl,
-      attempt: 1,
-      at: (deps.now?.() ?? new Date()).toISOString(),
-    });
     await options.runtimeHintCb?.(
       {
         browserTransport: "opencli",
@@ -186,10 +177,10 @@ export async function runOpenCliBrowserMode(
         opencliBaselineAssistantIndex: baselineAssistant?.index,
         opencliBaselineAssistantSha256: baselineAssistant?.sha256,
       },
-      modelSelection,
+      undefined,
     );
 
-    dispatchMayHaveOccurred = true;
+    submitCommandStarted = true;
     const receipt = await submitAuthorizedFiles(
       context,
       prepared.adapterManifestPath,
@@ -199,6 +190,8 @@ export async function runOpenCliBrowserMode(
     conversationUrl = receipt.url;
     conversationId = receipt.conversationId;
     baselineAssistant = receipt.baselineAssistant;
+    modelSelection = receipt.modelSelection;
+    dispatchMayHaveOccurred = true;
     await appendJournal(prepared.journalPath, {
       event: "submitted",
       operationRef,
@@ -226,6 +219,13 @@ export async function runOpenCliBrowserMode(
   } catch (error) {
     if (error instanceof BrowserAutomationError) {
       throw error;
+    }
+    if (submitCommandStarted && !conversationUrl) {
+      dispatchMayHaveOccurred = await journalHasEvent(
+        prepared.journalPath,
+        operationRef,
+        "dispatch-intent",
+      ).catch(() => true);
     }
     if (dispatchMayHaveOccurred && !conversationUrl) {
       await appendJournal(prepared.journalPath, {
@@ -340,7 +340,7 @@ async function preflightOpenCli(
   const version = parseCompatibleVersion(versionOutput.stdout);
   const context = { executable, version, runCommand: runCommandImpl };
   try {
-    await runCommand(context, ["doctor"], COMMAND_TIMEOUT_MS, "doctor");
+    await runCommand(context, ["daemon", "status"], COMMAND_TIMEOUT_MS, "daemon-status");
     const adapterHelp = await runCommand(
       context,
       ["chatgpt", "submit-file", "--help"],
@@ -349,7 +349,8 @@ async function preflightOpenCli(
     );
     if (
       !/Arguments:\s*\n\s*manifest\b/u.test(adapterHelp.stdout) ||
-      !/Output columns:\s*ContractVersion, Status, conversationId, conversationUrl, Model, Files, BaselineAssistantIndex, BaselineAssistantSha256/u.test(
+      !/Oracle picker contract v3/u.test(adapterHelp.stdout) ||
+      !/Output columns:\s*ContractVersion, Status, conversationId, conversationUrl, Model, ModelStatus, ModelLabel, ThinkingStatus, ThinkingLabel, Files, BaselineAssistantIndex, BaselineAssistantSha256/u.test(
         adapterHelp.stdout,
       )
     ) {
@@ -379,51 +380,13 @@ async function preflightOpenCli(
   return context;
 }
 
-async function ensureProModel(
-  context: OpenCliContext,
-  config: BrowserSessionConfig,
-): Promise<BrowserModelSelectionEvidence> {
+function assertOpenCliModelStrategy(config: BrowserSessionConfig): void {
   if (config.modelStrategy === "ignore" || config.modelStrategy === "current") {
     throw blockedError(
       "OpenCLI transport requires modelStrategy=select so every unattended turn verifies Pro before dispatch.",
       "model-unconfirmed",
     );
   }
-  const rows = await runJsonCommand<ModelRow[]>(
-    context,
-    [
-      "chatgpt",
-      "model",
-      "pro",
-      "-f",
-      "json",
-      "--window",
-      "background",
-      "--site-session",
-      "ephemeral",
-      "--keep-tab",
-      "false",
-    ],
-    MODEL_TIMEOUT_MS,
-    "model-pro",
-  );
-  const row = rows[0];
-  if (!row || row.Model?.trim().toLowerCase() !== "pro") {
-    throw blockedError(
-      "OpenCLI did not return a structured Pro model receipt; nothing was submitted.",
-      "model-unconfirmed",
-    );
-  }
-  const alreadySelected = /already/i.test(row.Status ?? "");
-  return {
-    requestedModel: config.desiredModel ?? "Pro",
-    resolvedLabel: "Pro",
-    strategy: "select",
-    status: alreadySelected ? "already-selected" : "switched",
-    verified: true,
-    source: "chatgpt-model-picker",
-    capturedAt: new Date().toISOString(),
-  };
 }
 
 async function submitAuthorizedFiles(
@@ -435,9 +398,15 @@ async function submitAuthorizedFiles(
   url: string;
   conversationId: string;
   baselineAssistant?: AssistantMarker;
+  modelSelection: BrowserModelSelectionEvidence;
 }> {
   const existingConversationId = extractConversationId(targetUrl);
   const targetArgs = existingConversationId ? ["--conversation", targetUrl] : ["--new", "true"];
+  const adapterTimeoutMs =
+    MODEL_TIMEOUT_MS +
+    (config.attachmentTimeoutMs ?? DEFAULT_ATTACHMENT_TIMEOUT_MS) +
+    COMMAND_TIMEOUT_MS;
+  const adapterTimeoutSeconds = Math.ceil(adapterTimeoutMs / 1000);
   const rows = await runJsonCommand<
     Array<{
       ContractVersion?: number;
@@ -445,6 +414,10 @@ async function submitAuthorizedFiles(
       conversationId?: string;
       conversationUrl?: string;
       Model?: string;
+      ModelStatus?: string;
+      ModelLabel?: string;
+      ThinkingStatus?: string;
+      ThinkingLabel?: string;
       BaselineAssistantIndex?: number;
       BaselineAssistantSha256?: string;
     }>
@@ -455,16 +428,20 @@ async function submitAuthorizedFiles(
       "submit-file",
       adapterManifestPath,
       ...targetArgs,
+      "--timeout",
+      String(adapterTimeoutSeconds),
       "-f",
       "json",
+      "--trace",
+      "retain-on-failure",
       "--window",
       "background",
       "--site-session",
       "ephemeral",
       "--keep-tab",
-      "false",
+      "true",
     ],
-    (config.attachmentTimeoutMs ?? MODEL_TIMEOUT_MS) + COMMAND_TIMEOUT_MS,
+    adapterTimeoutMs + COMMAND_TIMEOUT_MS,
     "submit-file",
   );
   const row = rows[0];
@@ -473,7 +450,11 @@ async function submitAuthorizedFiles(
   if (
     row?.ContractVersion !== OPENCLI_CONTRACT_VERSION ||
     row?.Status !== "Submitted" ||
-    row?.Model !== "Pro" ||
+    row?.Model !== "GPT-5.6 Pro" ||
+    !["already-selected", "switched"].includes(row.ModelStatus ?? "") ||
+    !["already-selected", "switched"].includes(row.ThinkingStatus ?? "") ||
+    !/5[._ -]?6\s+sol/iu.test(row.ModelLabel ?? "") ||
+    !/\bpro\b/iu.test(row.ThinkingLabel ?? "") ||
     !conversationId ||
     !conversationUrl ||
     extractConversationId(conversationUrl) !== conversationId
@@ -491,7 +472,19 @@ async function submitAuthorizedFiles(
   if (existingConversationId && !baselineAssistant) {
     throw new Error("OpenCLI submit-file did not return the required follow-up baseline receipt.");
   }
-  return { url: conversationUrl, conversationId, baselineAssistant };
+  const modelSelection: BrowserModelSelectionEvidence = {
+    requestedModel: config.desiredModel ?? "GPT-5.6 Pro",
+    resolvedLabel: row.Model,
+    strategy: "select",
+    status:
+      row.ModelStatus === "already-selected" && row.ThinkingStatus === "already-selected"
+        ? "already-selected"
+        : "switched",
+    verified: true,
+    source: "chatgpt-model-picker",
+    capturedAt: new Date().toISOString(),
+  };
+  return { url: conversationUrl, conversationId, baselineAssistant, modelSelection };
 }
 
 async function captureDetail(
@@ -531,7 +524,7 @@ async function captureDetail(
       "--site-session",
       "ephemeral",
       "--keep-tab",
-      "false",
+      "true",
     ],
     timeoutMs + COMMAND_TIMEOUT_MS,
     "oracle-wait",
@@ -588,6 +581,8 @@ async function prepareSubmission(
         payloadPath: submissionPath,
         payloadSha256: sha256,
         attachmentPaths: attachments.map((attachment) => attachment.path),
+        operationRef,
+        journalPath,
       },
       null,
       2,
@@ -624,6 +619,23 @@ async function appendJournal(journalPath: string, event: Record<string, unknown>
     await handle.close();
     await fs.chmod(journalPath, 0o600);
   }
+}
+
+async function journalHasEvent(
+  journalPath: string,
+  operationRef: string,
+  event: string,
+): Promise<boolean> {
+  const contents = await fs.readFile(journalPath, "utf8");
+  return contents.split("\n").some((line) => {
+    if (!line.trim()) return false;
+    try {
+      const record = JSON.parse(line) as { event?: unknown; operationRef?: unknown };
+      return record.event === event && record.operationRef === operationRef;
+    } catch {
+      return false;
+    }
+  });
 }
 
 async function runJsonCommand<T>(
@@ -670,7 +682,7 @@ function parseCompatibleVersion(raw: string): string {
       (version[1] === MIN_OPENCLI_VERSION[1] && version[2] >= MIN_OPENCLI_VERSION[2]));
   if (!compatible) {
     throw blockedError(
-      `OpenCLI ${match[0]} is incompatible; version 1.8.3 or newer in the 1.x line is required.`,
+      `OpenCLI ${match[0]} is incompatible; version 1.8.6 or newer in the 1.x line is required.`,
       "opencli-incompatible",
     );
   }
@@ -745,11 +757,58 @@ function assertSupportedRun(options: BrowserRunOptions): void {
 }
 
 function blockedError(message: string, reason: string, cause?: unknown): BrowserAutomationError {
+  const opencliFailure = summarizeOpenCliFailure(cause);
   return new BrowserAutomationError(
     message,
-    { stage: "opencli-blocked", reason, submitted: false },
+    {
+      stage: "opencli-blocked",
+      reason,
+      submitted: false,
+      ...(opencliFailure ? { opencliFailure } : {}),
+    },
     cause,
   );
+}
+
+function summarizeOpenCliFailure(error: unknown): OpenCliFailureEvidence | undefined {
+  let current = error;
+  let fallbackMessage: string | undefined;
+  const evidence: OpenCliFailureEvidence = {};
+
+  for (let depth = 0; current && depth < 6; depth += 1) {
+    if (!(current instanceof Error) && typeof current !== "object") break;
+    const candidate = current as Error & {
+      cause?: unknown;
+      code?: unknown;
+      stderr?: unknown;
+    };
+    const message = typeof candidate.message === "string" ? candidate.message.trim() : "";
+    const stageMatch = message.match(/^OpenCLI command failed during ([^.]+)\.$/u);
+    if (stageMatch?.[1]) evidence.stage = stageMatch[1];
+    else if (message && !fallbackMessage) fallbackMessage = message;
+
+    if (typeof candidate.code === "number") evidence.exitCode = candidate.code;
+    else if (typeof candidate.code === "string" && /^\d+$/u.test(candidate.code)) {
+      evidence.exitCode = Number.parseInt(candidate.code, 10);
+    }
+
+    if (typeof candidate.stderr === "string") {
+      const stderr = candidate.stderr;
+      const codeMatch = stderr.match(/^\s*code:\s*([A-Z][A-Z0-9_]*)\s*$/mu);
+      const messageMatch = stderr.match(/^\s*message:\s*(.+?)\s*$/mu);
+      const traceMatch = stderr.match(/^\s*summaryPath:\s*(.+?)\s*$/mu);
+      if (codeMatch?.[1]) evidence.code = codeMatch[1];
+      if (messageMatch?.[1]) evidence.message = messageMatch[1].replace(/^['"]|['"]$/gu, "");
+      if (traceMatch?.[1]) {
+        evidence.traceSummaryPath = traceMatch[1].replace(/^['"]|['"]$/gu, "");
+      }
+    }
+    current = candidate.cause;
+  }
+
+  if (!evidence.stage && !evidence.code && !evidence.traceSummaryPath) return undefined;
+  if (!evidence.message && fallbackMessage) evidence.message = fallbackMessage;
+  return evidence;
 }
 
 export const __test__ = {

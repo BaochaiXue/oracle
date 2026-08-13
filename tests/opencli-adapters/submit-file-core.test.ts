@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   CONTRACT_VERSION,
+  appendTransportJournalEvent,
   assistantMarkerFromRows,
   buildDataTransferScript,
   buildGenerationControlScript,
@@ -12,6 +13,8 @@ import {
   loadSubmissionManifest,
   matchesAssistantBaseline,
   mimeTypeForPath,
+  requireOracleGpt56SolModelOutcome,
+  requireOracleProThinkingOutcome,
   unwrapEvaluateResult,
 } from "../../opencli-adapters/chatgpt/submit-file-core.js";
 
@@ -22,8 +25,8 @@ afterEach(async () => {
 });
 
 describe("OpenCLI submit-file adapter core", () => {
-  it("uses the v2 single-waiter receipt contract", () => {
-    expect(CONTRACT_VERSION).toBe(2);
+  it("uses the v3 same-tab native-picker receipt contract", () => {
+    expect(CONTRACT_VERSION).toBe(3);
   });
 
   it("loads an authorized manifest and verifies the sealed payload digest", async () => {
@@ -35,6 +38,8 @@ describe("OpenCLI submit-file adapter core", () => {
     await fs.writeFile(payloadPath, payload, { mode: 0o600 });
     await fs.writeFile(attachmentPath, "{}\n", { mode: 0o600 });
     const manifestPath = path.join(dir, "submit.json");
+    const operationRef = "oracle-adapter-test-turn";
+    const journalPath = path.join(dir, `opencli-transport-${operationRef}.ndjson`);
     await fs.writeFile(
       manifestPath,
       JSON.stringify({
@@ -42,6 +47,8 @@ describe("OpenCLI submit-file adapter core", () => {
         payloadPath,
         payloadSha256: createHash("sha256").update(payload).digest("hex"),
         attachmentPaths: [attachmentPath],
+        operationRef,
+        journalPath,
       }),
       { mode: 0o600 },
     );
@@ -52,6 +59,17 @@ describe("OpenCLI submit-file adapter core", () => {
       "input.json",
     ]);
     expect(loaded.files[0]?.base64).toBe(Buffer.from(payload).toString("base64"));
+    appendTransportJournalEvent(loaded, "model-ready", { reportedModel: "Pro" });
+    appendTransportJournalEvent(loaded, "dispatch-intent", { attempt: 1 });
+    const journal = (await fs.readFile(journalPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(journal).toMatchObject([
+      { event: "model-ready", operationRef, reportedModel: "Pro" },
+      { event: "dispatch-intent", operationRef, attempt: 1 },
+    ]);
+    expect((await fs.stat(journalPath)).mode & 0o777).toBe(0o600);
   });
 
   it("rejects payload mutation after Oracle authorization", async () => {
@@ -60,6 +78,7 @@ describe("OpenCLI submit-file adapter core", () => {
     const payloadPath = path.join(dir, "oracle-submission.md");
     await fs.writeFile(payloadPath, "mutated\n");
     const manifestPath = path.join(dir, "submit.json");
+    const operationRef = "oracle-mutated-turn";
     await fs.writeFile(
       manifestPath,
       JSON.stringify({
@@ -67,10 +86,34 @@ describe("OpenCLI submit-file adapter core", () => {
         payloadPath,
         payloadSha256: "0".repeat(64),
         attachmentPaths: [],
+        operationRef,
+        journalPath: path.join(dir, `opencli-transport-${operationRef}.ndjson`),
       }),
     );
 
     expect(() => loadSubmissionManifest(manifestPath)).toThrow(/integrity verification failed/u);
+  });
+
+  it("accepts only verified Oracle-native Pro picker outcomes", () => {
+    expect(requireOracleGpt56SolModelOutcome({ status: "switched", label: "GPT-5.6 Sol" })).toEqual(
+      {
+        status: "switched",
+        label: "GPT-5.6 Sol",
+      },
+    );
+    expect(() =>
+      requireOracleGpt56SolModelOutcome({ status: "switched", label: "GPT-5.6 Sol Pro" }),
+    ).toThrow(/invalid GPT-5\.6 Sol label/u);
+    expect(() =>
+      requireOracleGpt56SolModelOutcome({ status: "switched", label: "GPT-5.5" }),
+    ).toThrow(/invalid GPT-5\.6 Sol label/u);
+    expect(requireOracleProThinkingOutcome({ status: "switched", label: "Pro" })).toEqual({
+      status: "switched",
+      label: "Pro",
+    });
+    expect(() =>
+      requireOracleProThinkingOutcome({ status: "option-not-found", label: "极高" }),
+    ).toThrow(/did not confirm Pro/u);
   });
 
   it("builds a DataTransfer payload and parses only ChatGPT receipts", () => {

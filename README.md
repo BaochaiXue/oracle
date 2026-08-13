@@ -63,6 +63,7 @@ this transport yet. Install the fork from source together with its companion
 OpenCLI adapters:
 
 ```bash
+npm install -g @jackwener/opencli@1.8.6
 git clone https://github.com/IndelibleVivi/oracle.git
 cd oracle
 corepack enable
@@ -77,14 +78,16 @@ opencli validate chatgpt/oracle-wait
 Requirements:
 
 - Node.js 24 or newer.
-- OpenCLI 1.8.3 or newer in the 1.x line.
+- OpenCLI 1.8.6 or newer in the 1.x line. Oracle generates its proven native
+  picker expressions into the companion adapter; OpenCLI executes them in the
+  exact submission tab and does not own model semantics.
 - An authenticated OpenCLI Browser Bridge.
 - ChatGPT account access to the current Pro tier.
 
 Run a preflight without sending private content:
 
 ```bash
-opencli doctor
+opencli daemon status
 opencli validate chatgpt/submit-file
 opencli validate chatgpt/oracle-wait
 oracle --dry-run summary --files-report \
@@ -120,14 +123,14 @@ oracle --followup <session-id> \
 
 ## The GPT-5.6 Pro naming contract
 
-There are three names here because product language and browser automation have
-different stability requirements:
+The effective browser target and its two UI controls have different names:
 
-| Layer                         | Name            | Why                                                                                                        |
-| ----------------------------- | --------------- | ---------------------------------------------------------------------------------------------------------- |
-| Human-facing product          | **GPT-5.6 Pro** | Names the current ChatGPT Pro experience this fork targets.                                                |
-| Oracle browser alias          | `gpt-5-pro`     | A stable CLI alias that follows the current Pro picker target. It is not an OpenAI API model ID.           |
-| ChatGPT/OpenCLI wire evidence | `Pro` / `pro`   | The current composer label and OpenCLI enum. Exact UI-native evidence must not be rewritten after capture. |
+| Layer                | Name            | Why                                                                                                |
+| -------------------- | --------------- | -------------------------------------------------------------------------------------------------- |
+| Human-facing product | **GPT-5.6 Pro** | Names the effective ChatGPT experience this fork targets.                                          |
+| Oracle browser alias | `gpt-5-pro`     | Stable CLI alias for the browser lane; it is not an OpenAI API model ID.                           |
+| ChatGPT model        | `GPT-5.6 Sol`   | Exact selected model evidence from the submission tab.                                             |
+| ChatGPT reasoning    | `Pro`           | Exact selected Intelligence tier; combined with the model above, it verifies the effective target. |
 
 `gpt-5.5-pro` remains Oracle's upstream API model/default and is intentionally
 not mass-renamed. Likewise, API reasoning mode for GPT-5.6 remains a separate

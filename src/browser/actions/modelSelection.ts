@@ -176,7 +176,7 @@ export function assertResolvedModelSelectionForTest(
  * Builds the DOM expression that runs inside the ChatGPT tab to select a model.
  * The string is evaluated inside Chrome, so keep it self-contained and well-commented.
  */
-function buildModelSelectionExpression(
+export function buildModelSelectionExpression(
   targetModel: string,
   strategy: BrowserModelStrategy,
 ): string {

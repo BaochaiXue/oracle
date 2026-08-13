@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-export const CONTRACT_VERSION = 2;
+export const CONTRACT_VERSION = 3;
 export const MAX_TOTAL_FILE_BYTES = 20 * 1024 * 1024;
 export const FIXED_COMPOSER_INSTRUCTION =
   "Read every attached file in full. The oracle-submission Markdown file contains the complete authorized Oracle request. Answer that request directly and use the other attachments only as its referenced inputs.";
@@ -90,9 +90,23 @@ export function loadSubmissionManifest(manifestPath) {
     manifest?.contractVersion !== CONTRACT_VERSION ||
     typeof manifest?.payloadPath !== "string" ||
     typeof manifest?.payloadSha256 !== "string" ||
-    !Array.isArray(manifest?.attachmentPaths)
+    !Array.isArray(manifest?.attachmentPaths) ||
+    typeof manifest?.operationRef !== "string" ||
+    typeof manifest?.journalPath !== "string"
   ) {
     throw new Error("Oracle submission manifest contract is incompatible.");
+  }
+
+  if (!/^oracle-[a-z0-9-]{1,80}$/u.test(manifest.operationRef)) {
+    throw new Error("Oracle submission operation reference is invalid.");
+  }
+  const journalPath = path.resolve(manifest.journalPath);
+  const expectedJournalName = `opencli-transport-${manifest.operationRef}.ndjson`;
+  if (
+    path.dirname(journalPath) !== path.dirname(absoluteManifestPath) ||
+    path.basename(journalPath) !== expectedJournalName
+  ) {
+    throw new Error("Oracle submission journal target is invalid.");
   }
 
   const filePaths = [manifest.payloadPath, ...manifest.attachmentPaths].map((filePath) =>
@@ -130,8 +144,69 @@ export function loadSubmissionManifest(manifestPath) {
   return {
     contractVersion: CONTRACT_VERSION,
     manifestPath: absoluteManifestPath,
+    operationRef: manifest.operationRef,
+    journalPath,
+    payloadSha256: manifest.payloadSha256,
     files,
   };
+}
+
+export function appendTransportJournalEvent(submission, event, details = {}) {
+  if (event !== "model-ready" && event !== "dispatch-intent") {
+    throw new Error("Oracle adapter refused an unsupported transport journal event.");
+  }
+  const record = {
+    event,
+    operationRef: submission.operationRef,
+    ...details,
+    at: new Date().toISOString(),
+  };
+  const fd = fs.openSync(submission.journalPath, "a", 0o600);
+  try {
+    fs.writeFileSync(fd, `${JSON.stringify(record)}\n`, "utf8");
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+    fs.chmodSync(submission.journalPath, 0o600);
+  }
+}
+
+function normalizePickerLabel(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+export function requireOracleGpt56SolModelOutcome(result) {
+  if (!result || !["already-selected", "switched"].includes(result.status)) {
+    throw new Error(
+      `Oracle's native model picker did not confirm GPT-5.6 Sol (${String(result?.status ?? "unknown")}).`,
+    );
+  }
+  const label = String(result.label ?? "").trim();
+  const normalized = normalizePickerLabel(label);
+  const tokens = normalized.split(" ");
+  if (!/(?:^| )5 6(?: |$)/u.test(normalized) || !tokens.includes("sol") || tokens.includes("pro")) {
+    throw new Error(
+      `Oracle's native model picker returned an invalid GPT-5.6 Sol label (${label || "blank"}).`,
+    );
+  }
+  return { status: result.status, label };
+}
+
+export function requireOracleProThinkingOutcome(result) {
+  if (!result || !["already-selected", "switched"].includes(result.status)) {
+    throw new Error(
+      `Oracle's native thinking picker did not confirm Pro (${String(result?.status ?? "unknown")}).`,
+    );
+  }
+  const label = String(result.label ?? "").trim();
+  if (label && !normalizePickerLabel(label).split(" ").includes("pro")) {
+    throw new Error(`Oracle's native thinking picker returned an invalid Pro label (${label}).`);
+  }
+  return { status: result.status, label: label || "Pro" };
 }
 
 export function mimeTypeForPath(filePath) {

@@ -131,17 +131,17 @@ async function waitForOracleResult(page, kwargs) {
 }
 
 async function closeOwnedLease(page) {
-  if (typeof page.closeWindow !== "function") {
+  if (typeof page.closeTab !== "function") {
     throw new CommandExecutionError(
-      "OpenCLI cannot explicitly release the Oracle waiter tab lease.",
+      "OpenCLI cannot explicitly close the Oracle waiter tab.",
       "Update OpenCLI before using the unattended Oracle transport.",
     );
   }
   try {
-    await page.closeWindow();
+    await page.closeTab();
   } catch (error) {
     throw new CommandExecutionError(
-      `OpenCLI failed to release the Oracle waiter tab lease: ${String(error?.message ?? error)}`,
+      `OpenCLI failed to close the Oracle waiter tab: ${String(error?.message ?? error)}`,
       "The conversation receipt is still safe. Reattach the Oracle session after inspecting the Browser Bridge.",
     );
   }

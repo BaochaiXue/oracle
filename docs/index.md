@@ -19,6 +19,7 @@ follow-up lineage, and recovery. OpenCLI owns only the browser boundary.
 ## Try the fork
 
 ```bash
+npm install -g @jackwener/opencli@1.8.6
 git clone https://github.com/IndelibleVivi/oracle.git
 cd oracle
 corepack enable
@@ -56,7 +57,7 @@ oracle --followup <id> -p "Challenge the weakest assumption."
 | --------------- | ------- | ----------------------------------------------------------------- |
 | Context         | Oracle  | Selected files, rendered payload, and sealed manifest             |
 | Authorization   | Oracle  | Payload digest, target, operation reference, and dispatch journal |
-| Browser         | OpenCLI | Verified `Pro` state and explicit ChatGPT tab submission          |
+| Browser         | OpenCLI | Execute Oracle's picker and submit on one exact ChatGPT tab       |
 | Remote identity | Oracle  | Structured conversation id and URL                                |
 | Recovery        | Oracle  | Single-waiter reattach, answer, transcript, and follow-up lineage |
 
@@ -71,8 +72,8 @@ CDP.
 
 - **GPT-5.6 Pro** is the human-facing current browser target.
 - `gpt-5-pro` is Oracle's stable browser alias for that target.
-- `Pro` / `pro` are the current ChatGPT and OpenCLI wire labels and remain exact
-  evidence in receipts.
+- `GPT-5.6 Sol` and `Pro` are the exact ChatGPT model and reasoning-tier labels;
+  together they form the verified `GPT-5.6 Pro` receipt.
 
 The upstream `gpt-5.5-pro` API model/default is a separate contract and has not
 been renamed.

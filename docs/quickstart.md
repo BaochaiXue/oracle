@@ -12,7 +12,7 @@ the broader upstream installation paths.
 
 | Mode            | When to use it                                                                 | What you need                                              |
 | --------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------- |
-| OpenCLI browser | You want recoverable, unattended GPT-5.6 Pro text consults.                    | This fork, OpenCLI 1.8.3+, Browser Bridge, and Pro access. |
+| OpenCLI browser | You want recoverable, unattended GPT-5.6 Pro text consults.                    | This fork, OpenCLI 1.8.6+, Browser Bridge, and Pro access. |
 | API             | You have an API key and want reliable provider automation or multi-model runs. | `OPENAI_API_KEY` or another provider key.                  |
 | Legacy browser  | You need direct CDP features, Gemini web, images, or Deep Research.            | Chrome on macOS, Linux, or Windows.                        |
 | Render          | You want to inspect/copy the bundle without contacting a model.                | Just Oracle.                                               |
@@ -37,6 +37,7 @@ Oracle prints the assistant's reply on stdout and stores the run under `~/.oracl
 Install this fork and its companion adapters once:
 
 ```bash
+npm install -g @jackwener/opencli@1.8.6
 git clone https://github.com/IndelibleVivi/oracle.git
 cd oracle
 corepack enable
@@ -60,7 +61,7 @@ oracle --engine browser \
 ```
 
 `gpt-5-pro` is the stable Oracle browser alias for current GPT-5.6 Pro. The
-live ChatGPT/OpenCLI contract reports the exact UI-native short name `Pro`.
+live ChatGPT receipt verifies model `GPT-5.6 Sol` plus reasoning tier `Pro`.
 Oracle stores the conversation receipt and uses single-waiter recovery rather
 than silently resubmitting an accepted turn. One isolated OpenCLI tab stays with
 the waiter for the whole answer harvest; Oracle does not spawn a new tab every

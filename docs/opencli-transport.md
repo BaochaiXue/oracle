@@ -18,14 +18,14 @@ transport inside Oracle and leaves the rest of Oracle's authority intact.
 
 ## One authority, two responsibilities
 
-| Oracle owns                               | OpenCLI owns                                           |
-| ----------------------------------------- | ------------------------------------------------------ |
-| Prompt construction and file selection    | Authenticated Browser Bridge access                    |
-| Sealed payload and manifest identity      | Short-lived model-selection and submission leases      |
-| Submission intent and operation reference | Selecting the UI-native `Pro` option                   |
-| Session state and conversation receipt    | Transferring the sealed files to the exact tab         |
-| Answer and transcript persistence         | One isolated waiter lease for the whole answer harvest |
-| Resume and follow-up lineage              | Structured submission and answer receipts              |
+| Oracle owns                            | OpenCLI owns                                           |
+| -------------------------------------- | ------------------------------------------------------ |
+| Prompt construction and file selection | Authenticated Browser Bridge access                    |
+| Sealed payload and manifest identity   | Short-lived submission and waiter tab leases           |
+| Model and reasoning picker semantics   | Executing Oracle's generated picker in the exact tab   |
+| Session state and conversation receipt | Transferring the sealed files to the exact tab         |
+| Answer and transcript persistence      | One isolated waiter lease for the whole answer harvest |
+| Resume and follow-up lineage           | Structured submission and answer receipts              |
 
 The handoff is deliberately narrow:
 
@@ -35,22 +35,31 @@ Oracle buildPrompt
   → journal authorization
   → preflight OpenCLI + Browser Bridge + adapter contract
   → acquire Oracle's ChatGPT transport lock
-  → select and verify Pro
   → recheck sealed payload digest
-  → journal dispatch intent
-  → submit to new chat or the stored conversation
+  → open the exact new chat or stored conversation
+  → select and verify GPT-5.6 Sol + Pro in that tab
+  → journal model evidence and dispatch intent
+  → submit the sealed files
   → capture the follow-up baseline on that submission tab
   → persist the structured conversation receipt and baseline
   → release transport lock
   → start one read-only oracle-wait command and one isolated tab lease
   → observe the same page until the new assistant Markdown is stable
-  → explicitly release the waiter lease
+  → explicitly close the waiter tab
   → persist answer and transcript
 ```
 
 Model selection happens for every turn and shares a lock with submission.
 Browser state is mutable: a previous tab saying `Pro` is not proof that the next
 turn will be sent there.
+
+Oracle remains the model-selection authority. Its installer generates the same
+native model and thinking expressions used by the direct browser path into the
+companion submit adapter. OpenCLI executes those expressions in the exact tab
+that will receive the sealed turn. The transport never runs a separate
+`chatgpt model` command, so it cannot select one tab and submit through another.
+It also avoids OpenCLI's preference endpoint, which can return `403` despite a
+visibly authenticated ChatGPT page.
 
 ## Why not a sidecar orchestrator?
 
@@ -70,16 +79,16 @@ ran.
 ## GPT-5.6 Pro: product name versus wire name
 
 This fork calls the browser target **GPT-5.6 Pro** in human-facing text. The
-current ChatGPT composer and OpenCLI command contract expose the shorter names
-`Pro` and `pro`. Oracle therefore uses the stable browser alias `gpt-5-pro` and
-stores the exact `Pro` receipt returned by the transport.
+current ChatGPT UI exposes a model and reasoning tier separately. Oracle uses
+the stable browser alias `gpt-5-pro` and stores all three facts in the receipt:
+effective `GPT-5.6 Pro`, model `GPT-5.6 Sol`, and reasoning tier `Pro`.
 
 These names should not be collapsed:
 
-- `gpt-5-pro` means “follow the current ChatGPT Pro picker target” in this
-  browser lane.
-- `Pro` is evidence copied from the actual web surface; rewriting it as a
-  guessed version would weaken provenance.
+- `gpt-5-pro` means “select the current effective ChatGPT GPT-5.6 Pro target” in
+  this browser lane.
+- `GPT-5.6 Sol` and `Pro` are evidence copied from the actual model and
+  reasoning controls.
 - `gpt-5.5-pro` remains an upstream Oracle API model and default.
 - GPT-5.6 API reasoning mode is a separate provider contract; this browser
   transport does not invent a new API model slug.
@@ -112,11 +121,13 @@ closed.
 
 The long wait has a separate lifecycle invariant: one Oracle operation starts
 exactly one `chatgpt oracle-wait` process, and that process keeps exactly one
-ephemeral conversation lease until completion or timeout. Generation detection
+ephemeral conversation tab until completion or timeout. Generation detection
 looks only at visible generation controls; it never scans answer prose for words
-such as `Thinking`. The adapter explicitly calls `closeWindow()` before it can
-return `Complete`, so cleanup failure is an observable, reattachable error rather
-than a silently abandoned conversation tab.
+such as `Thinking`. Both companion commands explicitly close their exact tab;
+they run with `--keep-tab true` so OpenCLI's executor does not perform a second
+lease release after the adapter has closed the tab. The flag is intentionally
+counterintuitive here: the adapter owns final cleanup, and skipping the executor's
+fallback prevents a reusable `about:blank` placeholder from being created.
 
 ## Private data boundary
 
@@ -162,6 +173,10 @@ The repository tests cover:
 - waiter-only reattach with no second model selection or dispatch;
 - generation-control detection that does not inspect answer prose;
 - supported OpenCLI/adapter contract versions;
+- same-tab `GPT-5.6 Sol` model plus `Pro` reasoning selection through Oracle's
+  generated native picker;
+- tab-free Browser Bridge preflight and exact target cleanup;
+- sanitized OpenCLI failure stage, code, exit status, and trace-path persistence;
 - strict ChatGPT receipt parsing.
 
 Run the narrow suite with:

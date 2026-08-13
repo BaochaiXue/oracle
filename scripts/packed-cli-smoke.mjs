@@ -38,6 +38,7 @@ try {
   );
   const packageRoot = join(installDir, "node_modules", "@steipete", "oracle");
   for (const packagedPath of [
+    "opencli-adapters/chatgpt/oracle-picker.generated.js",
     "opencli-adapters/chatgpt/submit-file-core.js",
     "opencli-adapters/chatgpt/submit-file.js",
     "opencli-adapters/chatgpt/oracle-wait.js",

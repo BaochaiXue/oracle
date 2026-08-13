@@ -5,6 +5,7 @@
 ### Fixed
 
 - Browser: recognize the Japanese `詳細設定` → `推論レベル` controls in ChatGPT's unified Intelligence picker, allowing explicit Pro effort selection without weakening the fail-closed guard for unknown languages.
+- OpenCLI transport: require OpenCLI 1.8.6, execute Oracle's native `GPT-5.6 Sol` + `Pro` picker in the exact submission tab, replace tab-creating `doctor` preflight with `daemon status`, and let companion adapters hard-close their tabs while suppressing the executor's second lease release so it cannot leave reusable `about:blank` placeholders. Pre-submission failures now persist the sanitized OpenCLI stage, code, exit status, and trace summary path.
 
 ## 0.17.2 — 2026-08-10
 
