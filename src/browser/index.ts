@@ -17,6 +17,7 @@ import {
   launchChrome,
   registerTerminationHooks,
   positionChromeWindowOffscreen,
+  positionChromeWindowOnscreen,
   connectToRemoteChrome,
   connectWithNewTab,
   closeTab,
@@ -1307,6 +1308,11 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     await Promise.all(domainEnablers);
     if (!config.headless && config.hideWindow) {
       await positionChromeWindowOffscreen(client, logger);
+    } else if (!config.headless) {
+      // A persistent profile can remember the previous off-screen window bounds.
+      // Visible policy must actively restore the Oracle-owned CfT window to a
+      // usable screen position instead of merely omitting the hide flag.
+      await positionChromeWindowOnscreen(client, logger);
     }
     // The send button is clicked with trusted CDP input events at viewport
     // coordinates, which ChatGPT silently drops when the window is hidden or

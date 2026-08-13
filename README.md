@@ -190,7 +190,8 @@ deliberately explicit macOS configuration looks like this:
 
 `oracle browser install` writes the exact `chromePath`; the abbreviated path
 above is illustrative. `hideWindow:false` keeps normal macOS runs visible and
-human-observable. Immediately before its single Send attempt, Oracle brings the
+human-observable, restoring a previously hidden persistent window to an
+on-screen position. Immediately before its single Send attempt, Oracle brings the
 exact ChatGPT page forward so trusted CDP input is not silently swallowed by a
 background or occluded window.
 `oracle browser setup` is always visible because signing in is a human action;

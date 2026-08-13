@@ -212,6 +212,26 @@ describe("hidden-window launch flags", () => {
       expect(browser.setWindowBounds).not.toHaveBeenCalled();
     }
   });
+
+  test("restores a visible Oracle window to an on-screen macOS position", async () => {
+    const { positionChromeWindowOnscreen } = await import("../../src/browser/chromeLifecycle.js");
+    const browser = {
+      getWindowForTarget: vi.fn().mockResolvedValue({ windowId: 9 }),
+      setWindowBounds: vi.fn().mockResolvedValue(undefined),
+    };
+    const logger = vi.fn();
+
+    await positionChromeWindowOnscreen({ Browser: browser } as never, logger as never);
+
+    if (process.platform === "darwin") {
+      expect(browser.setWindowBounds).toHaveBeenCalledWith({
+        windowId: 9,
+        bounds: { left: 80, top: 80, width: 1280, height: 720, windowState: "normal" },
+      });
+    } else {
+      expect(browser.setWindowBounds).not.toHaveBeenCalled();
+    }
+  });
 });
 
 describe("connectWithNewTab", () => {

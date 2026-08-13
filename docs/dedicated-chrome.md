@@ -235,7 +235,8 @@ Important fields:
 - `cookieSync:false` prevents personal Chrome cookie extraction. This is the
   default whenever the dedicated profile is active.
 - `hideWindow:false` keeps normal headful Chrome visible and manually
-  inspectable. Oracle brings the exact ChatGPT page forward immediately before
+  inspectable, actively restoring remembered off-screen bounds to an on-screen
+  position. Oracle brings the exact ChatGPT page forward immediately before
   its single trusted Send click, then requires a committed user turn before it
   treats the prompt as submitted. `true` remains an off-screen opt-in with
   reduced observability and no practical manual takeover.
