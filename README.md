@@ -178,7 +178,7 @@ deliberately explicit macOS configuration looks like this:
     "manualLoginProfileDir": "/Users/you/.oracle/browser-profile",
     "debugPort": 9333,
     "cookieSync": false,
-    "hideWindow": true,
+    "hideWindow": false,
     "useMockKeychain": true,
     "modelStrategy": "select",
     "thinkingTime": "pro",
@@ -189,15 +189,18 @@ deliberately explicit macOS configuration looks like this:
 ```
 
 `oracle browser install` writes the exact `chromePath`; the abbreviated path
-above is illustrative. `hideWindow:true` keeps normal macOS runs headful but positions Oracle Chrome
-off-screen so ChatGPT still renders and trusted CDP clicks continue to work.
+above is illustrative. `hideWindow:false` keeps normal macOS runs visible and
+human-observable. Immediately before its single Send attempt, Oracle brings the
+exact ChatGPT page forward so trusted CDP input is not silently swallowed by a
+background or occluded window.
 `oracle browser setup` is always visible because signing in is a human action;
 it is an ordinary isolated Chrome launch with CDP disabled. Persistent CDP
 runs retain Chrome's renderer throttling, hang monitor, IPC flood protection,
 and Safe Browsing instead of inheriting the aggressive flags intended for
 short browser test jobs. `useMockKeychain:true` changes only the macOS keychain
 backend for the isolated profile.
-Set `hideWindow:false` when you want every normal run visible for debugging.
+`hideWindow:true` remains an opt-in off-screen mode for operators who accept
+reduced observability and no practical manual takeover.
 
 If ChatGPT displays a request-frequency gate before the user turn enters the
 conversation, Oracle records `promptSubmitted:false`,

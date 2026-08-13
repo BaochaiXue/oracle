@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Direct CDP submission: foreground the exact ChatGPT target immediately before
+  the single trusted Send click, keep commit verification authoritative, and
+  report a retained composer draft as explicitly unsubmitted instead of an
+  ambiguous missing conversation receipt. Visible macOS runs are now the
+  documented default policy; off-screen mode remains an explicit opt-in.
 - macOS dedicated browser: add an explicit, user-config-only mock-keychain mode
   and apply it consistently to setup, two-cold-start smoke, normal runs, and
   reattach. This avoids recurring Chrome Safe Storage password dialogs for an

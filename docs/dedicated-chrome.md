@@ -208,7 +208,7 @@ configuration records the full local policy:
     "manualLoginProfileDir": "/Users/you/.oracle/browser-profile",
     "debugPort": 9333,
     "cookieSync": false,
-    "hideWindow": true,
+    "hideWindow": false,
     "useMockKeychain": true,
     "keepBrowser": false,
     "modelStrategy": "select",
@@ -234,8 +234,11 @@ Important fields:
   non-loopback interface.
 - `cookieSync:false` prevents personal Chrome cookie extraction. This is the
   default whenever the dedicated profile is active.
-- `hideWindow:true` positions normal headful Chrome off-screen on macOS. The
-  setup command remains visible. Set it to `false` for visibly debuggable runs.
+- `hideWindow:false` keeps normal headful Chrome visible and manually
+  inspectable. Oracle brings the exact ChatGPT page forward immediately before
+  its single trusted Send click, then requires a committed user turn before it
+  treats the prompt as submitted. `true` remains an off-screen opt-in with
+  reduced observability and no practical manual takeover.
 - `useMockKeychain:true` is a user-config-only macOS unattended-mode choice. It
   avoids recurring Keychain approval dialogs for the isolated profile at the
   cost of deterministic, weaker at-rest cookie encryption. Do not enable it for
@@ -318,16 +321,17 @@ transport.
 
 There are three intentionally different visual states:
 
-| Operation                          | Policy                       | Reason                                                                               |
-| ---------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------ |
-| `oracle browser setup`             | Visible, command waits       | The operator authenticates; setup returns only after the whole browser exits.        |
-| Normal run with `hideWindow:true`  | Headful, off-screen on macOS | Preserves rendering and trusted click behavior without routine desktop interruption. |
-| Normal run with `hideWindow:false` | Visible                      | Best for selector/debug investigation.                                               |
+| Operation                          | Policy                       | Reason                                                                         |
+| ---------------------------------- | ---------------------------- | ------------------------------------------------------------------------------ |
+| `oracle browser setup`             | Visible, command waits       | The operator authenticates; setup returns only after the whole browser exits.  |
+| Normal run with `hideWindow:false` | Visible                      | Observable, manually recoverable, and foregrounded for the trusted Send click. |
+| Normal run with `hideWindow:true`  | Headful, off-screen on macOS | Opt-in desktop quieting with reduced observability and no manual takeover.     |
 
 Headless Chrome remains available but is not the canonical ChatGPT lane because
 Cloudflare or ChatGPT may treat it differently. Off-screen is not headless: a
 window may flash briefly during process launch, and macOS can expose it through
-window-management UI. Oracle records the chosen control plan in logs rather
+window-management UI. It is not a reliable human recovery surface. Oracle
+records the chosen control plan in logs rather
 than claiming physical invisibility.
 
 Off-screen isolation is not application-identity isolation. The separate

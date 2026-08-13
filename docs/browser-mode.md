@@ -61,10 +61,11 @@ oracle --engine browser \
   --file "src/**"
 ```
 
-On macOS, set `browser.hideWindow:true` to keep normal runs headful but
-off-screen. Setup remains visible. Set it to `false` while debugging. Oracle
-records the browser control plan and never describes an off-screen window as
-headless or physically impossible to expose.
+On macOS, keep `browser.hideWindow:false` when normal runs should be visible and
+manually inspectable. Oracle brings the exact ChatGPT page forward immediately
+before the single trusted Send click. `true` is an explicit off-screen mode with
+reduced observability and no practical manual takeover; setup remains visible
+in either policy. Oracle never describes an off-screen window as headless.
 
 `oracle --engine browser` routes the assembled bundle through the selected web
 transport instead of the Responses API. Legacy `--browser` still aliases it.
@@ -394,8 +395,9 @@ oracle browser smoke
 - Cookie copy from personal Chrome is disabled. Login state is created inside
   the dedicated profile by the operator.
 - Normal runs reuse that profile and preserve it after Chrome closes.
-- `browser.hideWindow:true` makes ordinary macOS runs headful/off-screen;
-  setup is intentionally visible.
+- `browser.hideWindow:false` keeps ordinary macOS runs visible and manually
+  recoverable; setup is also intentionally visible. `true` is an explicit
+  off-screen policy with reduced observability.
 - `browser.useMockKeychain:true` avoids recurring macOS Keychain prompts for
   this isolated profile. It is user-config-only and trades OS-bound encryption
   for Chromium's deterministic test key; do not reuse a system-keychain profile

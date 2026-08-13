@@ -101,7 +101,7 @@ export function describeBrowserControlPlan(config: BrowserControlConfig = {}): B
 
   if (config.hideWindow) {
     guidance.push(
-      "On macOS, Oracle always launches its dedicated Chrome profile off-screen while keeping the page rendered.",
+      "Oracle is using the explicit macOS off-screen policy; the page remains rendered but is not a practical human recovery surface.",
     );
     guidance.push(
       "The first-time `oracle browser setup` flow is intentionally visible; ordinary runs follow this hidden-window policy.",

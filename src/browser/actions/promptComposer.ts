@@ -35,6 +35,7 @@ export async function submitPrompt(
   deps: {
     runtime: ChromeClient["Runtime"];
     input: ChromeClient["Input"];
+    page?: Pick<ChromeClient["Page"], "bringToFront">;
     attachmentNames?: AttachmentReadyInput[];
     baselineTurns?: number | null;
     inputTimeoutMs?: number | null;
@@ -213,6 +214,23 @@ export async function submitPrompt(
         observedLength,
       },
     );
+  }
+
+  // Uploads, picker interaction, and attachment readiness can take long enough
+  // for macOS to background or occlude the Chrome target after the connection's
+  // initial focus emulation. A trusted CDP mouse event can then complete at the
+  // protocol layer without ChatGPT receiving the click, leaving the full draft
+  // in the composer. Activate this exact page immediately before the one allowed
+  // send attempt; commit verification still owns the submitted/not-submitted
+  // decision and we never issue an automatic second click.
+  if (deps.page?.bringToFront) {
+    try {
+      await deps.page.bringToFront();
+      logger("Brought ChatGPT page to foreground before send");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger(`Unable to foreground ChatGPT page before send: ${message}`);
+    }
   }
 
   const clicked = await attemptSendButton(
@@ -945,11 +963,25 @@ async function verifyPromptCommitted(
       },
     );
   }
+  const draftRetained = Boolean(
+    probe &&
+    probe.composerCleared === false &&
+    typeof probe.editorValue === "string" &&
+    probe.editorValue.trim().length > 0 &&
+    !probe.hasNewTurn &&
+    !probe.stopVisible &&
+    !probe.assistantVisible &&
+    !probe.inConversation,
+  );
   throw new BrowserAutomationError(
-    "Prompt did not appear in conversation before timeout (send may have failed)",
+    draftRetained
+      ? "Prompt remained in the composer after the send attempt; submission did not commit."
+      : "Prompt did not appear in conversation before timeout (send may have failed)",
     {
       stage: "submit-prompt",
       code: "prompt-commit-timeout",
+      submissionCommitted: false,
+      draftRetained,
       promptLength: prompt.trim().length,
       timeoutMs,
       commitProbe: probe ? summarizeCommitProbe(probe) : undefined,

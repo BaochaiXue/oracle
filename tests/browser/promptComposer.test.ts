@@ -207,6 +207,47 @@ describe("promptComposer", () => {
     ).resolves.toBe(1);
   });
 
+  test("reports a retained composer draft as an uncommitted submission", async () => {
+    vi.useFakeTimers();
+    try {
+      const probe = {
+        baseline: 0,
+        turnsCount: 0,
+        userMatched: false,
+        prefixMatched: false,
+        lastMatched: false,
+        hasNewTurn: false,
+        stopVisible: false,
+        assistantVisible: false,
+        composerCleared: false,
+        inConversation: false,
+        editorValue: "unsent prompt",
+        lastTurn: "",
+      };
+      const runtime = {
+        evaluate: vi
+          .fn()
+          .mockResolvedValueOnce({ result: { value: 0 } })
+          .mockResolvedValue({ result: { value: probe } }),
+      };
+
+      const promise = promptComposer.verifyPromptCommitted(runtime as never, "unsent prompt", 150);
+      const assertion = expect(promise).rejects.toMatchObject({
+        message:
+          "Prompt remained in the composer after the send attempt; submission did not commit.",
+        details: expect.objectContaining({
+          code: "prompt-commit-timeout",
+          submissionCommitted: false,
+          draftRetained: true,
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(250);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("attachment sends time out instead of allowing Enter fallback", async () => {
     vi.useFakeTimers();
     try {
@@ -302,6 +343,66 @@ describe("promptComposer", () => {
     expect(onPromptDispatched).toHaveBeenCalledTimes(1);
     expect(onPromptCommitted).toHaveBeenCalledTimes(1);
     expect(callbacks).toEqual(["dispatched", "committed"]);
+  });
+
+  test("brings the ChatGPT page forward before the trusted send click", async () => {
+    const actions: string[] = [];
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("document.readyState")) {
+          return { result: { value: { ready: true, composer: true, fileInput: false } } };
+        }
+        if (expression.includes("focused: true")) {
+          return { result: { value: { focused: true } } };
+        }
+        if (expression.includes("editorText")) {
+          return {
+            result: { value: { editorText: "hello", fallbackValue: "", activeValue: "hello" } },
+          };
+        }
+        if (expression.includes("button.scrollIntoView")) {
+          actions.push("send-click");
+          return { result: { value: { status: "clicked" } } };
+        }
+        return {
+          result: {
+            value: {
+              baseline: 0,
+              turnsCount: 1,
+              userMatched: true,
+              prefixMatched: false,
+              lastMatched: true,
+              hasNewTurn: true,
+              stopVisible: true,
+              assistantVisible: false,
+              composerCleared: true,
+              inConversation: true,
+            },
+          },
+        };
+      }),
+    };
+    const page = {
+      bringToFront: vi.fn(async () => {
+        actions.push("bring-to-front");
+      }),
+    };
+    const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
+    const logger = Object.assign(vi.fn(), { verbose: false });
+
+    await submitPrompt(
+      {
+        runtime: runtime as never,
+        page: page as never,
+        input: input as never,
+        baselineTurns: 0,
+      },
+      "hello",
+      logger as never,
+    );
+
+    expect(page.bringToFront).toHaveBeenCalledTimes(1);
+    expect(actions).toEqual(["bring-to-front", "send-click"]);
   });
 
   test("keeps a gated send attempt uncommitted", async () => {

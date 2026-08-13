@@ -1668,6 +1668,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       const providerState: Record<string, unknown> = {
         runtime: Runtime,
         input: Input,
+        page: Page,
         logger,
         timeoutMs: config.timeoutMs,
         inputTimeoutMs: config.inputTimeoutMs ?? undefined,

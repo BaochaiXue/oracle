@@ -89,7 +89,7 @@ Add an explicit policy to `~/.oracle/config.json`:
     "manualLoginProfileDir": "/Users/you/.oracle/browser-profile",
     "debugPort": 9333,
     "cookieSync": false,
-    "hideWindow": true,
+    "hideWindow": false,
     "useMockKeychain": true,
     "modelStrategy": "select",
     "thinkingTime": "pro"
@@ -98,9 +98,9 @@ Add an explicit policy to `~/.oracle/config.json`:
 ```
 
 Use the real absolute profile path for your account. On macOS,
-`hideWindow:true` keeps ordinary runs headful but off-screen. First-time setup
-is always visible. Use `hideWindow:false` while debugging selector or account
-state. On macOS, `useMockKeychain:true` prevents recurring Keychain password
+`hideWindow:false` keeps ordinary runs visible and manually inspectable;
+first-time setup is also visible. `hideWindow:true` is an explicit off-screen
+mode with reduced observability. On macOS, `useMockKeychain:true` prevents recurring Keychain password
 dialogs for this isolated profile, with weaker deterministic at-rest cookie
 protection. Keep the profile owner-only and use a fresh directory when changing
 between system and mock keychain modes.
