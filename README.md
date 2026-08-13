@@ -5,7 +5,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/IndelibleVivi/oracle/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/IndelibleVivi/oracle/ci.yml?branch=main&style=flat-square&label=fork%20ci" alt="Fork CI status"></a>
   <img src="https://img.shields.io/badge/ChatGPT-GPT--5.6%20Pro-7257d5?style=flat-square" alt="ChatGPT GPT-5.6 Pro">
   <img src="https://img.shields.io/badge/browser-isolated%20CDP-2f80ed?style=flat-square" alt="Isolated Chrome DevTools Protocol">
   <img src="https://img.shields.io/badge/human%20gate-first%20sign--in%20only-147d64?style=flat-square" alt="First sign-in only">
