@@ -63,7 +63,7 @@ export interface SavedBrowserFile extends SessionArtifact {
 }
 
 export interface BrowserAutomationConfig {
-  /** Browser automation backend. OpenCLI uses the authenticated Browser Bridge extension. */
+  /** Browser automation backend. CDP owns an isolated profile; OpenCLI is an alternative bridge. */
   transport?: BrowserTransport;
   /** OpenCLI executable path. User-config only; project config cannot override it. */
   opencliPath?: string | null;
@@ -85,9 +85,9 @@ export interface BrowserAutomationConfig {
   assistantRecheckTimeoutMs?: number;
   /** Wait for an existing shared Chrome to appear before launching a new one. */
   reuseChromeWaitMs?: number;
-  /** Max time to wait for a shared manual-login profile lock (serializes parallel runs). */
+  /** Max time to wait for the dedicated profile lock (serializes parallel runs). */
   profileLockTimeoutMs?: number;
-  /** Soft limit for concurrent ChatGPT tabs sharing one manual-login profile. */
+  /** Soft limit for concurrent ChatGPT tabs sharing the dedicated profile. */
   maxConcurrentTabs?: number;
   /** Delay before starting periodic auto-reattach attempts after a timeout. */
   autoReattachDelayMs?: number;
@@ -194,6 +194,8 @@ export interface BrowserRunResult {
   conversationId?: string;
   promptSubmitted?: boolean;
   controllerPid?: number;
+  proDispatchAt?: string;
+  proResponseElapsedMs?: number;
   opencliOperationRef?: string;
   opencliVersion?: string;
   opencliPayloadSha256?: string;

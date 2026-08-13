@@ -2,6 +2,7 @@ import { rm } from "node:fs/promises";
 import net from "node:net";
 import CDP from "chrome-remote-interface";
 import { launch, Launcher, type LaunchedChrome } from "chrome-launcher";
+import { resolveDedicatedBrowserExecutable } from "./dedicatedBrowserBinary.js";
 import type { BrowserLogger, ResolvedBrowserConfig, ChromeClient } from "./types.js";
 import { cleanupStaleProfileState } from "./profileState.js";
 import { delay } from "./utils.js";
@@ -14,10 +15,15 @@ export async function launchChrome(
 ) {
   const { connectHost, debugBindAddress, usePatchedLauncher } = resolveWslChromeLaunchRoute();
   const debugPort = config.debugPort ?? parseDebugPortEnv();
+  const persistentProfile = Boolean(config.manualLogin && !config.copyProfileSource);
+  const chromePath = persistentProfile
+    ? await resolveDedicatedBrowserExecutable(config.chromePath)
+    : config.chromePath;
   const chromeFlags = buildChromeFlags(
     config.headless ?? false,
-    debugBindAddress,
+    debugBindAddress ?? "127.0.0.1",
     config.hideWindow ?? false,
+    persistentProfile,
   );
   // copy-profile reuses a copied signed-in profile whose cookies are
   // Keychain-encrypted, so it must launch with the real Keychain (not mocked):
@@ -27,18 +33,22 @@ export async function launchChrome(
   if (usingCopiedProfile && config.chromeProfile) {
     chromeFlags.push(`--profile-directory=${config.chromeProfile}`);
   }
-  const launchOptions = resolveChromeLaunchOptions(chromeFlags, usingCopiedProfile);
+  const launchOptions = resolveChromeLaunchOptions(
+    chromeFlags,
+    usingCopiedProfile,
+    persistentProfile,
+  );
   const launcher = usePatchedLauncher
     ? await launchWithCustomHost({
         chromeFlags: launchOptions.chromeFlags,
-        chromePath: config.chromePath ?? undefined,
+        chromePath: chromePath ?? undefined,
         userDataDir,
         host: connectHost ?? "127.0.0.1",
         requestedPort: debugPort ?? undefined,
         ignoreDefaultFlags: launchOptions.ignoreDefaultFlags,
       })
     : await launch({
-        chromePath: config.chromePath ?? undefined,
+        chromePath: chromePath ?? undefined,
         chromeFlags: launchOptions.chromeFlags,
         userDataDir,
         handleSIGINT: false,
@@ -724,8 +734,21 @@ function buildChromeFlags(
   headless: boolean,
   debugBindAddress?: string | null,
   hideWindow = false,
+  persistentProfile = false,
 ): string[] {
-  const flags = [
+  const persistentProfileFlags = [
+    // A dedicated profile may stay alive for a long Pro turn. Keep Chrome's
+    // renderer throttling, hang monitor, IPC flood protection, Safe Browsing,
+    // and real macOS Keychain behavior intact.
+    "--disable-component-extensions-with-background-pages",
+    "--disable-default-apps",
+    "--disable-extensions",
+    "--disable-sync",
+    "--mute-audio",
+    "--no-default-browser-check",
+    "--no-first-run",
+  ];
+  const ephemeralAutomationFlags = [
     "--disable-background-networking",
     "--disable-background-timer-throttling",
     "--disable-breakpad",
@@ -741,6 +764,9 @@ function buildChromeFlags(
     "--safebrowsing-disable-auto-update",
     "--disable-features=TranslateUI,AutomationControlled",
     "--mute-audio",
+  ];
+  const flags = [
+    ...(persistentProfile ? persistentProfileFlags : ephemeralAutomationFlags),
     "--window-size=1280,720",
     // Chrome that *we* launch is pinned to English, so ChatGPT renders the labels
     // our selectors were written against. This does not make English the only case
@@ -752,7 +778,7 @@ function buildChromeFlags(
     "--accept-lang=en-US,en",
   ];
 
-  if (process.platform !== "win32" && !isWsl()) {
+  if (!persistentProfile && process.platform !== "win32" && !isWsl()) {
     flags.push("--password-store=basic", "--use-mock-keychain");
   }
 
@@ -782,14 +808,22 @@ export function buildChromeFlagsForTest(
   headless: boolean,
   debugBindAddress?: string | null,
   hideWindow = false,
+  persistentProfile = false,
 ): string[] {
-  return buildChromeFlags(headless, debugBindAddress, hideWindow);
+  return buildChromeFlags(headless, debugBindAddress, hideWindow, persistentProfile);
 }
 
 function resolveChromeLaunchOptions(
   chromeFlags: string[],
   usingCopiedProfile: boolean,
+  persistentProfile = false,
 ): { chromeFlags: string[]; ignoreDefaultFlags: boolean } {
+  if (persistentProfile) {
+    // chrome-launcher's defaults deliberately disable renderer throttling,
+    // the hang monitor, and IPC flood protection. Those flags are useful for
+    // short lab runs but unsafe for a persistent, account-bearing profile.
+    return { chromeFlags, ignoreDefaultFlags: true };
+  }
   if (!usingCopiedProfile) {
     return { chromeFlags, ignoreDefaultFlags: false };
   }
@@ -804,8 +838,9 @@ function resolveChromeLaunchOptions(
 export function resolveChromeLaunchOptionsForTest(
   chromeFlags: string[],
   usingCopiedProfile: boolean,
+  persistentProfile = false,
 ): { chromeFlags: string[]; ignoreDefaultFlags: boolean } {
-  return resolveChromeLaunchOptions(chromeFlags, usingCopiedProfile);
+  return resolveChromeLaunchOptions(chromeFlags, usingCopiedProfile, persistentProfile);
 }
 
 function parseDebugPortEnv(): number | null {

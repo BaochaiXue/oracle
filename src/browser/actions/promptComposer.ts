@@ -39,7 +39,9 @@ export async function submitPrompt(
     baselineTurns?: number | null;
     inputTimeoutMs?: number | null;
     attachmentTimeoutMs?: number | null;
-    onPromptSubmitted?: () => Promise<void> | void;
+    onPromptDispatched?: () => Promise<void> | void;
+    onPromptCommitted?: () => Promise<void> | void;
+    onPromptCommitPending?: () => Promise<void> | void;
   },
   prompt: string,
   logger: BrowserLogger,
@@ -235,17 +237,20 @@ export async function submitPrompt(
   } else {
     logger("Clicked send button");
   }
-  await deps.onPromptSubmitted?.();
+  await deps.onPromptDispatched?.();
 
   const commitTimeoutMs = Math.max(60_000, deps.inputTimeoutMs ?? 0);
   // Learned: the send button can succeed but the turn doesn't appear immediately; verify commit via turns/stop button.
-  return await verifyPromptCommitted(
+  const committedTurns = await verifyPromptCommitted(
     runtime,
     prompt,
     commitTimeoutMs,
     logger,
     deps.baselineTurns ?? undefined,
+    deps.onPromptCommitPending,
   );
+  await deps.onPromptCommitted?.();
+  return committedTurns;
 }
 
 export async function clearPromptComposer(Runtime: ChromeClient["Runtime"], logger: BrowserLogger) {
@@ -787,6 +792,7 @@ async function verifyPromptCommitted(
   timeoutMs: number,
   logger?: BrowserLogger,
   baselineTurns?: number,
+  onCommitPending?: () => Promise<void> | void,
 ): Promise<number | null> {
   const deadline = Date.now() + timeoutMs;
   const encodedPrompt = JSON.stringify(prompt.trim());
@@ -890,6 +896,7 @@ async function verifyPromptCommitted(
   })()`;
 
   let lastProbe: CommitProbeState | undefined;
+  let nextPendingCheckAt = 0;
   while (Date.now() < deadline) {
     const { result } = await Runtime.evaluate({ expression: script, returnByValue: true });
     const info = result.value as CommitProbeState | undefined;
@@ -910,8 +917,13 @@ async function verifyPromptCommitted(
     if (fallbackCommit) {
       return typeof turnsCount === "number" && Number.isFinite(turnsCount) ? turnsCount : null;
     }
+    if (onCommitPending && Date.now() >= nextPendingCheckAt) {
+      nextPendingCheckAt = Date.now() + 500;
+      await onCommitPending();
+    }
     await delay(100);
   }
+  await onCommitPending?.();
   const finalProbe = await Runtime.evaluate({ expression: script, returnByValue: true })
     .then((res) => res?.result?.value as CommitProbeState | undefined)
     .catch(() => undefined);

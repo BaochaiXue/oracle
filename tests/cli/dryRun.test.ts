@@ -125,7 +125,8 @@ describe("runDryRunSummary", () => {
     const output = log.mock.calls.flat().join("\n");
     expect(output).toContain("target=GPT-5.6 Pro; requested=gpt-5-pro");
     expect(output).toContain("Browser control: use OpenCLI Browser Bridge");
-    expect(output).toContain("does not request direct Chrome debugging approval");
+    expect(output).toContain("does not use Oracle's isolated CDP profile");
+    expect(output).toContain("may become visible or focused");
     expect(output).toContain("Authentication: OpenCLI Browser Bridge");
     expect(output).not.toContain("launch visible Chrome");
     expect(output).not.toContain("copy from Chrome");

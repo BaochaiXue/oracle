@@ -14,6 +14,11 @@ import type {
 } from "../sessionStore.js";
 import { computeFileSha256 } from "./artifacts.js";
 import { acquireProfileRunLock } from "./profileState.js";
+import {
+  MIN_TRUSTED_PRO_RESPONSE_MS,
+  assertTrustedProResponse,
+  elapsedSinceDispatch,
+} from "./proResponseAdmission.js";
 import type { BrowserLogger, BrowserRunOptions, BrowserRunResult } from "./types.js";
 import { estimateTokenCount } from "./utils.js";
 
@@ -26,7 +31,6 @@ const MODEL_TIMEOUT_MS = 120_000;
 const DEFAULT_ATTACHMENT_TIMEOUT_MS = 45_000;
 const ORACLE_WAIT_STABLE_SECONDS = 9;
 const OPENCLI_WINDOW_MODE = "background" as const;
-const MIN_TRUSTED_PRO_RESPONSE_MS = 60_000;
 
 interface CommandResult {
   stdout: string;
@@ -224,6 +228,7 @@ export async function runOpenCliBrowserMode(
         opencliPayloadSha256: prepared.sha256,
         opencliWindowMode: OPENCLI_WINDOW_MODE,
         opencliDispatchAt: dispatchAt,
+        proDispatchAt: dispatchAt,
         opencliBaselineAssistantIndex: baselineAssistant?.index,
         opencliBaselineAssistantSha256: baselineAssistant?.sha256,
       },
@@ -259,6 +264,7 @@ export async function runOpenCliBrowserMode(
             opencliPayloadSha256: prepared.sha256,
             opencliWindowMode: OPENCLI_WINDOW_MODE,
             opencliDispatchAt: dispatchAt,
+            proDispatchAt: dispatchAt,
             opencliBaselineAssistantIndex: baselineAssistant?.index,
             opencliBaselineAssistantSha256: baselineAssistant?.sha256,
           } satisfies BrowserRuntimeMetadata,
@@ -286,6 +292,7 @@ export async function runOpenCliBrowserMode(
     opencliPayloadSha256: prepared.sha256,
     opencliWindowMode: OPENCLI_WINDOW_MODE,
     opencliDispatchAt: dispatchAt,
+    proDispatchAt: dispatchAt,
     opencliBaselineAssistantIndex: baselineAssistant?.index,
     opencliBaselineAssistantSha256: baselineAssistant?.sha256,
   };
@@ -307,6 +314,7 @@ export async function runOpenCliBrowserMode(
     const completedRuntime: BrowserRuntimeMetadata = {
       ...runtime,
       opencliResponseElapsedMs: responseElapsedMs,
+      proResponseElapsedMs: responseElapsedMs,
     };
     await appendJournal(prepared.journalPath, {
       event: "answer-captured",
@@ -327,7 +335,7 @@ export async function runOpenCliBrowserMode(
         at: capturedAt.toISOString(),
       }).catch(() => undefined);
     }
-    assertTrustedProResponse(answer, completedRuntime, capturedAt);
+    assertTrustedProResponse(answer, completedRuntime, capturedAt, { requireTimestamp: true });
     await appendJournal(prepared.journalPath, {
       event: "complete",
       operationRef,
@@ -721,41 +729,6 @@ async function journalEventAt(
     }
   }
   return undefined;
-}
-
-function elapsedSinceDispatch(
-  dispatchAt: string | undefined,
-  completedAt: Date,
-): number | undefined {
-  if (!dispatchAt) return undefined;
-  const dispatchMs = Date.parse(dispatchAt);
-  const elapsedMs = completedAt.getTime() - dispatchMs;
-  return Number.isFinite(elapsedMs) && elapsedMs >= 0 ? elapsedMs : undefined;
-}
-
-function assertTrustedProResponse(
-  answer: string,
-  runtime: BrowserRuntimeMetadata,
-  capturedAt: Date,
-): void {
-  // Preserve the first capture decision across reattach. Otherwise the same
-  // sub-minute answer could become admissible merely because it was harvested
-  // again after the wall clock crossed the threshold.
-  const responseElapsedMs =
-    runtime.opencliResponseElapsedMs ?? elapsedSinceDispatch(runtime.opencliDispatchAt, capturedAt);
-  if (responseElapsedMs === undefined || responseElapsedMs >= MIN_TRUSTED_PRO_RESPONSE_MS) return;
-  const seconds = Math.max(0, Math.round(responseElapsedMs / 1000));
-  throw new BrowserAutomationError(
-    `Oracle rejected an assistant reply captured ${seconds}s after dispatch because sub-minute replies are not trusted as GPT-5.6 Pro output.`,
-    {
-      stage: "model-quality-gate",
-      code: "pro-fast-response-untrusted",
-      runtime: { ...runtime, opencliResponseElapsedMs: responseElapsedMs },
-      responseElapsedMs,
-      thresholdMs: MIN_TRUSTED_PRO_RESPONSE_MS,
-      assistantSha256: createHash("sha256").update(answer).digest("hex"),
-    },
-  );
 }
 
 async function runJsonCommand<T>(

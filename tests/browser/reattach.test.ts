@@ -89,6 +89,67 @@ describe("resumeBrowserSession", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  test("does not recover around a persisted sub-minute Pro rejection", async () => {
+    const runtime = {
+      chromePort: 51559,
+      chromeHost: "127.0.0.1",
+      chromeTargetId: "target-1",
+      tabUrl: "https://chatgpt.com/c/fast-pro",
+      proDispatchAt: "2026-08-13T00:00:00.000Z",
+      proResponseElapsedMs: 12_000,
+    };
+    const listTargets = vi.fn(
+      async () =>
+        [{ targetId: "target-1", type: "page", url: runtime.tabUrl }] satisfies FakeTarget[],
+    ) as unknown as () => Promise<FakeTarget[]>;
+    const evaluate = vi.fn(async ({ expression }: { expression: string }) => {
+      if (expression === "location.href") return { result: { value: runtime.tabUrl } };
+      if (expression === "1+1") return { result: { value: 2 } };
+      return { result: { value: null } };
+    });
+    const close = vi.fn(async () => {});
+    const connect = vi.fn(
+      async () =>
+        ({
+          Runtime: { enable: vi.fn(), evaluate },
+          DOM: { enable: vi.fn() },
+          close,
+        }) satisfies FakeClient,
+    ) as unknown as (options?: unknown) => Promise<ChromeClient>;
+    const recoverSession = vi.fn(async () => ({
+      answerText: "must not recover",
+      answerMarkdown: "must not recover",
+    }));
+    const logger = vi.fn() as BrowserLogger;
+
+    await expect(
+      resumeBrowserSession(
+        runtime,
+        { timeoutMs: 2_000, thinkingTime: "pro", modelStrategy: "select" },
+        logger,
+        {
+          listTargets,
+          connect,
+          recoverSession,
+          waitForAssistantResponse: vi.fn(async () => ({
+            text: "fast answer",
+            html: "",
+            meta: { messageId: "m1", turnId: "conversation-turn-1" },
+          })),
+          captureAssistantMarkdown: vi.fn(async () => "fast answer"),
+          waitForConversationHydration: vi.fn(async () => 2),
+        },
+      ),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        stage: "model-quality-gate",
+        code: "pro-fast-response-untrusted",
+      }),
+    });
+    expect(close).toHaveBeenCalledOnce();
+    expect(recoverSession).not.toHaveBeenCalled();
+  });
+
   test("uses prompt preview turn index when reattaching to an already-open answer", async () => {
     const runtime = {
       chromePort: 51559,

@@ -63,7 +63,9 @@ export const DEFAULT_BROWSER_CONFIG: ResolvedBrowserConfig = {
   remoteChrome: null,
   remoteChromeBrowserWSEndpoint: null,
   remoteChromeProfileRoot: null,
-  manualLogin: false,
+  // The fork's canonical ChatGPT lane owns a dedicated persistent Chrome
+  // profile. It never borrows the operator's personal Chrome data directory.
+  manualLogin: true,
   manualLoginProfileDir: null,
   manualLoginCookieSync: false,
   researchMode: "off",
@@ -74,6 +76,7 @@ export const DEFAULT_BROWSER_CONFIG: ResolvedBrowserConfig = {
 export function resolveBrowserConfig(
   config: BrowserAutomationConfig | undefined,
 ): ResolvedBrowserConfig {
+  const transport = config?.transport ?? DEFAULT_BROWSER_CONFIG.transport;
   const debugPortEnv = parseDebugPort(
     process.env.ORACLE_BROWSER_PORT ?? process.env.ORACLE_BROWSER_DEBUG_PORT,
   );
@@ -95,8 +98,18 @@ export function resolveBrowserConfig(
     DEFAULT_BROWSER_CONFIG.modelStrategy ??
     DEFAULT_MODEL_STRATEGY;
   const isWindows = process.platform === "win32";
+  const explicitlyEphemeral = Boolean(
+    config?.copyProfileSource ||
+    config?.attachRunning ||
+    config?.remoteChrome ||
+    config?.inlineCookies?.length ||
+    config?.chromeCookiePath ||
+    config?.cookieSync === true,
+  );
   const manualLogin =
-    config?.manualLogin ?? (isWindows ? true : DEFAULT_BROWSER_CONFIG.manualLogin);
+    transport === "cdp"
+      ? (config?.manualLogin ?? (explicitlyEphemeral ? false : DEFAULT_BROWSER_CONFIG.manualLogin))
+      : false;
   const cookieSyncDefault = isWindows ? false : DEFAULT_BROWSER_CONFIG.cookieSync;
   const resolvedProfileDir = resolveManualLoginProfileDir(
     config?.manualLoginProfileDir,
@@ -109,7 +122,7 @@ export function resolveBrowserConfig(
   return {
     ...DEFAULT_BROWSER_CONFIG,
     ...config,
-    transport: config?.transport ?? DEFAULT_BROWSER_CONFIG.transport,
+    transport,
     opencliPath: config?.opencliPath ?? DEFAULT_BROWSER_CONFIG.opencliPath,
     url: normalizedUrl,
     chatgptUrl: normalizedUrl,
@@ -132,7 +145,9 @@ export function resolveBrowserConfig(
       config?.autoReattachIntervalMs ?? DEFAULT_BROWSER_CONFIG.autoReattachIntervalMs,
     autoReattachTimeoutMs:
       config?.autoReattachTimeoutMs ?? DEFAULT_BROWSER_CONFIG.autoReattachTimeoutMs,
-    cookieSync: config?.cookieSync ?? cookieSyncDefault,
+    cookieSync:
+      config?.cookieSync ??
+      (manualLogin ? false : config?.inlineCookies?.length ? true : cookieSyncDefault),
     cookieNames: config?.cookieNames ?? DEFAULT_BROWSER_CONFIG.cookieNames,
     cookieSyncWaitMs: config?.cookieSyncWaitMs ?? DEFAULT_BROWSER_CONFIG.cookieSyncWaitMs,
     inlineCookies: config?.inlineCookies ?? DEFAULT_BROWSER_CONFIG.inlineCookies,

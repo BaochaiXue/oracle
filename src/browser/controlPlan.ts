@@ -33,13 +33,16 @@ export function describeBrowserControlPlan(config: BrowserControlConfig = {}): B
 
   if (config.transport === "opencli") {
     guidance.push(
-      "OpenCLI uses the authenticated Browser Bridge and does not request direct Chrome debugging approval.",
+      "OpenCLI is the optional Browser Bridge transport; it does not use Oracle's isolated CDP profile.",
     );
     guidance.push("OpenCLI owns ephemeral tab leases and closes them after each command.");
+    guidance.push(
+      "Browser Bridge controls its own window/tab presentation, so a Chrome window may become visible or focused.",
+    );
     return {
       mode: "opencli",
       launchesChrome: false,
-      mayFocusWindow: false,
+      mayFocusWindow: true,
       summary: "use OpenCLI Browser Bridge",
       guidance,
     };
@@ -95,9 +98,11 @@ export function describeBrowserControlPlan(config: BrowserControlConfig = {}): B
   }
 
   if (config.hideWindow) {
-    guidance.push("On macOS, Oracle launches Chrome off-screen while keeping the page rendered.");
     guidance.push(
-      "For the calmest shared-desktop flow, prefer --browser-attach-running or --remote-chrome.",
+      "On macOS, Oracle always launches its dedicated Chrome profile off-screen while keeping the page rendered.",
+    );
+    guidance.push(
+      "The first-time `oracle browser setup` flow is intentionally visible; ordinary runs follow this hidden-window policy.",
     );
     return {
       mode: "hidden-window",
@@ -110,7 +115,7 @@ export function describeBrowserControlPlan(config: BrowserControlConfig = {}): B
 
   guidance.push(
     config.manualLogin
-      ? "Manual-login mode may show the persistent Oracle Chrome profile for sign-in or automation."
+      ? "Oracle launches its own persistent profile visibly for this run; it does not attach to personal Chrome."
       : "A visible automation Chrome window may take focus while Oracle controls ChatGPT.",
   );
   guidance.push(

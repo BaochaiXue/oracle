@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import "dotenv/config";
 import { spawn } from "node:child_process";
+import os from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, Option } from "commander";
 import type { OptionValues } from "commander";
@@ -631,7 +633,7 @@ program
   .addOption(
     new Option(
       "--browser-transport <transport>",
-      "Browser transport: opencli uses Browser Bridge without direct CDP approval; cdp keeps the legacy Chrome automation path.",
+      "Browser transport: cdp (default) owns an isolated persistent Chrome profile over loopback; opencli uses Browser Bridge as an alternative.",
     ).choices(["opencli", "cdp"]),
   )
   .addOption(
@@ -715,13 +717,13 @@ program
   .addOption(
     new Option(
       "--browser-profile-lock-timeout <ms|s|m|h>",
-      "Wait for the shared manual-login profile lock before sending (serializes parallel runs).",
+      "Wait for the dedicated Oracle profile lock before sending (serializes parallel runs).",
     ).hideHelp(),
   )
   .addOption(
     new Option(
       "--browser-max-concurrent-tabs <n>",
-      "Soft limit for concurrent ChatGPT tabs sharing one manual-login profile (default 3).",
+      "Soft limit for concurrent ChatGPT tabs sharing the dedicated profile (default 3).",
     ).hideHelp(),
   )
   .addOption(
@@ -781,13 +783,13 @@ program
   .addOption(
     new Option(
       "--browser-manual-login",
-      "Skip cookie copy; reuse a persistent automation profile and wait for manual ChatGPT login.",
+      "Use Oracle's persistent isolated Chrome profile (default for direct CDP).",
     ).hideHelp(),
   )
   .addOption(
     new Option(
       "--browser-manual-login-profile-dir <path>",
-      "Persistent Chrome profile directory for manual-login browser runs.",
+      "Persistent isolated Chrome profile directory for direct-CDP browser runs.",
     ).hideHelp(),
   )
   .addOption(
@@ -985,6 +987,137 @@ program
       manualLoginDefault: commandOptions.manualLogin,
       manualLoginProfileDir: commandOptions.manualLoginProfileDir,
     });
+  });
+
+const browserCommand = program
+  .command("browser")
+  .description("Set up and validate Oracle's isolated persistent Chrome profile.");
+
+browserCommand
+  .command("install")
+  .description("Install official stable Chrome for Testing with a separate application identity.")
+  .option("--cache-dir <path>", "Browser cache directory (default: ~/.oracle/browsers).")
+  .option("--config <path>", "Oracle user config to update (default: ~/.oracle/config.json).")
+  .option("--no-write-config", "Install without updating browser.chromePath.")
+  .option("--json", "Print structured JSON.", false)
+  .action(async (commandOptions) => {
+    const { defaultDedicatedBrowserCacheDir, installDedicatedBrowser } =
+      await import("../src/browser/dedicatedBrowserBinary.js");
+    const cacheDir = path.resolve(commandOptions.cacheDir ?? defaultDedicatedBrowserCacheDir());
+    process.stderr.write(
+      `Installing official stable Chrome for Testing under ${cacheDir}. This does not change the system default browser.\n`,
+    );
+    let lastPercent = -1;
+    const receipt = await installDedicatedBrowser(cacheDir, (downloadedBytes, totalBytes) => {
+      if (!totalBytes) return;
+      const percent = Math.floor((downloadedBytes / totalBytes) * 100);
+      if (lastPercent >= 0 && percent < 100 && percent - lastPercent < 10) return;
+      lastPercent = percent;
+      process.stderr.write(
+        `Chrome for Testing download: ${Math.min(percent, 100)}% (${downloadedBytes.toLocaleString()}/${totalBytes.toLocaleString()} bytes)\n`,
+      );
+    });
+    let configFilePath: string | null = null;
+    if (commandOptions.writeConfig !== false) {
+      const { readUserConfigFile, writeUserConfigFile } =
+        await import("../src/bridge/userConfigFile.js");
+      const resolvedConfigPath: string =
+        commandOptions.config ?? (await loadUserConfig({ includeProject: false })).path;
+      configFilePath = resolvedConfigPath;
+      const { config } = await readUserConfigFile(resolvedConfigPath);
+      const next: UserConfig = {
+        ...config,
+        browser: {
+          ...config.browser,
+          chromePath: receipt.executablePath,
+        },
+      };
+      await writeUserConfigFile(resolvedConfigPath, next);
+    }
+    const output = { ...receipt, configPath: configFilePath };
+    if (commandOptions.json) {
+      process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+    } else {
+      process.stdout.write(
+        [
+          `Installed Chrome for Testing ${receipt.buildId}.`,
+          `Executable: ${receipt.executablePath}`,
+          configFilePath
+            ? `Updated browser.chromePath in ${configFilePath}`
+            : "Config unchanged (--no-write-config).",
+          "Next: oracle browser setup",
+        ].join("\n") + "\n",
+      );
+    }
+  });
+
+browserCommand
+  .command("setup")
+  .description("Open Oracle Chrome for the one-time ChatGPT sign-in; submits no prompt.")
+  .option(
+    "--profile-dir <path>",
+    "Dedicated Chrome user-data directory (default: browser.manualLoginProfileDir or ~/.oracle/browser-profile).",
+  )
+  .option("--chrome-path <path>", "Explicit Chrome or Chromium executable path.")
+  .option("--json", "Print structured JSON.", false)
+  .option("-v, --verbose", "Show browser launch and navigation details.", false)
+  .action(async (commandOptions) => {
+    const { printDedicatedBrowserSetupResult, runDedicatedBrowserSetup } =
+      await import("../src/cli/dedicatedBrowser.js");
+    const userConfig = (await loadUserConfig()).config;
+    const result = await runDedicatedBrowserSetup({
+      ...commandOptions,
+      profileDir:
+        commandOptions.profileDir ??
+        userConfig.browser?.manualLoginProfileDir ??
+        path.join(os.homedir(), ".oracle", "browser-profile"),
+      chromePath: commandOptions.chromePath ?? userConfig.browser?.chromePath ?? undefined,
+      onStarted: ({ pid, profileDir }) => {
+        process.stderr.write(
+          [
+            `Oracle sign-in browser opened (pid ${pid ?? "unknown"}).`,
+            `Profile: ${profileDir}`,
+            "Sign in to ChatGPT, then close the entire Chrome for Testing window.",
+            "This command waits for that browser to exit so it cannot remain behind as an orphaned link target.",
+          ].join("\n") + "\n",
+        );
+      },
+    });
+    printDedicatedBrowserSetupResult(result, commandOptions.json);
+  });
+
+browserCommand
+  .command("smoke")
+  .description(
+    "Cold-start and attach twice with the same profile; checks login without submitting a prompt.",
+  )
+  .option(
+    "--profile-dir <path>",
+    "Dedicated Chrome user-data directory (default: browser.manualLoginProfileDir or ~/.oracle/browser-profile).",
+  )
+  .option(
+    "--port <number>",
+    "Loopback CDP port (default: browser.debugPort or 9333).",
+    parseIntOption,
+  )
+  .option("--chrome-path <path>", "Explicit Chrome or Chromium executable path.")
+  .option("--visible", "Keep each test window on screen instead of moving it off-screen.", false)
+  .option("--json", "Print structured JSON.", false)
+  .option("-v, --verbose", "Show browser launch and navigation details.", false)
+  .action(async (commandOptions) => {
+    const { printDedicatedBrowserSmokeResult, runDedicatedBrowserSmoke } =
+      await import("../src/cli/dedicatedBrowser.js");
+    const userConfig = (await loadUserConfig()).config;
+    const result = await runDedicatedBrowserSmoke({
+      ...commandOptions,
+      profileDir:
+        commandOptions.profileDir ??
+        userConfig.browser?.manualLoginProfileDir ??
+        path.join(os.homedir(), ".oracle", "browser-profile"),
+      port: commandOptions.port ?? userConfig.browser?.debugPort ?? 9333,
+      chromePath: commandOptions.chromePath ?? userConfig.browser?.chromePath ?? undefined,
+    });
+    printDedicatedBrowserSmokeResult(result, commandOptions.json);
   });
 
 const projectSourcesCommand = program
@@ -2891,7 +3024,7 @@ function printDebugHelp(cliName: string): void {
     ],
     [
       "--browser-profile-lock-timeout <ms|s|m|h>",
-      "Wait for the manual-login profile lock before sending.",
+      "Wait for the dedicated profile lock before sending.",
     ],
     [
       "--browser-auto-reattach-delay <ms|s|m|h>",

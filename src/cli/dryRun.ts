@@ -18,6 +18,7 @@ import { buildTokenEstimateSuffix, formatAttachmentLabel } from "../browser/prom
 import { buildCookiePlan } from "../browser/policies.js";
 import { describeBrowserControlPlan, formatBrowserControlPlan } from "../browser/controlPlan.js";
 import { formatBrowserModelTarget } from "../browser/modelDisplay.js";
+import { resolveBrowserConfig } from "../browser/config.js";
 
 interface DryRunDeps {
   readFilesImpl?: typeof readFiles;
@@ -120,11 +121,12 @@ async function runBrowserDryRun(
     modelStrategy: browserConfig?.modelStrategy,
   });
   const headerLine = `[dry-run] Oracle (${version}) would launch browser mode (${displayModel}) with ~${artifacts.estimatedInputTokens.toLocaleString()} tokens${suffix}.`;
+  const resolvedBrowserConfig = resolveBrowserConfig(browserConfig);
   log(chalk.cyan(headerLine));
-  logBrowserControlPlan(browserConfig, log, "dry-run");
+  logBrowserControlPlan(resolvedBrowserConfig, log, "dry-run");
   logBrowserFollowUpSummary(runOptions.browserFollowUps, log, "dry-run");
-  logBrowserCookieStrategy(browserConfig, log, "dry-run");
-  logBrowserArchivePolicy(browserConfig, log, "dry-run");
+  logBrowserCookieStrategy(resolvedBrowserConfig, log, "dry-run");
+  logBrowserArchivePolicy(resolvedBrowserConfig, log, "dry-run");
   logBrowserFileSummary(artifacts, log, "dry-run");
 }
 
@@ -226,8 +228,9 @@ export async function runBrowserPreview(
     modelStrategy: browserConfig?.modelStrategy,
   });
   const headerLine = `[preview] Oracle (${version}) browser mode (${displayModel}) with ~${artifacts.estimatedInputTokens.toLocaleString()} tokens${suffix}.`;
+  const resolvedBrowserConfig = resolveBrowserConfig(browserConfig);
   log(chalk.cyan(headerLine));
-  logBrowserControlPlan(browserConfig, log, "preview");
+  logBrowserControlPlan(resolvedBrowserConfig, log, "preview");
   logBrowserFollowUpSummary(runOptions.browserFollowUps, log, "preview");
   logBrowserFileSummary(artifacts, log, "preview");
   if (previewMode === "json" || previewMode === "full") {

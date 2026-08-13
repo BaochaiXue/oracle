@@ -5,18 +5,19 @@ import {
 } from "../../src/browser/controlPlan.js";
 
 describe("browser control plan", () => {
-  test("describes OpenCLI as a non-CDP authenticated bridge", () => {
+  test("describes OpenCLI as a non-CDP bridge with bridge-owned window behavior", () => {
     const plan = describeBrowserControlPlan({ transport: "opencli" });
     const output = formatBrowserControlPlan(plan, "dry-run").join("\n");
 
     expect(plan).toMatchObject({
       mode: "opencli",
       launchesChrome: false,
-      mayFocusWindow: false,
+      mayFocusWindow: true,
       summary: "use OpenCLI Browser Bridge",
     });
-    expect(output).toContain("does not request direct Chrome debugging approval");
+    expect(output).toContain("optional Browser Bridge transport");
     expect(output).toContain("ephemeral tab leases");
+    expect(output).toContain("may become visible or focused");
     expect(output).not.toContain("launch visible Chrome");
   });
 

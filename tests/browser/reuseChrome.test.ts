@@ -193,14 +193,20 @@ describe("maybeReuseRunningChrome", () => {
         }
         return null;
       });
+      const resolveDedicatedExecutable = vi.fn(async () => "/tmp/oracle-cft");
+      const assertReusedProcessIdentity = vi.fn(async () => undefined);
 
       const first = acquireManualLoginChromeForRunForTest(tmpDir, config, noopLogger, "first", {
         maybeReuse,
         launch,
+        resolveDedicatedExecutable,
+        assertReusedProcessIdentity,
       });
       const second = acquireManualLoginChromeForRunForTest(tmpDir, config, noopLogger, "second", {
         maybeReuse,
         launch,
+        resolveDedicatedExecutable,
+        assertReusedProcessIdentity,
       });
 
       const [firstResult, secondResult] = await Promise.all([first, second]);
@@ -209,6 +215,40 @@ describe("maybeReuseRunningChrome", () => {
       const results = [firstResult, secondResult];
       expect(results.filter((result) => result.reusedChrome === null)).toHaveLength(1);
       expect(results.filter((result) => result.reusedChrome?.port === 45678)).toHaveLength(1);
+      expect(assertReusedProcessIdentity).toHaveBeenCalledWith(process.pid, "/tmp/oracle-cft");
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses a reusable browser whose process does not match the dedicated executable", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "oracle-chrome-identity-"));
+    try {
+      const config = resolveBrowserConfig({
+        manualLogin: true,
+        manualLoginProfileDir: tmpDir,
+        profileLockTimeoutMs: 0,
+        reuseChromeWaitMs: 0,
+      });
+      const reusedChrome = {
+        port: 45678,
+        pid: process.pid,
+        kill: async () => undefined,
+        process: undefined,
+      } as unknown as LaunchedChrome;
+      const mismatch = new Error("running browser identity mismatch");
+      const launch = vi.fn();
+      await expect(
+        acquireManualLoginChromeForRunForTest(tmpDir, config, noopLogger, "identity", {
+          maybeReuse: vi.fn(async () => reusedChrome),
+          launch,
+          resolveDedicatedExecutable: vi.fn(async () => "/tmp/oracle-cft"),
+          assertReusedProcessIdentity: vi.fn(async () => {
+            throw mismatch;
+          }),
+        }),
+      ).rejects.toBe(mismatch);
+      expect(launch).not.toHaveBeenCalled();
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }

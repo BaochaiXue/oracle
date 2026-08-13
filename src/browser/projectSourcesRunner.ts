@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { LaunchedChrome } from "chrome-launcher";
@@ -39,6 +39,7 @@ import { delay } from "./utils.js";
 import {
   assertManualLoginProfileReadyForRun,
   defaultManualLoginProfileDir,
+  ensureDedicatedBrowserProfileDirectory,
   formatManualLoginSetupCommand,
   resolveManualLoginWaitMs,
 } from "./manualLoginProfile.js";
@@ -51,6 +52,10 @@ import {
 import { normalizeProjectSourcesUrl } from "../projectSources/url.js";
 import { buildProjectSourcesUploadPlan, diffAddedProjectSources } from "../projectSources/plan.js";
 import type { ProjectSourcesRequest, ProjectSourcesResult } from "../projectSources/types.js";
+import {
+  assertDedicatedBrowserProcessIdentity,
+  resolveDedicatedBrowserExecutable,
+} from "./dedicatedBrowserBinary.js";
 
 type BrowserChrome = LaunchedChrome & { host?: string };
 
@@ -99,7 +104,7 @@ export async function runBrowserProjectSources(
     : await mkdtemp(path.join(os.tmpdir(), "oracle-project-sources-"));
   const effectiveKeepBrowser = Boolean(config.keepBrowser);
   if (manualLogin) {
-    await mkdir(userDataDir, { recursive: true });
+    await ensureDedicatedBrowserProfileDirectory(userDataDir);
     logger(`Manual login mode enabled; reusing persistent profile at ${userDataDir}`);
     await assertManualLoginProfileReadyForRun({
       userDataDir,
@@ -411,7 +416,7 @@ async function waitForProjectSourcesLogin({
   const setupCommand = formatManualLoginSetupCommand(profileDir ?? defaultManualLoginProfileDir());
   throw new Error(
     "Manual login mode timed out waiting for ChatGPT session. " +
-      `Browser mode is using Oracle's private Chrome profile at ${profileDir ?? "(default profile)"}, not your normal Chrome profile. ` +
+      `Browser mode is using Oracle's private Chrome for Testing profile at ${profileDir ?? "(default profile)"}, not your normal Chrome app or profile. ` +
       `Run first-time setup, sign in there, then retry: ${setupCommand}`,
   );
 }
@@ -421,6 +426,7 @@ async function acquireManualLoginChromeForProjectSources(
   config: ResolvedBrowserConfig,
   logger: BrowserLogger,
 ): Promise<{ chrome: BrowserChrome; reusedChrome: LaunchedChrome | null }> {
+  const dedicatedExecutable = await resolveDedicatedBrowserExecutable(config.chromePath);
   const lockTimeoutMs = Math.max(0, config.profileLockTimeoutMs ?? 0);
   let launchLock: ProfileRunLock | null = null;
   if (lockTimeoutMs > 0) {
@@ -434,11 +440,15 @@ async function acquireManualLoginChromeForProjectSources(
     const reusedChrome = await maybeReuseProjectSourcesChrome(userDataDir, logger, {
       waitForPortMs: config.reuseChromeWaitMs,
     });
+    if (reusedChrome && dedicatedExecutable) {
+      await assertDedicatedBrowserProcessIdentity(reusedChrome.pid, dedicatedExecutable);
+    }
     const chrome =
       reusedChrome ??
       (await launchChrome(
         {
           ...config,
+          chromePath: dedicatedExecutable ?? config.chromePath,
           remoteChrome: null,
         },
         userDataDir,
@@ -472,6 +482,13 @@ async function maybeReuseProjectSourcesChrome(
     }
   }
   let pid = await readChromePid(userDataDir);
+  if (port && !pid) {
+    const discovered = await findRunningChromeDebugTargetForProfile(userDataDir);
+    if (discovered?.port === port) {
+      pid = discovered.pid;
+      await writeChromePid(userDataDir, pid);
+    }
+  }
   if (!port) {
     const discovered = await findRunningChromeDebugTargetForProfile(userDataDir);
     if (!discovered) {

@@ -25,6 +25,7 @@ const DEFAULT_DOC_PATHS = [
 ];
 const FLAG_RE = /(^|[\s`([{|,])(--[a-z][a-z0-9-]*)(?=$|[\s`)[\].,;:|=<>}])/g;
 const SLASH_FLAG_RE = /--[a-z][a-z0-9-]*(?:\/(?:--[a-z][a-z0-9-]*|-[a-z][a-z0-9-]*))+/g;
+const EXTERNAL_FLAGS_MARKER = "<!-- docs-check: external-flags -->";
 const ROOT_ONLY_SECTIONS = new Set(["Core consult flags"]);
 
 export async function checkDocsFlags({
@@ -137,6 +138,9 @@ function extractMarkdownFlagReferences(markdown: string): MarkdownFlagReference[
     const heading = line.match(/^##+\s+(.+?)\s*$/);
     if (heading) {
       section = heading[1];
+    }
+    if (line.includes(EXTERNAL_FLAGS_MARKER)) {
+      continue;
     }
     const commandPath = extractOracleCommandPath(line);
     const lineFlags = new Set<string>();

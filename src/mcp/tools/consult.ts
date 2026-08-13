@@ -344,9 +344,9 @@ export function buildConsultBrowserConfig({
     ? mapModelToBrowserLabel(runModel)
     : resolveBrowserModelLabel(preferredLabel, runModel);
   const configuredUrl = configuredBrowser.chatgptUrl ?? configuredBrowser.url ?? CHATGPT_URL;
-  const manualLogin = hasProfileDir
-    ? true
-    : (configuredBrowser.manualLogin ?? process.platform === "win32");
+  const transport = configuredBrowser.transport ?? "cdp";
+  const manualLogin =
+    transport === "cdp" ? (hasProfileDir ? true : (configuredBrowser.manualLogin ?? true)) : false;
   const configuredThinkingTime = normalizeThinkingTimeLevel(configuredBrowser.thinkingTime);
 
   return {
@@ -392,10 +392,10 @@ export function buildConsultDryRunResolved({
     if (browserConfig?.manualLogin) {
       const profile = browserConfig.manualLoginProfileDir ?? "~/.oracle/browser-profile";
       guidance.push(
-        `Manual-login browser mode uses Oracle's private Chrome profile at ${profile}, separate from your normal Chrome profile.`,
+        `Dedicated-profile browser mode uses Oracle's Chrome for Testing app and private Chrome profile at ${profile}, separate from your normal Chrome app and profile.`,
       );
       guidance.push(
-        `First-time setup: run oracle --engine browser --browser-manual-login --browser-keep-browser --browser-manual-login-profile-dir ${JSON.stringify(profile)} -p "HI", sign into ChatGPT in that window, then retry the consult.`,
+        `First-time setup: run oracle browser install, then oracle browser setup --profile-dir ${JSON.stringify(profile)}, sign into ChatGPT in that window, close the entire browser, and run oracle browser smoke --profile-dir ${JSON.stringify(profile)} before retrying the consult. Neither command submits a prompt.`,
       );
       guidance.push(
         "If this profile is not signed in, non-setup MCP/browser runs fail fast instead of waiting for the full browser timeout.",
@@ -747,7 +747,7 @@ export function registerConsultTool(server: McpServer): void {
     {
       title: "Run an oracle session",
       description:
-        'Run an Oracle session (API or ChatGPT browser automation). Use `files` to attach project context. If `engine` is omitted, Oracle follows CLI defaults: config/ORACLE_ENGINE first, then API when OPENAI_API_KEY is set, otherwise browser. Browser Pro consults can take many minutes; use `dryRun:true` first when configuring an agent and inspect `sessions`/`oracle status` before retrying. This fork can route GPT-5.6 Pro through OpenCLI when the operator sets browser.transport="opencli" in Oracle config and the caller selects model:"gpt-5-pro". Browser manual-login uses a private Oracle Chrome profile separate from the user\'s normal Chrome; dry-run output includes first-time setup guidance when that path is active. For browser-based image/file uploads, set `browserAttachments:"always"`. For ChatGPT image generation, set `generateImage` to enable the same image wait/download path as CLI --generate-image and read returned paths from `images`. Browser consults can include `browserFollowUps` for a multi-turn ChatGPT review in one conversation. Sessions are stored under `ORACLE_HOME_DIR` (shared with the CLI).',
+        'Run an Oracle session (API or ChatGPT browser automation). Use `files` to attach project context. If `engine` is omitted, Oracle follows CLI defaults: config/ORACLE_ENGINE first, then API when OPENAI_API_KEY is set, otherwise browser. Browser Pro consults can take many minutes; use `dryRun:true` first when configuring an agent and inspect `sessions`/`oracle status` before retrying. The canonical browser lane uses direct loopback CDP with a Chrome for Testing app identity and private persistent profile, separate from the operator\'s normal Chrome app and profile. OpenCLI Browser Bridge remains an explicit alternative transport via browser.transport="opencli". Dry-run output includes first-time profile setup guidance. For browser-based image/file uploads, set `browserAttachments:"always"`. For ChatGPT image generation, set `generateImage` to enable the same image wait/download path as CLI --generate-image and read returned paths from `images`. Browser consults can include `browserFollowUps` for a multi-turn ChatGPT review in one conversation. Sessions are stored under `ORACLE_HOME_DIR` (shared with the CLI).',
       // Cast to any to satisfy SDK typings across differing Zod versions.
       inputSchema: consultInputShape,
       outputSchema: consultOutputShape,

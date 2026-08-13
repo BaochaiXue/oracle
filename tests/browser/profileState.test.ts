@@ -207,4 +207,18 @@ describe("profileState", () => {
       port: 64305,
     });
   });
+
+  test("discovers a normal no-CDP Chrome using the dedicated profile", () => {
+    const dir = "/Users/example/.oracle/browser-profile";
+    const processList = `
+      321 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=${dir} --new-window https://chatgpt.com/
+    `;
+
+    expect(profileState.findChromeForProfileFromProcessListForTest(processList, dir)).toEqual({
+      pid: 321,
+    });
+    expect(
+      profileState.findChromeDebugTargetForProfileFromProcessListForTest(processList, dir),
+    ).toBeNull();
+  });
 });

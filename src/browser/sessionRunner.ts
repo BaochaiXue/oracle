@@ -321,6 +321,8 @@ export async function runBrowserSessionExecution(
       conversationId: browserResult.conversationId,
       promptSubmitted: browserResult.promptSubmitted,
       controllerPid: browserResult.controllerPid ?? process.pid,
+      proDispatchAt: browserResult.proDispatchAt,
+      proResponseElapsedMs: browserResult.proResponseElapsedMs,
       opencliOperationRef: browserResult.opencliOperationRef,
       opencliVersion: browserResult.opencliVersion,
       opencliPayloadSha256: browserResult.opencliPayloadSha256,

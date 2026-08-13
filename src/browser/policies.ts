@@ -57,6 +57,13 @@ export type CookiePlan =
   | { type: "copy"; description: string };
 
 export function buildCookiePlan(config?: BrowserSessionConfig): CookiePlan {
+  if (config?.manualLogin) {
+    const profile = config.manualLoginProfileDir ?? "~/.oracle/browser-profile";
+    return {
+      type: "disabled",
+      description: `Authentication: dedicated persistent Chrome profile (${profile}); personal-cookie sync disabled.`,
+    };
+  }
   if (config?.inlineCookies && config.inlineCookies.length > 0) {
     const source = config.inlineCookiesSource ?? "inline";
     return {

@@ -242,8 +242,14 @@ describe("promptComposer", () => {
     expect(promptComposer.sendButtonTimeoutMs(["oracle-attach-verify.txt"], 120_000)).toBe(120_000);
   });
 
-  test("marks prompt submitted before commit verification finishes", async () => {
-    const onPromptSubmitted = vi.fn();
+  test("records dispatch before marking a verified prompt commit", async () => {
+    const callbacks: string[] = [];
+    const onPromptDispatched = vi.fn(() => {
+      callbacks.push("dispatched");
+    });
+    const onPromptCommitted = vi.fn(() => {
+      callbacks.push("committed");
+    });
     const runtime = {
       evaluate: vi.fn(async ({ expression }: { expression: string }) => {
         if (expression.includes("document.readyState")) {
@@ -286,13 +292,78 @@ describe("promptComposer", () => {
         runtime: runtime as never,
         input: input as never,
         baselineTurns: 0,
-        onPromptSubmitted,
+        onPromptDispatched,
+        onPromptCommitted,
       },
       "hello",
       logger as never,
     );
 
-    expect(onPromptSubmitted).toHaveBeenCalledTimes(1);
+    expect(onPromptDispatched).toHaveBeenCalledTimes(1);
+    expect(onPromptCommitted).toHaveBeenCalledTimes(1);
+    expect(callbacks).toEqual(["dispatched", "committed"]);
+  });
+
+  test("keeps a gated send attempt uncommitted", async () => {
+    const onPromptDispatched = vi.fn();
+    const onPromptCommitted = vi.fn();
+    const gateError = new Error("request frequency gate");
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("document.readyState")) {
+          return { result: { value: { ready: true, composer: true, fileInput: false } } };
+        }
+        if (expression.includes("focused: true")) {
+          return { result: { value: { focused: true } } };
+        }
+        if (expression.includes("editorText")) {
+          return {
+            result: { value: { editorText: "hello", fallbackValue: "", activeValue: "hello" } },
+          };
+        }
+        if (expression.includes("button.scrollIntoView")) {
+          return { result: { value: { status: "clicked" } } };
+        }
+        return {
+          result: {
+            value: {
+              baseline: 0,
+              turnsCount: 0,
+              userMatched: false,
+              prefixMatched: false,
+              lastMatched: false,
+              hasNewTurn: false,
+              stopVisible: false,
+              assistantVisible: false,
+              composerCleared: false,
+              inConversation: false,
+            },
+          },
+        };
+      }),
+    };
+    const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
+    const logger = Object.assign(vi.fn(), { verbose: false });
+
+    await expect(
+      submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          baselineTurns: 0,
+          onPromptDispatched,
+          onPromptCommitted,
+          onPromptCommitPending: () => {
+            throw gateError;
+          },
+        },
+        "hello",
+        logger as never,
+      ),
+    ).rejects.toBe(gateError);
+
+    expect(onPromptDispatched).toHaveBeenCalledTimes(1);
+    expect(onPromptCommitted).not.toHaveBeenCalled();
   });
 
   test("waits for a delayed trusted click without issuing a second send", async () => {

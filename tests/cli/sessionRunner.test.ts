@@ -1319,14 +1319,14 @@ describe("performSessionRun", () => {
     expect(logLines).not.toContain("oracle session sess-1 --render");
   });
 
-  test("preserves persisted runtime hints when browser automation fails without runtime details", async () => {
+  test("keeps an unverified send click unsubmitted when commit verification fails", async () => {
     const automationError = new BrowserAutomationError(
       "Prompt did not appear in conversation before timeout (send may have failed)",
       { stage: "submit-prompt", code: "prompt-commit-timeout" },
     );
     vi.mocked(runBrowserSessionExecution).mockImplementationOnce(async (_args, deps) => {
-      // Simulate the runtime hint emitted right after the send click,
-      // before commit verification fails.
+      // A send click records dispatch intent, but commit verification owns the
+      // promptSubmitted transition.
       await (
         deps as {
           persistRuntimeHint?: (
@@ -1339,7 +1339,8 @@ describe("performSessionRun", () => {
           chromePort: 9222,
           chromeHost: "127.0.0.1",
           tabUrl: "https://chatgpt.com/c/demo",
-          promptSubmitted: true,
+          promptSubmitted: false,
+          proDispatchAt: "2026-08-13T04:30:00.000Z",
         },
         {
           requestedModel: "Pro",
@@ -1373,7 +1374,8 @@ describe("performSessionRun", () => {
       browser: expect.objectContaining({
         config: expect.any(Object),
         runtime: expect.objectContaining({
-          promptSubmitted: true,
+          promptSubmitted: false,
+          proDispatchAt: "2026-08-13T04:30:00.000Z",
           tabUrl: "https://chatgpt.com/c/demo",
         }),
         modelSelection: expect.objectContaining({ resolvedLabel: "Pro", verified: true }),
@@ -1382,6 +1384,69 @@ describe("performSessionRun", () => {
         details: expect.objectContaining({ code: "prompt-commit-timeout" }),
       }),
     });
+  });
+
+  test("terminalizes a request-frequency submission gate without retry or reattach guidance", async () => {
+    const runtime = {
+      chromePort: 9333,
+      chromeHost: "127.0.0.1",
+      tabUrl: "https://chatgpt.com/",
+      promptSubmitted: false,
+      proDispatchAt: "2026-08-13T05:00:00.000Z",
+    };
+    const automationError = new BrowserAutomationError(
+      "ChatGPT blocked prompt submission before the turn was committed: 请求频繁，请稍后再试。",
+      {
+        stage: "submit-prompt",
+        code: "chatgpt-submission-gate",
+        submissionCommitted: false,
+        dispatchAttempted: true,
+        retrySafe: true,
+        retryGuidance: "wait-for-page-gate-to-clear",
+        runtime,
+      },
+    );
+    vi.mocked(runBrowserSessionExecution).mockImplementationOnce(async (_args, deps) => {
+      await deps?.persistRuntimeHint?.(runtime);
+      throw automationError;
+    });
+
+    await expect(
+      performSessionRun({
+        sessionMeta: { ...baseSessionMeta },
+        runOptions: baseRunOptions,
+        mode: "browser",
+        browserConfig: { transport: "cdp" },
+        cwd: "/tmp",
+        log,
+        write,
+        version: cliVersion,
+      }),
+    ).rejects.toThrow(/blocked prompt submission/u);
+
+    expect(runBrowserSessionExecution).toHaveBeenCalledTimes(1);
+    expect(resumeBrowserSession).not.toHaveBeenCalled();
+    expect(sessionStoreMock.updateSession.mock.calls.at(-1)?.[1]).toMatchObject({
+      status: "error",
+      browser: expect.objectContaining({
+        runtime: expect.objectContaining({
+          promptSubmitted: false,
+          proDispatchAt: "2026-08-13T05:00:00.000Z",
+        }),
+      }),
+      error: expect.objectContaining({
+        details: expect.objectContaining({
+          code: "chatgpt-submission-gate",
+          submissionCommitted: false,
+          retrySafe: true,
+        }),
+      }),
+    });
+    const logLines = log.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(logLines).toContain(
+      "ChatGPT blocked this turn before commit; no answer capture or automatic resubmission will be attempted.",
+    );
+    expect(logLines).not.toContain("oracle session sess-1 --render");
   });
 
   test("keeps session running when browser connection is lost", async () => {

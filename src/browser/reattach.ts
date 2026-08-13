@@ -1,7 +1,7 @@
 import CDP from "chrome-remote-interface";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import type { BrowserRuntimeMetadata, BrowserSessionConfig } from "../sessionStore.js";
 import {
   waitForAssistantResponse,
@@ -42,6 +42,9 @@ import {
 } from "./reattachHelpers.js";
 import { waitForDeepResearchCompletion } from "./actions/deepResearch.js";
 import { resumeOpenCliBrowserSession } from "./opencliTransport.js";
+import { ensureDedicatedBrowserProfileDirectory } from "./manualLoginProfile.js";
+import { BrowserAutomationError } from "../oracle/errors.js";
+import { assertTrustedProResponse, requiresProResponseAdmission } from "./proResponseAdmission.js";
 
 export interface ReattachDeps {
   listTargets?: () => Promise<TargetInfoLite[]>;
@@ -204,6 +207,7 @@ export async function resumeBrowserSession(
         timeoutMs + 5_000,
         "Reattach Deep Research response timed out",
       );
+      admitPersistedProResponse(researchResult.text, liveRuntime, config);
       await closeAttached();
       return {
         answerText: researchResult.text,
@@ -231,11 +235,15 @@ export async function resumeBrowserSession(
         "Reattach markdown capture timed out",
       )) ?? recovered.text;
     const aligned = alignPromptEchoMarkdown(recovered.text, markdown, promptEcho, logger);
+    admitPersistedProResponse(aligned.answerText, liveRuntime, config);
 
     await closeAttached();
     return { answerText: aligned.answerText, answerMarkdown: aligned.answerMarkdown };
   } catch (error) {
     await closeAttached();
+    if (isModelQualityGateError(error)) {
+      throw error;
+    }
     const message = error instanceof Error ? error.message : String(error);
     logger(
       `Existing Chrome reattach failed (${message}); reopening browser to locate the session.`,
@@ -293,7 +301,7 @@ async function resumeBrowserSessionViaNewChrome(
     ? (resolved.manualLoginProfileDir ?? path.join(os.homedir(), ".oracle", "browser-profile"))
     : await mkdtemp(path.join(os.tmpdir(), "oracle-reattach-"));
   if (manualLogin) {
-    await mkdir(userDataDir, { recursive: true });
+    await ensureDedicatedBrowserProfileDirectory(userDataDir);
   }
   const chrome = await launchChrome(resolved, userDataDir, logger);
   const chromeHost = (chrome as unknown as { host?: string }).host ?? "127.0.0.1";
@@ -412,7 +420,11 @@ async function resumeBrowserSessionViaNewChrome(
         requireScopedTargetOwner: true,
       },
     );
-    await cleanup();
+    try {
+      admitPersistedProResponse(researchResult.text, runtime, config);
+    } finally {
+      await cleanup();
+    }
     return {
       answerText: researchResult.text,
       answerMarkdown: researchResult.text,
@@ -430,10 +442,32 @@ async function resumeBrowserSessionViaNewChrome(
   );
   const markdown = (await captureMarkdown(Runtime, recovered.meta, logger)) ?? recovered.text;
   const aligned = alignPromptEchoMarkdown(recovered.text, markdown, promptEcho, logger);
-
-  await cleanup();
+  try {
+    admitPersistedProResponse(aligned.answerText, runtime, config);
+  } finally {
+    await cleanup();
+  }
 
   return { answerText: aligned.answerText, answerMarkdown: aligned.answerMarkdown };
+}
+
+function admitPersistedProResponse(
+  answer: string,
+  runtime: BrowserRuntimeMetadata,
+  config: BrowserSessionConfig | undefined,
+): void {
+  if (!requiresProResponseAdmission(resolveBrowserConfig(config ?? {}))) return;
+  const hasAdmissionReceipt =
+    runtime.proDispatchAt !== undefined ||
+    runtime.proResponseElapsedMs !== undefined ||
+    runtime.opencliDispatchAt !== undefined ||
+    runtime.opencliResponseElapsedMs !== undefined;
+  if (!hasAdmissionReceipt) return;
+  assertTrustedProResponse(answer, runtime, new Date());
+}
+
+function isModelQualityGateError(error: unknown): boolean {
+  return error instanceof BrowserAutomationError && error.details?.stage === "model-quality-gate";
 }
 
 async function readPromptPreviewTurnIndex(

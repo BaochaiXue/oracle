@@ -525,6 +525,9 @@ export async function performSessionRun({
     const modelQualityRejected =
       userError?.category === "browser-automation" &&
       (userError.details as { stage?: string } | undefined)?.stage === "model-quality-gate";
+    const submissionGate =
+      userError?.category === "browser-automation" &&
+      (userError.details as { code?: string } | undefined)?.code === "chatgpt-submission-gate";
     const browserCanReattach = !browserConfig?.copyProfileSource;
     let reattachGuidanceLogged = false;
     const logBrowserReattachGuidance = (
@@ -729,6 +732,13 @@ export async function performSessionRun({
         log(dim("Cloudflare challenge detected; copied profile closed and removed."));
       }
     }
+    if (submissionGate && mode === "browser") {
+      log(
+        dim(
+          "ChatGPT blocked this turn before commit; no answer capture or automatic resubmission will be attempted.",
+        ),
+      );
+    }
     if (userError) {
       log(dim(`User error (${userError.category}): ${userError.message}`));
     }
@@ -747,7 +757,7 @@ export async function performSessionRun({
       mode === "browser" && browserCanReattach
         ? (userError?.details as { runtime?: BrowserRuntimeMetadata } | undefined)?.runtime
         : undefined;
-    if (!cloudflareChallenge && !modelQualityRejected && browserCanReattach) {
+    if (!cloudflareChallenge && !modelQualityRejected && !submissionGate && browserCanReattach) {
       logBrowserReattachGuidance(browserRuntime ?? currentBrowser?.runtime);
     }
     const completedAt = new Date().toISOString();

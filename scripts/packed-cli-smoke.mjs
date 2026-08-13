@@ -57,10 +57,48 @@ try {
     "--allow-partial",
     "--preflight",
     "--browser-transport <transport>",
+    "browser",
     "docs",
   ]) {
     if (!help.includes(expected)) {
       throw new Error(`packed CLI help is missing ${expected}`);
+    }
+  }
+
+  const browserHelp = run(process.execPath, [cliPath, "browser", "--help"], { cwd: installDir });
+  for (const expected of ["install [options]", "setup [options]", "smoke [options]"]) {
+    if (!browserHelp.includes(expected)) {
+      throw new Error(`packed browser help is missing ${expected}`);
+    }
+  }
+
+  const installHelp = run(process.execPath, [cliPath, "browser", "install", "--help"], {
+    cwd: installDir,
+  });
+  for (const expected of ["--cache-dir <path>", "--config <path>", "--no-write-config", "--json"]) {
+    if (!installHelp.includes(expected)) {
+      throw new Error(`packed browser install help is missing ${expected}`);
+    }
+  }
+
+  const setupHelp = run(process.execPath, [cliPath, "browser", "setup", "--help"], {
+    cwd: installDir,
+  });
+  for (const expected of ["--profile-dir <path>", "--chrome-path <path>"]) {
+    if (!setupHelp.includes(expected)) {
+      throw new Error(`packed browser setup help is missing ${expected}`);
+    }
+  }
+  if (setupHelp.includes("--port")) {
+    throw new Error("packed browser setup must not expose a CDP port");
+  }
+
+  const smokeHelp = run(process.execPath, [cliPath, "browser", "smoke", "--help"], {
+    cwd: installDir,
+  });
+  for (const expected of ["--profile-dir <path>", "--port <number>", "--visible", "--json"]) {
+    if (!smokeHelp.includes(expected)) {
+      throw new Error(`packed browser smoke help is missing ${expected}`);
     }
   }
   console.log("Packed CLI help smoke: ok");

@@ -39,7 +39,7 @@ const BROWSER_MODEL_LABELS: [ModelName, string][] = [
   ["gpt-5.2-instant", "GPT-5.2 Instant"],
   ["gpt-5.2-pro", "Pro"],
   ["gpt-5.1-pro", "Pro"],
-  ["gpt-5-pro", "Pro"],
+  ["gpt-5-pro", "GPT-5.6 Sol"],
   // Base models last (least specific)
   ["gpt-5.4", "Thinking 5.4"],
   ["gpt-5.2", "GPT-5.2"], // Selects "Auto" in ChatGPT UI
@@ -105,6 +105,7 @@ export function normalizeChatGptModelForBrowser(model: ModelName): ModelName {
   }
 
   if (
+    normalized === "gpt-5-pro" ||
     normalized === "gpt-5.6-sol" ||
     normalized === "gpt-5.6" ||
     normalized === "gpt-5.5-pro" ||
@@ -115,9 +116,9 @@ export function normalizeChatGptModelForBrowser(model: ModelName): ModelName {
     return normalized;
   }
 
-  // Pro variants: resolve to the latest Pro model in ChatGPT.
+  // Versioned legacy Pro aliases remain pinned to the GPT-5.5 browser family.
+  // The unversioned gpt-5-pro alias above tracks the current GPT-5.6 Sol + Pro lane.
   if (
-    normalized === "gpt-5-pro" ||
     normalized === "gpt-5.1-pro" ||
     normalized === "gpt-5.2-pro" ||
     normalized === "gpt-5.4-pro"
@@ -144,15 +145,18 @@ export async function buildBrowserConfig(
   const transport = options.browserTransport ?? "cdp";
   if (transport === "opencli" && options.browserAttachRunning) {
     throw new Error(
-      "--browser-attach-running is the legacy CDP path and cannot be combined with --browser-transport opencli.",
+      "--browser-attach-running is a direct-CDP path and cannot be combined with --browser-transport opencli.",
     );
   }
   if (
     transport === "opencli" &&
-    (options.copyProfile || options.remoteChrome || options.browserManualLogin)
+    (options.copyProfile ||
+      options.remoteChrome ||
+      options.browserManualLogin ||
+      options.browserManualLoginProfileDir)
   ) {
     throw new Error(
-      "--browser-transport opencli uses the authenticated Browser Bridge and cannot be combined with Chrome profile, remote Chrome, or manual-login launch options.",
+      "--browser-transport opencli uses the authenticated Browser Bridge and cannot be combined with Chrome profile, remote Chrome, or dedicated-profile launch options.",
     );
   }
   if (options.copyProfile && options.browserKeepBrowser) {
@@ -162,7 +166,7 @@ export async function buildBrowserConfig(
   }
   if (options.copyProfile && options.browserManualLogin) {
     throw new Error(
-      "--copy-profile cannot be combined with --browser-manual-login: choose either a throwaway copied profile or the persistent manual-login profile.",
+      "--copy-profile cannot be combined with --browser-manual-login: choose either a throwaway copied profile or the persistent dedicated profile.",
     );
   }
   if (options.copyProfile && options.remoteChrome) {
@@ -186,7 +190,10 @@ export async function buildBrowserConfig(
     normalizeBrowserModelStrategy(options.browserModelStrategy) ?? DEFAULT_MODEL_STRATEGY;
   const thinkingTime =
     normalizeThinkingTimeLevel(options.browserThinkingTime) ??
-    (modelStrategy === "select" && normalizedBrowserModel === "gpt-5.5-pro" ? "pro" : undefined);
+    (modelStrategy === "select" &&
+    (normalizedBrowserModel === "gpt-5-pro" || normalizedBrowserModel === "gpt-5.5-pro")
+      ? "pro"
+      : undefined);
   assertBrowserModelAvailable(options.model, modelStrategy);
   const cookieNames = parseCookieNames(
     options.browserCookieNames ?? process.env.ORACLE_BROWSER_COOKIE_NAMES,

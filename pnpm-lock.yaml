@@ -28,6 +28,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
         version: 1.30.0(supports-color@10.2.2)(zod@4.4.3)
+      '@puppeteer/browsers':
+        specifier: ^3.1.0
+        version: 3.1.0
       '@steipete/sweet-cookie':
         specifier: ^0.4.1
         version: 0.4.1

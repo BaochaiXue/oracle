@@ -34,6 +34,14 @@ describe("docs check", () => {
     ]);
   });
 
+  test("ignores explicitly marked flags owned by an external CLI", () => {
+    expect(
+      extractMarkdownFlags(
+        "Chrome uses `--remote-debugging-port`. <!-- docs-check: external-flags -->\nOracle uses `--browser-debug-port`.",
+      ),
+    ).toEqual(["--browser-debug-port"]);
+  });
+
   test("collects root and subcommand flags from Commander", () => {
     const program = new Command();
     program.option("--no-azure");

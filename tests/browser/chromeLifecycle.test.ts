@@ -123,6 +123,25 @@ describe("copied-profile launch flags", () => {
   });
 });
 
+describe("persistent-profile launch flags", () => {
+  test("keeps Chrome resource safeguards and the real keychain enabled", async () => {
+    const { buildChromeFlagsForTest, resolveChromeLaunchOptionsForTest } =
+      await import("../../src/browser/chromeLifecycle.js");
+    const flags = buildChromeFlagsForTest(false, "127.0.0.1", false, true);
+    const options = resolveChromeLaunchOptionsForTest(flags, false, true);
+
+    expect(options.ignoreDefaultFlags).toBe(true);
+    expect(options.chromeFlags).toContain("--remote-debugging-address=127.0.0.1");
+    expect(options.chromeFlags).toContain("--disable-extensions");
+    expect(options.chromeFlags).not.toContain("--disable-background-timer-throttling");
+    expect(options.chromeFlags).not.toContain("--disable-hang-monitor");
+    expect(options.chromeFlags).not.toContain("--disable-ipc-flooding-protection");
+    expect(options.chromeFlags).not.toContain("--safebrowsing-disable-auto-update");
+    expect(options.chromeFlags).not.toContain("--use-mock-keychain");
+    expect(options.chromeFlags).not.toContain("--password-store=basic");
+  });
+});
+
 describe("hidden-window launch flags", () => {
   test("keeps macOS Chrome rendered in an off-screen window", async () => {
     const { buildChromeFlagsForTest } = await import("../../src/browser/chromeLifecycle.js");

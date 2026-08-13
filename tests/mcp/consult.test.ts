@@ -199,7 +199,7 @@ describe("summarizeModelRunsForConsult", () => {
     });
   });
 
-  test("defaults MCP browser consults to manual login on Windows", () => {
+  test("defaults MCP browser consults to the dedicated profile on every platform", () => {
     const config = buildConsultBrowserConfig({
       userConfig: {},
       env: {},
@@ -207,8 +207,8 @@ describe("summarizeModelRunsForConsult", () => {
       inputModel: "gpt-5.5-pro",
     });
 
-    expect(config.manualLogin).toBe(process.platform === "win32");
-    expect(config.cookieSync).toBe(process.platform !== "win32");
+    expect(config.manualLogin).toBe(true);
+    expect(config.cookieSync).toBe(false);
   });
 
   test("lets explicit consult inputs override config defaults", () => {
@@ -289,7 +289,9 @@ describe("summarizeModelRunsForConsult", () => {
     });
     expect(resolved.guidance.join("\n")).toContain("signed-in ChatGPT profile");
     expect(resolved.guidance.join("\n")).toContain("private Chrome profile");
-    expect(resolved.guidance.join("\n")).toContain("--browser-keep-browser");
+    expect(resolved.guidance.join("\n")).toContain("oracle browser setup");
+    expect(resolved.guidance.join("\n")).toContain("oracle browser smoke");
+    expect(resolved.guidance.join("\n")).toContain("Neither command submits a prompt");
     expect(resolved.guidance.join("\n")).toContain("image-aware wait/download");
     expect(formatConsultDryRunResolved(resolved).join("\n")).toContain(
       "browser thinking time: extended",

@@ -31,16 +31,36 @@ describe("resolveBrowserConfig", () => {
   test("returns defaults when config missing", () => {
     const resolved = resolveBrowserConfig(undefined);
     expect(resolved.url).toBe(CHATGPT_URL);
-    const isWindows = process.platform === "win32";
-    expect(resolved.cookieSync).toBe(!isWindows);
+    expect(resolved.transport).toBe("cdp");
+    expect(resolved.cookieSync).toBe(false);
     expect(resolved.cookieNames).toEqual(DEFAULT_CHATGPT_COOKIE_NAMES);
     expect(resolved.headless).toBe(false);
-    expect(resolved.manualLogin).toBe(isWindows);
+    expect(resolved.manualLogin).toBe(true);
+    expect(resolved.manualLoginProfileDir).toBe(
+      path.join(os.homedir(), ".oracle", "browser-profile"),
+    );
     expect(resolved.profileLockTimeoutMs).toBe(300_000);
     expect(resolved.attachmentTimeoutMs).toBe(45_000);
     expect(resolved.maxConcurrentTabs).toBe(3);
     expect(resolved.researchMode).toBe("off");
     expect(resolved.archiveConversations).toBe("auto");
+  });
+
+  test("does not apply dedicated-profile defaults to OpenCLI", () => {
+    const resolved = resolveBrowserConfig({ transport: "opencli" });
+
+    expect(resolved.manualLogin).toBe(false);
+    expect(resolved.manualLoginProfileDir).toBeNull();
+  });
+
+  test("treats explicit inline cookies as an ephemeral compatibility path", () => {
+    const resolved = resolveBrowserConfig({
+      inlineCookies: [{ name: "session", value: "redacted", domain: "chatgpt.com" }],
+    });
+
+    expect(resolved.manualLogin).toBe(false);
+    expect(resolved.manualLoginProfileDir).toBeNull();
+    expect(resolved.cookieSync).toBe(true);
   });
 
   test("applies overrides", () => {

@@ -222,7 +222,7 @@ describe("manual-login profile setup gate", () => {
           userDataDir: dir,
           keepBrowser: false,
         }),
-      ).rejects.toThrow(/private Chrome profile/i);
+      ).rejects.toThrow(/private Chrome for Testing profile/i);
 
       await expect(
         __test__.assertManualLoginProfileReadyForRun({
@@ -251,8 +251,8 @@ describe("manual-login profile setup gate", () => {
   });
 
   test("formats the first-time setup command with the selected profile", () => {
-    expect(__test__.formatManualLoginSetupCommand("/tmp/oracle profile")).toContain(
-      '--browser-manual-login-profile-dir "/tmp/oracle profile"',
+    expect(__test__.formatManualLoginSetupCommand("/tmp/oracle profile")).toBe(
+      'oracle browser setup --profile-dir "/tmp/oracle profile"',
     );
   });
 
@@ -324,6 +324,11 @@ describe("ChatGPT UI warning detection", () => {
         "Too many reque t. You’re making reque t too quickly. We’ve temporarily limited access to your conversations. Please wait a few minutes before trying again.",
       ),
     ).toBe("rate_limit");
+  });
+
+  test("classifies Chinese request-frequency gates as rate limits", () => {
+    expect(__test__.classifyChatGptUiWarningText("请求过于频繁，请稍后再试")).toBe("rate_limit");
+    expect(__test__.classifyChatGptUiWarningText("请求频繁")).toBe("rate_limit");
   });
 
   test("classifies bare retry-later warnings as temporary unavailability", () => {
@@ -440,6 +445,59 @@ describe("ChatGPT UI warning detection", () => {
     expect(logger).toHaveBeenCalledWith(
       "[browser] ChatGPT UI warning detected (rate_limit): You are sending too many requests too quickly. Please try again later.",
     );
+  });
+
+  test("records a request-frequency gate as not submitted and retry-safe", async () => {
+    const Runtime = {
+      evaluate: vi.fn().mockResolvedValue({
+        result: {
+          value: [
+            {
+              text: "请求频繁，请稍后再试",
+              source: "selector",
+              role: "alert",
+              ariaLive: "assertive",
+              selector: '[role="alert"]',
+            },
+          ],
+        },
+      }),
+    };
+
+    const error = await __test__.createChatGptUiWarningError({
+      Runtime: Runtime as never,
+      logger: vi.fn() as never,
+      runtime: {
+        browserTransport: "cdp",
+        chromePort: 9333,
+        promptSubmitted: false,
+        proDispatchAt: "2026-08-13T04:30:00.000Z",
+      },
+      stage: "submit-prompt",
+      waitTarget: "prompt commit",
+      submissionCommitted: false,
+      dispatchAttempted: true,
+    });
+
+    expect(error?.message).toContain("No prompt was committed");
+    expect(error?.message).toContain("retrying after the page gate clears is safe");
+    expect(error?.details).toMatchObject({
+      stage: "submit-prompt",
+      code: "chatgpt-submission-gate",
+      submissionCommitted: false,
+      dispatchAttempted: true,
+      retrySafe: true,
+      retryGuidance: "wait-for-page-gate-to-clear",
+      runtime: {
+        browserTransport: "cdp",
+        chromePort: 9333,
+        promptSubmitted: false,
+      },
+      uiWarning: {
+        type: "rate_limit",
+        message: "请求频繁，请稍后再试",
+      },
+    });
   });
 
   test("keeps the generic timeout error when no blocking warning is visible", async () => {
@@ -763,6 +821,34 @@ describe("shouldPreferSystemTmpDirForTest", () => {
 });
 
 describe("runSubmissionWithRecoveryForTest", () => {
+  test("does not automatically retry a ChatGPT submission gate", async () => {
+    const submit = vi.fn().mockRejectedValue(
+      new BrowserAutomationError("request frequency gate", {
+        stage: "submit-prompt",
+        code: "chatgpt-submission-gate",
+        submissionCommitted: false,
+        retrySafe: true,
+      }),
+    );
+    const reloadPromptComposer = vi.fn().mockResolvedValue(undefined);
+    const prepareFallbackSubmission = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      runSubmissionWithRecoveryForTest({
+        prompt: "architecture review",
+        attachments: [],
+        submit,
+        reloadPromptComposer,
+        prepareFallbackSubmission,
+        logger: vi.fn<(message: string) => void>(),
+      }),
+    ).rejects.toThrow(/request frequency gate/i);
+
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(reloadPromptComposer).not.toHaveBeenCalled();
+    expect(prepareFallbackSubmission).not.toHaveBeenCalled();
+  });
+
   test("preserves prompt-too-large fallback after a dead-composer retry", async () => {
     const submit = vi
       .fn()

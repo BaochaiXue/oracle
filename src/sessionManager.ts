@@ -52,9 +52,9 @@ export interface BrowserSessionConfig {
   assistantRecheckTimeoutMs?: number;
   /** Wait for an existing shared Chrome to appear before launching a new one. */
   reuseChromeWaitMs?: number;
-  /** Max time to wait for a shared manual-login profile lock (serializes parallel runs). */
+  /** Max time to wait for the dedicated profile lock (serializes parallel runs). */
   profileLockTimeoutMs?: number;
-  /** Soft limit for concurrent ChatGPT tabs sharing one manual-login profile. */
+  /** Soft limit for concurrent ChatGPT tabs sharing the dedicated profile. */
   maxConcurrentTabs?: number;
   /** Delay before starting periodic auto-reattach attempts after a timeout. */
   autoReattachDelayMs?: number;
@@ -105,6 +105,10 @@ export interface BrowserRuntimeMetadata {
   promptSubmitted?: boolean;
   /** PID of the controller process that launched this browser run. Helps detect orphaned sessions. */
   controllerPid?: number;
+  /** Dispatch timestamp used by the transport-independent Pro response admission gate. */
+  proDispatchAt?: string;
+  /** First observed elapsed time from dispatch to a stable Pro answer. */
+  proResponseElapsedMs?: number;
   /** Oracle-owned operation reference for this OpenCLI dispatch attempt. */
   opencliOperationRef?: string;
   /** OpenCLI version verified before dispatch. */

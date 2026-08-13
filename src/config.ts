@@ -47,9 +47,9 @@ export interface BrowserConfigDefaults {
   assistantRecheckTimeoutMs?: number;
   /** Wait for an existing shared Chrome to appear before launching a new one. */
   reuseChromeWaitMs?: number;
-  /** Max time to wait for a shared manual-login profile lock (serializes parallel runs). */
+  /** Max time to wait for the dedicated profile lock (serializes parallel runs). */
   profileLockTimeoutMs?: number;
-  /** Soft limit for concurrent ChatGPT tabs sharing one manual-login profile. */
+  /** Soft limit for concurrent ChatGPT tabs sharing the dedicated profile. */
   maxConcurrentTabs?: number;
   /** Delay before starting periodic auto-reattach attempts after a timeout. */
   autoReattachDelayMs?: number;
@@ -68,9 +68,9 @@ export interface BrowserConfigDefaults {
   researchMode?: BrowserResearchMode;
   /** Archive completed ChatGPT conversations after local artifacts are saved. */
   archiveConversations?: BrowserArchiveMode;
-  /** Skip cookie sync and reuse a persistent automation profile (waits for manual ChatGPT login). */
+  /** Skip personal-cookie sync and reuse Oracle's persistent isolated Chrome profile. */
   manualLogin?: boolean;
-  /** Manual-login profile directory override (also available via ORACLE_BROWSER_PROFILE_DIR). */
+  /** Dedicated profile directory override (also available via ORACLE_BROWSER_PROFILE_DIR). */
   manualLoginProfileDir?: string | null;
 }
 

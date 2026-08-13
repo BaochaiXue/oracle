@@ -1,4 +1,4 @@
-import { readdir } from "node:fs/promises";
+import { chmod, mkdir, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { BrowserAutomationError } from "../oracle/errors.js";
@@ -9,6 +9,13 @@ export function resolveManualLoginWaitMs(timeoutMs: number | undefined, keepBrow
     return configured;
   }
   return Math.min(configured, 30_000);
+}
+
+export async function ensureDedicatedBrowserProfileDirectory(profileDir: string): Promise<void> {
+  await mkdir(profileDir, { recursive: true, mode: 0o700 });
+  if (process.platform !== "win32") {
+    await chmod(profileDir, 0o700);
+  }
 }
 
 export async function assertManualLoginProfileReadyForRun({
@@ -26,9 +33,9 @@ export async function assertManualLoginProfileReadyForRun({
   }
   const setupCommand = formatManualLoginSetupCommand(userDataDir);
   throw new BrowserAutomationError(
-    "ChatGPT browser manual-login profile is not initialized. " +
-      `Browser mode is using Oracle's private Chrome profile at ${userDataDir}, separate from your normal Chrome profile. ` +
-      `Run first-time setup, sign in there, then retry: ${setupCommand}. ` +
+    "Oracle's dedicated ChatGPT Chrome profile is not initialized. " +
+      `Browser mode is using Oracle's private Chrome for Testing profile at ${userDataDir}, separate from your normal Chrome app and profile. ` +
+      `Run \`oracle browser install\`, then first-time setup, sign in there, close the whole browser, and retry: ${setupCommand}. ` +
       "If you want to reuse an already signed-in Chrome instead, use --browser-attach-running.",
     {
       stage: "browser-login-setup",
@@ -53,11 +60,7 @@ export async function isManualLoginProfileInitialized(profileDir: string): Promi
 }
 
 export function formatManualLoginSetupCommand(profileDir: string): string {
-  return [
-    "oracle --engine browser --browser-manual-login --browser-keep-browser",
-    `--browser-manual-login-profile-dir ${JSON.stringify(profileDir)}`,
-    '-p "HI"',
-  ].join(" ");
+  return `oracle browser setup --profile-dir ${JSON.stringify(profileDir)}`;
 }
 
 export function defaultManualLoginProfileDir() {

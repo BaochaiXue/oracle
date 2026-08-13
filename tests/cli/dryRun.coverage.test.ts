@@ -123,10 +123,10 @@ describe("runDryRunSummary", () => {
 
     const joined = log.mock.calls.flat().join("\n");
     expect(joined).toContain("Inline file content");
-    expect(joined).toContain("cookie-sync");
+    expect(joined).toContain("personal-cookie sync disabled");
   });
 
-  test("browser dry run shows default cookie copy when none provided and no files attached", async () => {
+  test("browser dry run shows the default dedicated profile when none is provided", async () => {
     const log = vi.fn();
     const assembleBrowserPromptImpl = vi.fn().mockResolvedValue({
       markdown: "[SYSTEM]\n[USER]",
@@ -154,7 +154,8 @@ describe("runDryRunSummary", () => {
     );
 
     const joined = log.mock.calls.flat().join("\n");
-    expect(joined).toContain("Cookies: copy from Chrome");
+    expect(joined).toContain("Authentication: dedicated persistent Chrome profile");
+    expect(joined).toContain(".oracle/browser-profile");
     expect(joined).toContain("No files attached");
   });
 

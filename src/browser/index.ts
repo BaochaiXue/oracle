@@ -104,11 +104,16 @@ import {
 import {
   assertManualLoginProfileReadyForRun,
   defaultManualLoginProfileDir,
+  ensureDedicatedBrowserProfileDirectory,
   formatManualLoginSetupCommand,
   isManualLoginProfileInitialized,
   resolveManualLoginWaitMs,
 } from "./manualLoginProfile.js";
 import { describeBrowserControlPlan, formatBrowserControlPlan } from "./controlPlan.js";
+import {
+  assertDedicatedBrowserProcessIdentity,
+  resolveDedicatedBrowserExecutable,
+} from "./dedicatedBrowserBinary.js";
 import {
   createConversationUrlMonitor,
   type ConversationUrlMonitor,
@@ -117,6 +122,7 @@ import {
   extractStableConversationIdFromUrl as extractConversationIdFromUrl,
   isStableConversationUrl as isConversationUrl,
 } from "./conversationUrl.js";
+import { assertTrustedProResponse, requiresProResponseAdmission } from "./proResponseAdmission.js";
 
 export type { BrowserAutomationConfig, BrowserRunOptions, BrowserRunResult } from "./types.js";
 export { CHATGPT_URL, DEFAULT_MODEL_STRATEGY, DEFAULT_MODEL_TARGET } from "./constants.js";
@@ -226,7 +232,11 @@ function classifyChatGptUiWarningText(text: string): ChatGptUiWarningType | null
     /\btemporarily limited access\b/.test(normalized) ||
     /\bplease wait a few minutes\b/.test(normalized) ||
     /\brate limit(?:ed)?\b/.test(normalized) ||
-    /\bslow down\b/.test(normalized)
+    /\bslow down\b/.test(normalized) ||
+    /请求(?:过于|太)?频繁/u.test(normalized) ||
+    /操作(?:过于|太)?频繁/u.test(normalized) ||
+    /访问(?:过于|太)?频繁/u.test(normalized) ||
+    /请求(?:次数)?过多/u.test(normalized)
   ) {
     return "rate_limit";
   }
@@ -292,7 +302,7 @@ async function collectChatGptUiWarnings(
       awaitPromise: true,
       returnByValue: true,
       expression: `(() => {
-        const warningPattern = /too many requests|sending too many requests|too quickly|temporarily limited access|please wait a few minutes|rate limit|rate limited|slow down|try again later|temporarily unavailable|something went wrong|failed to generate|verify you are human|unusual activity|cloudflare|challenge|login required|sign in/i;
+        const warningPattern = /too many requests|sending too many requests|too quickly|temporarily limited access|please wait a few minutes|rate limit|rate limited|slow down|请求(?:过于|太)?频繁|操作(?:过于|太)?频繁|访问(?:过于|太)?频繁|请求(?:次数)?过多|try again later|temporarily unavailable|something went wrong|failed to generate|verify you are human|unusual activity|cloudflare|challenge|login required|sign in/i;
         const selectors = [
           '[role="alert"]',
           '[role="status"]',
@@ -407,19 +417,32 @@ async function createChatGptUiWarningError(params: {
   waitTarget: string;
   diagnostics?: unknown;
   cause?: unknown;
+  submissionCommitted?: boolean;
+  dispatchAttempted?: boolean;
 }): Promise<BrowserAutomationError | null> {
   const [uiWarning] = await collectChatGptUiWarnings(params.Runtime);
   if (!uiWarning) return null;
 
   params.logger(`[browser] ChatGPT UI warning detected (${uiWarning.type}): ${uiWarning.message}`);
+  const submissionBlocked = params.submissionCommitted === false;
   return new BrowserAutomationError(
-    `ChatGPT displayed a ${formatChatGptUiWarningType(uiWarning.type)} warning while waiting for ${params.waitTarget}: ${uiWarning.message}`,
+    submissionBlocked
+      ? `ChatGPT blocked the request before submission with a ${formatChatGptUiWarningType(uiWarning.type)} warning. No prompt was committed; retrying after the page gate clears is safe. Page warning: ${uiWarning.message}`
+      : `ChatGPT displayed a ${formatChatGptUiWarningType(uiWarning.type)} warning while waiting for ${params.waitTarget}: ${uiWarning.message}`,
     {
       stage: params.stage,
-      code: "chatgpt-ui-warning",
+      code: submissionBlocked ? "chatgpt-submission-gate" : "chatgpt-ui-warning",
       uiWarning,
       runtime: params.runtime,
       diagnostics: params.diagnostics,
+      ...(submissionBlocked
+        ? {
+            submissionCommitted: false,
+            dispatchAttempted: params.dispatchAttempted === true,
+            retrySafe: true,
+            retryGuidance: "wait-for-page-gate-to-clear",
+          }
+        : {}),
     },
     params.cause,
   );
@@ -432,6 +455,8 @@ async function throwChatGptUiWarningIfPresent(params: {
   stage: string;
   waitTarget: string;
   diagnostics?: unknown;
+  submissionCommitted?: boolean;
+  dispatchAttempted?: boolean;
 }): Promise<void> {
   const error = await createChatGptUiWarningError(params);
   if (error) throw error;
@@ -949,6 +974,9 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
   let lastTargetId: string | undefined;
   let lastUrl: string | undefined;
   let promptSubmitted = false;
+  const proAdmissionRequired = requiresProResponseAdmission(config);
+  let proDispatchAt: string | undefined;
+  let proResponseElapsedMs: number | undefined;
   let modelSelectionEvidence: BrowserModelSelectionEvidence | undefined;
   let tabLease: BrowserTabLease | null = null;
   let conversationUrlMonitor: ConversationUrlMonitor | null = null;
@@ -958,6 +986,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     }
     const conversationId = lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined;
     const hint = {
+      browserTransport: "cdp" as const,
       chromePid: chrome.pid,
       chromePort: chrome.port,
       chromeHost,
@@ -967,6 +996,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       promptSubmitted,
       userDataDir,
       controllerPid: process.pid,
+      proDispatchAt,
+      proResponseElapsedMs,
     };
     try {
       await runtimeHintCb?.(hint, modelSelectionEvidence);
@@ -981,13 +1012,19 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       logger(`Failed to persist runtime hint: ${message}`);
     }
   };
-  const markPromptSubmitted = async (): Promise<void> => {
-    if (promptSubmitted) {
-      return;
+  const markPromptDispatched = async (): Promise<void> => {
+    if (proAdmissionRequired && !proDispatchAt) {
+      proDispatchAt = new Date().toISOString();
     }
+    await emitRuntimeHint();
+  };
+  const markPromptCommitted = async (): Promise<void> => {
+    const firstPrompt = !promptSubmitted;
     promptSubmitted = true;
     await emitRuntimeHint();
-    void conversationUrlMonitor?.schedule("post-submit", config.timeoutMs ?? 120_000);
+    if (firstPrompt) {
+      void conversationUrlMonitor?.schedule("post-submit", config.timeoutMs ?? 120_000);
+    }
   };
   if (config.debug || process.env.CHATGPT_DEVTOOLS_TRACE === "1") {
     logger(
@@ -1036,7 +1073,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
   const manualLogin = Boolean(config.manualLogin);
   if (manualLogin && usingCopiedProfile) {
     throw new BrowserAutomationError(
-      "--copy-profile cannot be combined with --browser-manual-login: choose either a throwaway copied profile or the persistent manual-login profile.",
+      "--copy-profile cannot be combined with --browser-manual-login: choose either a throwaway copied profile or the persistent dedicated profile.",
       { stage: "profile-config" },
     );
   }
@@ -1052,7 +1089,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
   const effectiveKeepBrowser = Boolean(config.keepBrowser);
   if (manualLogin) {
     // Learned: manual login reuses a persistent profile so cookies/SSO survive.
-    await mkdir(userDataDir, { recursive: true });
+    await ensureDedicatedBrowserProfileDirectory(userDataDir);
     logger(`Manual login mode enabled; reusing persistent profile at ${userDataDir}`);
     await assertManualLoginProfileReadyForRun({
       userDataDir,
@@ -1109,6 +1146,29 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
   }
   const { chrome, reusedChrome } = acquiredChrome;
   const chromeHost = (chrome as unknown as { host?: string }).host ?? "127.0.0.1";
+  const admitProResponse = (answer: string, capturedAt = new Date()): void => {
+    if (!proAdmissionRequired) return;
+    const admittedRuntime = assertTrustedProResponse(
+      answer,
+      {
+        browserTransport: "cdp",
+        chromePid: chrome.pid,
+        chromePort: chrome.port,
+        chromeHost,
+        userDataDir,
+        chromeTargetId: lastTargetId,
+        tabUrl: lastUrl,
+        conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+        promptSubmitted,
+        controllerPid: process.pid,
+        proDispatchAt,
+        proResponseElapsedMs,
+      },
+      capturedAt,
+      { requireTimestamp: true },
+    );
+    proResponseElapsedMs = admittedRuntime.proResponseElapsedMs;
+  };
   if (tabLease) {
     await tabLease.update({
       chromeHost,
@@ -1213,6 +1273,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
               recoverableDisconnect: recoverable,
               disconnectCause: recoverable ? "cdp-client-disconnect" : "chrome-closed",
               runtime: {
+                browserTransport: "cdp",
                 chromePid: chrome.pid,
                 chromePort: chrome.port,
                 chromeHost,
@@ -1225,6 +1286,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
                     : undefined,
                 promptSubmitted,
                 controllerPid: process.pid,
+                proDispatchAt,
+                proResponseElapsedMs,
               },
             }),
           );
@@ -1532,6 +1595,10 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       await handle.release().catch(() => undefined);
     };
     const submitOnce = async (prompt: string, submissionAttachments: BrowserAttachment[]) => {
+      if (proAdmissionRequired) {
+        proDispatchAt = undefined;
+        proResponseElapsedMs = undefined;
+      }
       const baselineSnapshot = await readAssistantSnapshot(Runtime).catch(() => null);
       const baselineAssistantText =
         typeof baselineSnapshot?.text === "string" ? baselineSnapshot.text.trim() : "";
@@ -1605,12 +1672,58 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         attachmentTimeoutMs: config.attachmentTimeoutMs ?? undefined,
         baselineTurns: baselineTurns ?? undefined,
         attachmentNames: attachmentExpectations,
-        onPromptSubmitted: markPromptSubmitted,
+        onPromptDispatched: markPromptDispatched,
+        onPromptCommitted: markPromptCommitted,
+        onPromptCommitPending: () =>
+          throwChatGptUiWarningIfPresent({
+            Runtime,
+            logger,
+            runtime: {
+              browserTransport: "cdp" as const,
+              chromePid: chrome.pid,
+              chromePort: chrome.port,
+              chromeHost,
+              userDataDir,
+              chromeTargetId: lastTargetId,
+              tabUrl: lastUrl,
+              conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+              promptSubmitted,
+              controllerPid: process.pid,
+              proDispatchAt,
+              proResponseElapsedMs,
+            },
+            stage: "submit-prompt",
+            waitTarget: "prompt commit",
+            submissionCommitted: false,
+            dispatchAttempted: true,
+          }),
       };
       const deepResearchTargetBaseline =
         deepResearch && client
           ? await captureDeepResearchTargetBaseline(client, logger)
           : undefined;
+      await throwChatGptUiWarningIfPresent({
+        Runtime,
+        logger,
+        runtime: {
+          browserTransport: "cdp" as const,
+          chromePid: chrome.pid,
+          chromePort: chrome.port,
+          chromeHost,
+          userDataDir,
+          chromeTargetId: lastTargetId,
+          tabUrl: lastUrl,
+          conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+          promptSubmitted,
+          controllerPid: process.pid,
+          proDispatchAt,
+          proResponseElapsedMs,
+        },
+        stage: "submit-prompt",
+        waitTarget: "prompt dispatch",
+        submissionCommitted: false,
+        dispatchAttempted: false,
+      });
       await runProviderSubmissionFlow(chatgptDomProvider, {
         prompt,
         evaluate: async () => undefined,
@@ -1618,7 +1731,6 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         log: logger,
         state: providerState,
       });
-      await markPromptSubmitted();
       const providerBaselineTurns = providerState.baselineTurns;
       if (typeof providerBaselineTurns === "number" && Number.isFinite(providerBaselineTurns)) {
         baselineTurns = providerBaselineTurns;
@@ -1705,6 +1817,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           },
         ),
       );
+      admitProResponse(researchResult.text);
       await updateConversationHint("post-deep-research", 15_000).catch(() => false);
       runStatus = "complete";
       const durationMs = Date.now() - startedAt;
@@ -1750,6 +1863,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         tookMs: durationMs,
         answerTokens: tokens,
         answerChars: researchResult.text.length,
+        browserTransport: "cdp",
         chromePid: chrome.pid,
         chromePort: chrome.port,
         chromeHost,
@@ -1759,6 +1873,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
         promptSubmitted,
         controllerPid: process.pid,
+        proDispatchAt,
+        proResponseElapsedMs,
       };
     }
     // Helper to normalize text for echo detection (collapse whitespace, lowercase)
@@ -1851,6 +1967,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
               validationReason: sessionValid.reason,
             },
             runtime: {
+              browserTransport: "cdp",
               chromePid: chrome.pid,
               chromePort: chrome.port,
               chromeHost,
@@ -1860,6 +1977,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
               conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
               promptSubmitted,
               controllerPid: process.pid,
+              proDispatchAt,
+              proResponseElapsedMs,
             },
           },
         );
@@ -1940,6 +2059,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
               },
             ).catch(() => undefined);
             const runtime = {
+              browserTransport: "cdp" as const,
               chromePid: chrome.pid,
               chromePort: chrome.port,
               chromeHost,
@@ -1949,6 +2069,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
               conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
               promptSubmitted,
               controllerPid: process.pid,
+              proDispatchAt,
+              proResponseElapsedMs,
             };
             throw await createAssistantTimeoutError({
               Runtime,
@@ -2129,6 +2251,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
 
     const turns: BrowserConversationTurn[] = [];
     const initialTurn = await captureAssistantTurn(promptText, "Initial response");
+    admitProResponse(initialTurn.answerText);
     turns.push(initialTurn);
     answerText = initialTurn.answerText;
     answerMarkdown = initialTurn.answerMarkdown;
@@ -2159,6 +2282,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         await releaseProfileLockIfHeld();
       }
       const turn = await captureAssistantTurn(followUpPrompt, `Follow-up ${index + 1}`);
+      admitProResponse(turn.answerText);
       turns.push({ ...turn, prompt: followUpPrompt });
       answerText = turn.answerText;
       answerMarkdown = turn.answerMarkdown;
@@ -2195,6 +2319,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           stage: "image-artifact-wait",
           waitTarget: "generated image artifacts",
           runtime: {
+            browserTransport: "cdp",
             chromePid: chrome.pid,
             chromePort: chrome.port,
             chromeHost,
@@ -2204,6 +2329,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
             conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
             promptSubmitted,
             controllerPid: process.pid,
+            proDispatchAt,
+            proResponseElapsedMs,
           },
         }),
     });
@@ -2266,6 +2393,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       tookMs: durationMs,
       answerTokens,
       answerChars,
+      browserTransport: "cdp",
       chromePid: chrome.pid,
       chromePort: chrome.port,
       chromeHost,
@@ -2275,6 +2403,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
       promptSubmitted,
       controllerPid: process.pid,
+      proDispatchAt,
+      proResponseElapsedMs,
     };
   } catch (error) {
     const normalizedError = error instanceof Error ? error : new Error(String(error));
@@ -2294,6 +2424,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       }
       preserveBrowserOnError = true;
       const runtime = {
+        browserTransport: "cdp" as const,
         chromePid: chrome.pid,
         chromePort: chrome.port,
         chromeHost,
@@ -2302,6 +2433,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         tabUrl: lastUrl,
         promptSubmitted,
         controllerPid: process.pid,
+        proDispatchAt,
+        proResponseElapsedMs,
       };
       const reuseProfileHint =
         `oracle --engine browser --browser-manual-login ` +
@@ -2366,6 +2499,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         recoverableDisconnect: recoverable,
         disconnectCause: recoverable ? "cdp-client-disconnect" : "chrome-closed",
         runtime: {
+          browserTransport: "cdp",
           chromePid: chrome.pid,
           chromePort: chrome.port,
           chromeHost,
@@ -2378,6 +2512,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
               : undefined,
           promptSubmitted,
           controllerPid: process.pid,
+          proDispatchAt,
+          proResponseElapsedMs,
         },
       },
       normalizedError,
@@ -2519,7 +2655,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           },
         );
         if (shouldCleanup) {
-          // Preserve the persistent manual-login profile, but clear stale reattach hints.
+          // Preserve the persistent dedicated profile, but clear stale reattach hints.
           await cleanupStaleProfileState(userDataDir, logger, { lockRemovalMode: "never" }).catch(
             () => undefined,
           );
@@ -2642,7 +2778,7 @@ async function waitForLogin({
   const setupCommand = formatManualLoginSetupCommand(profileDir ?? defaultManualLoginProfileDir());
   throw new Error(
     "Manual login mode timed out waiting for ChatGPT session. " +
-      `Browser mode is using Oracle's private Chrome profile at ${profileDir ?? "(default profile)"}, not your normal Chrome profile. ` +
+      `Browser mode is using Oracle's private Chrome for Testing profile at ${profileDir ?? "(default profile)"}, not your normal Chrome app or profile. ` +
       `Run first-time setup, sign in there, then retry: ${setupCommand}`,
   );
 }
@@ -2738,10 +2874,17 @@ export async function acquireManualLoginChromeForRun(
   deps: {
     maybeReuse?: typeof maybeReuseRunningChrome;
     launch?: typeof launchChrome;
+    resolveDedicatedExecutable?: typeof resolveDedicatedBrowserExecutable;
+    assertReusedProcessIdentity?: typeof assertDedicatedBrowserProcessIdentity;
   } = {},
 ): Promise<{ chrome: BrowserChrome; reusedChrome: LaunchedChrome | null }> {
   const maybeReuse = deps.maybeReuse ?? maybeReuseRunningChrome;
   const launch = deps.launch ?? launchChrome;
+  const resolveDedicatedExecutable =
+    deps.resolveDedicatedExecutable ?? resolveDedicatedBrowserExecutable;
+  const assertReusedProcessIdentity =
+    deps.assertReusedProcessIdentity ?? assertDedicatedBrowserProcessIdentity;
+  const dedicatedExecutable = await resolveDedicatedExecutable(config.chromePath);
   const lockTimeoutMs = Math.max(0, config.profileLockTimeoutMs ?? 0);
   let launchLock: ProfileRunLock | null = null;
 
@@ -2757,11 +2900,15 @@ export async function acquireManualLoginChromeForRun(
     const reusedChrome = await maybeReuse(userDataDir, logger, {
       waitForPortMs: config.reuseChromeWaitMs,
     });
+    if (reusedChrome && dedicatedExecutable) {
+      await assertReusedProcessIdentity(reusedChrome.pid, dedicatedExecutable);
+    }
     const chrome =
       reusedChrome ??
       (await launch(
         {
           ...config,
+          chromePath: dedicatedExecutable ?? config.chromePath,
           remoteChrome: config.remoteChrome,
         },
         userDataDir,
@@ -2801,6 +2948,13 @@ async function maybeReuseRunningChrome(
     }
   }
   let pid = await readChromePid(userDataDir);
+  if (port && !pid) {
+    const discovered = await findRunningChromeDebugTargetForProfile(userDataDir);
+    if (discovered?.port === port) {
+      pid = discovered.pid;
+      await writeChromePid(userDataDir, pid);
+    }
+  }
   if (!port) {
     const discovered = await findRunningChromeDebugTargetForProfile(userDataDir);
     if (!discovered) {
@@ -2883,6 +3037,9 @@ async function runRemoteBrowserMode(
   let tabLease: BrowserTabLease | null = null;
   let lastUrl: string | undefined;
   let promptSubmitted = false;
+  const proAdmissionRequired = requiresProResponseAdmission(config);
+  let proDispatchAt: string | undefined;
+  let proResponseElapsedMs: number | undefined;
   let modelSelectionEvidence: BrowserModelSelectionEvidence | undefined;
   let attachedExistingTab = false;
   let ownsTarget = true;
@@ -2893,6 +3050,7 @@ async function runRemoteBrowserMode(
     try {
       await runtimeHintCb(
         {
+          browserTransport: "cdp" as const,
           chromePort: port,
           chromeHost: host,
           chromeBrowserWSEndpoint: browserWSEndpoint,
@@ -2902,6 +3060,8 @@ async function runRemoteBrowserMode(
           conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
           promptSubmitted,
           controllerPid: process.pid,
+          proDispatchAt,
+          proResponseElapsedMs,
         },
         modelSelectionEvidence,
       );
@@ -2916,13 +3076,19 @@ async function runRemoteBrowserMode(
       logger(`Failed to persist runtime hint: ${message}`);
     }
   };
-  const markPromptSubmitted = async (): Promise<void> => {
-    if (promptSubmitted) {
-      return;
+  const markPromptDispatched = async (): Promise<void> => {
+    if (proAdmissionRequired && !proDispatchAt) {
+      proDispatchAt = new Date().toISOString();
     }
+    await emitRuntimeHint();
+  };
+  const markPromptCommitted = async (): Promise<void> => {
+    const firstPrompt = !promptSubmitted;
     promptSubmitted = true;
     await emitRuntimeHint();
-    void conversationUrlMonitor?.schedule("post-submit", config.timeoutMs ?? 120_000);
+    if (firstPrompt) {
+      void conversationUrlMonitor?.schedule("post-submit", config.timeoutMs ?? 120_000);
+    }
   };
   const startedAt = Date.now();
   let answerText = "";
@@ -2935,13 +3101,36 @@ async function runRemoteBrowserMode(
   let connection: Awaited<ReturnType<typeof connectToRemoteChrome>> | null = null;
   const browserWSEndpoint = config.remoteChromeBrowserWSEndpoint ?? undefined;
   const chromeProfileRoot = config.remoteChromeProfileRoot ?? undefined;
+  const admitProResponse = (answer: string, capturedAt = new Date()): void => {
+    if (!proAdmissionRequired) return;
+    const admittedRuntime = assertTrustedProResponse(
+      answer,
+      {
+        browserTransport: "cdp",
+        chromePort: port,
+        chromeHost: host,
+        chromeBrowserWSEndpoint: browserWSEndpoint,
+        chromeProfileRoot,
+        chromeTargetId: remoteTargetId ?? undefined,
+        tabUrl: lastUrl,
+        conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+        promptSubmitted,
+        controllerPid: process.pid,
+        proDispatchAt,
+        proResponseElapsedMs,
+      },
+      capturedAt,
+      { requireTimestamp: true },
+    );
+    proResponseElapsedMs = admittedRuntime.proResponseElapsedMs;
+  };
 
   try {
     const remoteLeaseProfileDir = config.browserTabRef
       ? null
       : resolveRemoteTabLeaseProfileDir(config);
     if (remoteLeaseProfileDir) {
-      await mkdir(remoteLeaseProfileDir, { recursive: true });
+      await ensureDedicatedBrowserProfileDirectory(remoteLeaseProfileDir);
       tabLease = await acquireBrowserTabLease(remoteLeaseProfileDir, {
         maxConcurrentTabs: config.maxConcurrentTabs,
         timeoutMs: config.timeoutMs,
@@ -3122,6 +3311,10 @@ async function runRemoteBrowserMode(
       );
     }
     const submitOnce = async (prompt: string, submissionAttachments: BrowserAttachment[]) => {
+      if (proAdmissionRequired) {
+        proDispatchAt = undefined;
+        proResponseElapsedMs = undefined;
+      }
       const baselineSnapshot = await readAssistantSnapshot(Runtime).catch(() => null);
       const baselineAssistantText =
         typeof baselineSnapshot?.text === "string" ? baselineSnapshot.text.trim() : "";
@@ -3179,12 +3372,58 @@ async function runRemoteBrowserMode(
         attachmentTimeoutMs: config.attachmentTimeoutMs ?? undefined,
         baselineTurns: baselineTurns ?? undefined,
         attachmentNames: attachmentExpectations,
-        onPromptSubmitted: markPromptSubmitted,
+        onPromptDispatched: markPromptDispatched,
+        onPromptCommitted: markPromptCommitted,
+        onPromptCommitPending: () =>
+          throwChatGptUiWarningIfPresent({
+            Runtime,
+            logger,
+            runtime: {
+              browserTransport: "cdp" as const,
+              chromePort: port,
+              chromeHost: host,
+              chromeBrowserWSEndpoint: browserWSEndpoint,
+              chromeProfileRoot,
+              chromeTargetId: remoteTargetId ?? undefined,
+              tabUrl: lastUrl,
+              conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+              promptSubmitted,
+              controllerPid: process.pid,
+              proDispatchAt,
+              proResponseElapsedMs,
+            },
+            stage: "submit-prompt",
+            waitTarget: "prompt commit",
+            submissionCommitted: false,
+            dispatchAttempted: true,
+          }),
       };
       const deepResearchTargetBaseline =
         deepResearch && client
           ? await captureDeepResearchTargetBaseline(client, logger)
           : undefined;
+      await throwChatGptUiWarningIfPresent({
+        Runtime,
+        logger,
+        runtime: {
+          browserTransport: "cdp" as const,
+          chromePort: port,
+          chromeHost: host,
+          chromeBrowserWSEndpoint: browserWSEndpoint,
+          chromeProfileRoot,
+          chromeTargetId: remoteTargetId ?? undefined,
+          tabUrl: lastUrl,
+          conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+          promptSubmitted,
+          controllerPid: process.pid,
+          proDispatchAt,
+          proResponseElapsedMs,
+        },
+        stage: "submit-prompt",
+        waitTarget: "prompt dispatch",
+        submissionCommitted: false,
+        dispatchAttempted: false,
+      });
       await runProviderSubmissionFlow(chatgptDomProvider, {
         prompt,
         evaluate: async () => undefined,
@@ -3192,7 +3431,6 @@ async function runRemoteBrowserMode(
         log: logger,
         state: providerState,
       });
-      await markPromptSubmitted();
       const providerBaselineTurns = providerState.baselineTurns;
       if (typeof providerBaselineTurns === "number" && Number.isFinite(providerBaselineTurns)) {
         baselineTurns = providerBaselineTurns;
@@ -3245,6 +3483,7 @@ async function runRemoteBrowserMode(
           targetBaselineCaptured: deepResearchTargetBaselineCaptured,
         },
       );
+      admitProResponse(researchResult.text);
       await activeConversationUrlMonitor.update("post-deep-research", 15_000).catch(() => false);
       const durationMs = Date.now() - startedAt;
       const tokens = estimateTokenCount(researchResult.text);
@@ -3290,6 +3529,7 @@ async function runRemoteBrowserMode(
         tookMs: durationMs,
         answerTokens: tokens,
         answerChars: researchResult.text.length,
+        browserTransport: "cdp",
         chromePort: port,
         chromeHost: host,
         chromeTargetId: remoteTargetId ?? undefined,
@@ -3297,6 +3537,8 @@ async function runRemoteBrowserMode(
         conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
         promptSubmitted,
         controllerPid: process.pid,
+        proDispatchAt,
+        proResponseElapsedMs,
       };
     }
     // Helper to normalize text for echo detection (collapse whitespace, lowercase)
@@ -3386,6 +3628,7 @@ async function runRemoteBrowserMode(
               validationReason: sessionValid.reason,
             },
             runtime: {
+              browserTransport: "cdp",
               chromeHost: host,
               chromePort: port,
               chromeBrowserWSEndpoint: browserWSEndpoint,
@@ -3395,6 +3638,8 @@ async function runRemoteBrowserMode(
               conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
               promptSubmitted,
               controllerPid: process.pid,
+              proDispatchAt,
+              proResponseElapsedMs,
             },
           },
         );
@@ -3473,6 +3718,7 @@ async function runRemoteBrowserMode(
               },
             ).catch(() => undefined);
             const runtime = {
+              browserTransport: "cdp" as const,
               chromePort: port,
               chromeHost: host,
               chromeBrowserWSEndpoint: browserWSEndpoint,
@@ -3482,6 +3728,8 @@ async function runRemoteBrowserMode(
               conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
               promptSubmitted,
               controllerPid: process.pid,
+              proDispatchAt,
+              proResponseElapsedMs,
             };
             throw await createAssistantTimeoutError({
               Runtime,
@@ -3627,6 +3875,7 @@ async function runRemoteBrowserMode(
     const followUpPrompts = normalizeBrowserFollowUpPrompts(options.followUpPrompts);
     const turns: BrowserConversationTurn[] = [];
     const initialTurn = await captureAssistantTurn(promptText, "Initial response");
+    admitProResponse(initialTurn.answerText);
     turns.push(initialTurn);
     answerText = initialTurn.answerText;
     answerMarkdown = initialTurn.answerMarkdown;
@@ -3651,6 +3900,7 @@ async function runRemoteBrowserMode(
       baselineTurns = submission.baselineTurns;
       baselineAssistantText = submission.baselineAssistantText;
       const turn = await captureAssistantTurn(followUpPrompt, `Follow-up ${index + 1}`);
+      admitProResponse(turn.answerText);
       turns.push({ ...turn, prompt: followUpPrompt });
       answerText = turn.answerText;
       answerMarkdown = turn.answerMarkdown;
@@ -3684,6 +3934,7 @@ async function runRemoteBrowserMode(
           stage: "image-artifact-wait",
           waitTarget: "generated image artifacts",
           runtime: {
+            browserTransport: "cdp",
             chromePort: port,
             chromeHost: host,
             chromeBrowserWSEndpoint: browserWSEndpoint,
@@ -3693,6 +3944,8 @@ async function runRemoteBrowserMode(
             conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
             promptSubmitted,
             controllerPid: process.pid,
+            proDispatchAt,
+            proResponseElapsedMs,
           },
         }),
     });
@@ -3760,6 +4013,8 @@ async function runRemoteBrowserMode(
       tabUrl: lastUrl,
       conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
       promptSubmitted,
+      proDispatchAt,
+      proResponseElapsedMs,
       artifacts: savedArtifacts,
       generatedImages: imageArtifacts.generatedImages,
       savedImages: imageArtifacts.savedImages,
@@ -3794,6 +4049,7 @@ async function runRemoteBrowserMode(
       recoverableDisconnect: recoverable,
       disconnectCause: recoverable ? "cdp-client-disconnect" : "chrome-closed",
       runtime: {
+        browserTransport: "cdp",
         chromeHost: host,
         chromePort: port,
         chromeBrowserWSEndpoint: browserWSEndpoint,
@@ -3806,6 +4062,8 @@ async function runRemoteBrowserMode(
             : undefined,
         promptSubmitted,
         controllerPid: process.pid,
+        proDispatchAt,
+        proResponseElapsedMs,
       },
     });
   } finally {
@@ -3876,6 +4134,7 @@ export const __test__ = {
   classifyChatGptUiWarningText,
   collectChatGptUiWarnings,
   createAssistantTimeoutError,
+  createChatGptUiWarningError,
   detachKeptChromeProcess,
   formatManualLoginSetupCommand,
   isAssistantResponseTimeoutError,
@@ -3918,6 +4177,8 @@ export async function acquireManualLoginChromeForRunForTest(
   deps: {
     maybeReuse?: typeof maybeReuseRunningChrome;
     launch?: typeof launchChrome;
+    resolveDedicatedExecutable?: typeof resolveDedicatedBrowserExecutable;
+    assertReusedProcessIdentity?: typeof assertDedicatedBrowserProcessIdentity;
   },
 ): Promise<{ chrome: BrowserChrome; reusedChrome: LaunchedChrome | null }> {
   return acquireManualLoginChromeForRun(userDataDir, config, logger, sessionId, deps);
