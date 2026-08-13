@@ -7,7 +7,8 @@ and run the live API suite before shipping major transport changes.
 
 ## Prerequisites
 
-- macOS with Chrome installed (default profile signed in to ChatGPT Pro).
+- macOS with `oracle browser install` completed and Oracle's Chrome for Testing
+  profile signed in to ChatGPT Pro.
 - Node 24+ and `pnpm install` already completed.
 - Headful display access (no `--browser-headless`).
 - When debugging, add `--browser-keep-browser` so Chrome stays open after Oracle exits, then connect with `pnpm exec tsx scripts/browser-tools.ts ...` (screenshot, eval, DOM picker, etc.).
@@ -19,6 +20,22 @@ and run the live API suite before shipping major transport changes.
 ### Quick browser port smoke
 
 - `pnpm test:browser` — launches headful Chrome and checks the DevTools endpoint is reachable. Set `ORACLE_BROWSER_PORT` (or `ORACLE_BROWSER_DEBUG_PORT`) to reuse a fixed port when you’ve already opened a firewall rule.
+
+### Dedicated-profile cold-start smoke
+
+Run this before any live prompt test and whenever launcher/profile/CDP ownership
+changes:
+
+```bash
+oracle browser install
+oracle browser setup
+oracle browser smoke --json
+```
+
+Expect `coldStarts:2`, `transport:"direct-cdp"`, authenticated/ready receipts
+for both cycles, and `promptSubmitted:false`. The profile and requested port
+must be idle before the test. No debugging consent click and no ChatGPT
+conversation should be created.
 
 ### Gemini browser mode (Gemini web / cookies)
 
@@ -155,6 +172,10 @@ Document results (pass/fail, session IDs) in PR descriptions so reviewers can au
 
 Run these four smoke tests whenever we touch browser automation:
 
+0. **Isolated transport receipt**
+   `oracle browser smoke --json`
+   Confirm two cold starts against the same dedicated profile and no submitted prompt before running any answer-producing test.
+
 1. **GPT-5.5 simple prompt**
    `pnpm run oracle -- --engine browser --model gpt-5.5 --prompt "Give me two short markdown bullet points about tables"`
    Expect two markdown bullets, no files/search referenced. Note the session ID (e.g., `give-me-two-short-markdown`).
@@ -167,9 +188,9 @@ Run these four smoke tests whenever we touch browser automation:
 `pnpm run oracle -- --engine browser --model gpt-5.5-instant --prompt "Give me two short markdown bullet points about tables"`
 Expect a near-instant response (no Thinking spinner) and confirm the composer pill shows the "Instant" row, not "Thinking 5.5" or "Pro". Run after any change to the 5.5 picker tokens.
 
-2c. **GPT-5.5 Pro effort through the unified picker**
-`pnpm run oracle -- --engine browser --browser-manual-login --model gpt-5.5-pro --write-output response.txt --prompt "Say Hi!"`
-Confirm the logs report a verified GPT-5.5 model followed by `Thinking time: Pro`, and `response.txt` contains the captured answer. Exercise both a tab starting on another model and a retained tab where GPT-5.5 is already selected. Never click ChatGPT's "Answer now" shortcut while the Pro response is thinking.
+2c. **GPT-5.6 Pro effort through the unified picker**
+`pnpm run oracle -- --engine browser --model gpt-5-pro --write-output response.txt --prompt "Say Hi!"`
+Confirm the logs report model `GPT-5.6 Sol` followed by `Thinking time: Pro`. An answer first captured under 60 seconds must terminate with `pro-fast-response-untrusted` and must not populate `response.txt` as trusted output; an admitted run may populate it. Exercise both a tab starting on another model and a retained tab where GPT-5.6 Sol is already selected. Never click ChatGPT's "Answer now" shortcut while the Pro response is thinking.
 
 3. **GPT-5.5 + attachment**
    Prepare `/tmp/browser-md.txt` with a short note, then run
@@ -186,14 +207,14 @@ Confirm the logs report a verified GPT-5.5 model followed by `Thinking time: Pro
    Confirm the logs show Deep Research activation/progress and the final report includes citations or source links. Do not use connected apps or private data.
 
 6. **Multi-turn browser consult smoke**
-   `pnpm run oracle -- --engine browser --browser-manual-login --model gpt-5.5-pro --browser-thinking-time extended --prompt "Give one architectural recommendation for a tiny CLI cache." --browser-follow-up "Challenge your previous recommendation with one concrete failure mode." --browser-follow-up "Now return the final recommendation in one sentence, starting with CHECK_MULTI_TURN_OK."`
+   `pnpm run oracle -- --engine browser --model gpt-5-pro --browser-thinking-time pro --prompt "Give one architectural recommendation for a tiny CLI cache." --browser-follow-up "Challenge your previous recommendation with one concrete failure mode." --browser-follow-up "Now return the final recommendation in one sentence, starting with CHECK_MULTI_TURN_OK."`
    Confirm the output contains all captured turns, includes `CHECK_MULTI_TURN_OK`, and the saved `transcript.md` records both follow-up prompts.
 
 7. **Multi-turn value check**
    Run the same initial prompt once without follow-ups and once with the challenge/final-decision follow-ups above. In the PR notes, record concrete differences such as extra failure modes, sharper rollback steps, or test cases. Do not claim a fixed quality percentage.
 
 8. **Auto-archive smoke**
-   `pnpm run oracle -- --engine browser --browser-manual-login --model gpt-5.5-pro --browser-thinking-time extended --browser-archive always --prompt "Reply exactly CHECK_ARCHIVE_OK."`
+   `pnpm run oracle -- --engine browser --model gpt-5-pro --browser-thinking-time pro --browser-archive always --prompt "Reply exactly CHECK_ARCHIVE_OK."`
    Confirm the output contains `CHECK_ARCHIVE_OK`, `oracle session <id> --render` still shows the transcript, and ChatGPT shows the conversation under archived chats rather than the active sidebar. Also confirm a default `--browser-archive auto` run with Deep Research or follow-ups is not archived.
 
 Record session IDs and outcomes in the PR description (pass/fail, notable delays). This ensures reviewers can audit real runs.

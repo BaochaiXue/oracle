@@ -1,39 +1,40 @@
 ---
 title: Mythical Pro Agents
-description: "The frontier 'Pro' model lineup Oracle speaks to — GPT-5.5 Pro, Gemini 3.1 Pro, Claude Opus, Deep Research — and when to reach for each."
+description: "The frontier 'Pro' model lineup Oracle speaks to — ChatGPT GPT-5.6 Pro, GPT-5.5 Pro APIs, Gemini Pro, Claude Opus, and Deep Research."
 ---
 
 The headline frontier models — the ones marked **Pro** — are slow, expensive, and gated behind separate consumer subscriptions or per-token bills. Oracle is the single CLI that talks to all of them with the same flags, the same session store, and the same bundling rules.
 
 ## The lineup
 
-| Model                 | Engine         | API id                  | Browser model picker      | Speciality                                  |
-| --------------------- | -------------- | ----------------------- | ------------------------- | ------------------------------------------- |
-| GPT-5.5 Pro           | API or browser | `gpt-5.5-pro` (default) | "GPT-5.5 Pro" / "5.5 Pro" | Long-form code review, planning             |
-| GPT-5.5               | API or browser | `gpt-5.5`               | "GPT-5.5"                 | Fast everyday consults                      |
-| GPT-5.4 Pro           | API or browser | `gpt-5.4-pro`           | "5.4 Pro"                 | Mature Pro workflow                         |
-| GPT-5.4               | API or browser | `gpt-5.4`               | "GPT-5.4"                 | Mid-tier general                            |
-| GPT-5.2 Pro           | API or browser | `gpt-5.2-pro`           | "5.2 Pro"                 | Heavy reasoning                             |
-| GPT-5.2               | API or browser | `gpt-5.2`               | "GPT-5.2"                 | Mid-tier                                    |
-| GPT-5.1 Pro           | API or browser | `gpt-5.1-pro`           | "5.1 Pro"                 | Long context                                |
-| GPT-5.1               | API or browser | `gpt-5.1`               | "GPT-5.1"                 | General                                     |
-| GPT-5.1 Codex         | API only       | `gpt-5.1-codex`         | —                         | Code generation                             |
-| Gemini 3.1 Pro        | API or browser | `gemini-3.1-pro`        | "3.1 Pro"                 | Long-context multimodal, image gen, YouTube |
-| Gemini 3.5 Flash      | API or browser | `gemini-3.5-flash`      | "3.5 Flash"               | Fast all-around Gemini work                 |
-| Gemini 3.1 Flash-Lite | API or browser | `gemini-3.1-flash-lite` | "3.1 Flash-Lite"          | Lowest-cost, fastest Gemini work            |
-| Claude Opus 4.1       | API only       | `claude-4.1-opus`       | —                         | Deepest single-shot reasoning               |
-| Claude Sonnet 4.6     | API only       | `claude-4.6-sonnet`     | —                         | Fast Claude                                 |
+| Model                 | Engine         | Oracle key                  | Browser model picker      | Speciality                                  |
+| --------------------- | -------------- | --------------------------- | ------------------------- | ------------------------------------------- |
+| GPT-5.6 Pro           | Browser        | `gpt-5-pro`                 | `GPT-5.6 Sol` + `Pro`     | Current web Pro architecture/debug review   |
+| GPT-5.5 Pro           | API or browser | `gpt-5.5-pro` (API default) | "GPT-5.5 Pro" / "5.5 Pro" | Versioned API and legacy browser workflow   |
+| GPT-5.5               | API or browser | `gpt-5.5`                   | "GPT-5.5"                 | Fast everyday consults                      |
+| GPT-5.4 Pro           | API or browser | `gpt-5.4-pro`               | "5.4 Pro"                 | Mature Pro workflow                         |
+| GPT-5.4               | API or browser | `gpt-5.4`                   | "GPT-5.4"                 | Mid-tier general                            |
+| GPT-5.2 Pro           | API or browser | `gpt-5.2-pro`               | "5.2 Pro"                 | Heavy reasoning                             |
+| GPT-5.2               | API or browser | `gpt-5.2`                   | "GPT-5.2"                 | Mid-tier                                    |
+| GPT-5.1 Pro           | API or browser | `gpt-5.1-pro`               | "5.1 Pro"                 | Long context                                |
+| GPT-5.1               | API or browser | `gpt-5.1`                   | "GPT-5.1"                 | General                                     |
+| GPT-5.1 Codex         | API only       | `gpt-5.1-codex`             | —                         | Code generation                             |
+| Gemini 3.1 Pro        | API or browser | `gemini-3.1-pro`            | "3.1 Pro"                 | Long-context multimodal, image gen, YouTube |
+| Gemini 3.5 Flash      | API or browser | `gemini-3.5-flash`          | "3.5 Flash"               | Fast all-around Gemini work                 |
+| Gemini 3.1 Flash-Lite | API or browser | `gemini-3.1-flash-lite`     | "3.1 Flash-Lite"          | Lowest-cost, fastest Gemini work            |
+| Claude Opus 4.1       | API only       | `claude-4.1-opus`           | —                         | Deepest single-shot reasoning               |
+| Claude Sonnet 4.6     | API only       | `claude-4.6-sonnet`         | —                         | Fast Claude                                 |
 
 Plus any **OpenRouter** id — e.g. `minimax/minimax-m2`, `openai/gpt-4o-mini`, `qwen/qwen-2.5-coder-32b-instruct` — when you set `OPENROUTER_API_KEY`.
 
 ## When to reach for which
 
-### GPT-5.5 Pro (default)
+### GPT-5.6 Pro (canonical browser lane)
 
-The current "Oracle of last resort." Slow (10 minutes typical, hour+ for huge bundles), expensive on API, free if you have ChatGPT Pro. Best for: **long-form architecture review, multi-file refactors, gnarly bugs that need to chew on the whole repo.**
+The current browser "Oracle of last resort." Slow (10 minutes typical, hour+ for huge bundles) and gated by ChatGPT account access. The browser lane is included in the operator's subscription rather than billed per Oracle call; GPT-5.5 Pro remains the separate API path. Best for: **long-form architecture review, multi-file refactors, gnarly bugs that need to chew on the whole repo.**
 
 ```bash
-oracle --engine browser --model gpt-5.5-pro \
+oracle --engine browser --model gpt-5-pro \
   -p "Plan the auth migration end-to-end" \
   --file "src/auth/**" --file "docs/auth.md"
 ```
@@ -75,7 +76,7 @@ Oracle aggregates per-model cost in the run summary. See [Multi-model](multimode
 Browser mode can flip ChatGPT into Deep Research mode for cited reports:
 
 ```bash
-oracle --engine browser --model gpt-5.5-pro \
+oracle --engine browser --model gpt-5-pro \
   --browser-research deep \
   -p "Survey approaches for embedded vector search in a Rust app, with citations"
 ```
@@ -92,18 +93,19 @@ Pro / Thinking models in browser mode accept a `--browser-thinking-time` knob:
 | `standard`   | Medium / Standard                                   |
 | `extended`   | High / Pro Extended / Thinking Extended             |
 | `extra-high` | Extra High (GPT-5.6 Sol non-Pro max)                |
+| `pro`        | Pro effort for GPT-5.6 Sol                          |
 | `heavy`      | Matching Heavy row; otherwise keep the current tier |
 
 ```bash
-oracle --engine browser --model gpt-5.5-pro \
-  --browser-thinking-time extended \
+oracle --engine browser --model gpt-5-pro \
+  --browser-thinking-time pro \
   -p "Refactor this hot path" --file "src/render/**"
 ```
 
 ## Pricing notes (rough heuristics, not contracts)
 
 - **GPT-5.x Pro** (API): tokens cost meaningfully more than non-Pro. Watch the run summary.
-- **GPT-5.x Pro** (browser): "free" with ChatGPT Pro / Plus subscription, but slow.
+- **GPT-5.x Pro** (browser): included with eligible ChatGPT subscriptions, subject to account quotas, and slow.
 - **Gemini 3.1 Pro / 3.5 Flash / 3.1 Flash-Lite** (browser): available through a signed-in Google account, subject to account access.
 - **Claude Opus 4.1**: per-token API only.
 - **OpenRouter ids**: pricing varies wildly per provider; always preview with `--dry-run summary`.

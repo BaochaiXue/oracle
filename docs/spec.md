@@ -7,7 +7,7 @@ This page captures the design constraints. The README and the rest of the docs d
 
 ## Goals
 
-1. **One CLI to every Pro model.** Same flags, same session store, same bundling rules whether the answer comes from GPT-5.5 Pro, Gemini 3 Pro, or Claude Opus.
+1. **One CLI to every Pro model.** Same session and bundle vocabulary whether the answer comes from ChatGPT GPT-5.6 Pro in the browser, GPT-5.5 Pro through an API, Gemini Pro, or Claude Opus.
 2. **Runs on every box.** macOS first, Linux and Windows supported. Browser mode optional.
 3. **Stable artifacts.** `--render` is contracted; session metadata stays machine-readable; stderr is for humans.
 4. **Bundles, not chats.** Oracle assembles a deterministic prompt+files bundle and ships it once. Chat-style interactivity is the agent's job, not Oracle's.

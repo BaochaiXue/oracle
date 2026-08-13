@@ -1,20 +1,26 @@
 ---
-title: Oracle × OpenCLI
-description: "Why this fork keeps Oracle as the canonical session authority while OpenCLI owns only the authenticated browser boundary for unattended GPT-5.6 Pro consults."
+title: OpenCLI alternative transport
+description: "The optional Browser Bridge path: Oracle keeps canonical session authority while OpenCLI owns only the authenticated browser handoff."
 ---
 
-# Why the OpenCLI transport lives inside Oracle
+# OpenCLI alternative transport
 
-This fork exists for one practical reason: a long GPT-5.6 Pro consultation
-should not be lost because nobody was at the Mac to approve Chrome debugging at
-the right moment.
+OpenCLI remains an explicit alternative transport in this fork. The canonical
+path now uses Oracle's own persistent isolated Chrome profile and direct
+loopback CDP; see [Dedicated Chrome transport](dedicated-chrome.md). Choose
+OpenCLI when Browser Bridge is an intentional operator preference or the local
+environment cannot launch direct CDP.
 
-The architecture matters more than the convenience. Oracle already knows which
+The integration architecture still matters. Oracle already knows which
 prompt and files were authorized, which model was requested, whether a turn may
 have been submitted, which answer belongs to it, and how a later follow-up is
 related. Putting OpenCLI in a shell wrapper around Oracle would split those
 facts across two session engines. Instead, this fork adds a narrow browser
 transport inside Oracle and leaves the rest of Oracle's authority intact.
+
+There is no automatic fallback between OpenCLI and CDP. A transport is selected
+before dispatch and remains responsible for that operation; otherwise Oracle
+could not know whether switching transports should submit the turn again.
 
 ## One authority, two responsibilities
 
@@ -183,8 +189,8 @@ store.
 
 It rejects image generation, Deep Research, and same-invocation
 `--browser-follow-up` before dispatch. Use a separate Oracle `--followup` turn
-for multi-turn review. Select `--browser-transport cdp` explicitly for legacy
-features that still require Oracle's direct browser automation. There is no
+for multi-turn review. Select `--browser-transport cdp` for the canonical
+dedicated-profile lane and its full direct-browser feature surface. There is no
 automatic OpenCLI-to-CDP fallback.
 
 ## Verification surface
@@ -217,4 +223,5 @@ pnpm vitest run \
 ```
 
 For setup and commands, continue to [Browser Mode](browser-mode.md). For the
-documentation entrypoint, return to the [Oracle × OpenCLI home](index.md).
+canonical transport, read [Dedicated Chrome](dedicated-chrome.md). Return to the
+[documentation home](index.md).

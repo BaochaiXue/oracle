@@ -78,24 +78,32 @@ See [OpenAI / Azure / OpenRouter](openai-endpoints.md) and [OpenRouter](openrout
 
 ## Browser mode
 
+Profile lifecycle commands:
+
+| Command                                                                  | Purpose                                                                                                             |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `oracle browser install [--cache-dir …] [--no-write-config] [--json]`    | Install or resume official stable Chrome for Testing and persist its separate executable identity after validation. |
+| `oracle browser setup [--profile-dir …] [--chrome-path …]`               | Open Chrome for Testing for sign-in and wait for the whole browser to close; no CDP/prompt.                         |
+| `oracle browser smoke [--profile-dir …] [--port …] [--visible] [--json]` | Cold-start and attach twice with the same profile; verify login without submitting a prompt.                        |
+
 | Flag                                                                           | Purpose                                                                                                                      |
 | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `--browser-transport <opencli\|cdp>`                                           | Use authenticated OpenCLI Browser Bridge for unattended GPT-5.6 Pro, or Oracle's legacy direct CDP path.                     |
+| `--browser-transport <opencli\|cdp>`                                           | Use canonical isolated-profile CDP (default) or explicit OpenCLI Browser Bridge.                                             |
 | `--chatgpt-url <url>`                                                          | Target a ChatGPT workspace / project folder.                                                                                 |
 | `--browser-model-strategy <select\|current\|ignore>`                           | Control ChatGPT model picker.                                                                                                |
-| `--browser-manual-login`                                                       | Use persistent profile + manual login (no Keychain).                                                                         |
+| `--browser-manual-login`                                                       | Use the persistent isolated Oracle profile (direct-CDP default; historical flag name).                                       |
 | `--browser-attach-running`                                                     | Attach to your already-running Chrome via DevTools.                                                                          |
 | `--browser-tab <ref>`                                                          | Reuse an existing tab (`current`, id, URL, title substring).                                                                 |
 | `--browser-thinking-time <light\|standard\|extended\|extra-high\|pro\|heavy>`  | Effort intensity; `pro` selects the Pro tier and fails closed if unconfirmed, other unmatched tiers keep the current effort. |
 | `--browser-research deep`                                                      | Activate Deep Research mode.                                                                                                 |
 | `--browser-follow-up <prompt>`                                                 | Multi-turn in the same ChatGPT conversation.                                                                                 |
 | `--browser-port <port>`                                                        | Pin Chrome DevTools port.                                                                                                    |
-| `--browser-inline-cookies[(-file)] <…>`                                        | Supply cookies inline (no Keychain / Chrome).                                                                                |
+| `--browser-inline-cookies[(-file)] <…>`                                        | Supply cookies for explicit ephemeral compatibility mode (`browser.manualLogin:false`).                                      |
 | `--browser-timeout`, `--browser-input-timeout`, `--browser-attachment-timeout` | Overall / input / attachment readiness timeouts (h/m/s/ms).                                                                  |
 | `--browser-recheck-delay`, `--browser-recheck-timeout`                         | Delayed retry after a timeout.                                                                                               |
-| `--browser-auto-reattach-delay/-interval/-timeout`                             | Poll the existing tab when ChatGPT redirects mid-load.                                                                       |
+| `--browser-auto-reattach-delay/-interval/-timeout`                             | Periodically retry capture from a stored conversation after an actual timeout.                                               |
 | `--browser-reuse-wait`                                                         | Wait for shared Chrome profile before launching.                                                                             |
-| `--browser-profile-lock-timeout`                                               | Wait for the manual-login profile lock.                                                                                      |
+| `--browser-profile-lock-timeout`                                               | Wait for the dedicated-profile startup/composer lock.                                                                        |
 | `--browser-max-concurrent-tabs`                                                | Soft limit for shared-profile parallel runs (default 3).                                                                     |
 | `--browser-keep-browser`                                                       | Keep the browser open after the run.                                                                                         |
 | `--browser-headless`, `--browser-hide-window`                                  | Visibility controls.                                                                                                         |

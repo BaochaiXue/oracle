@@ -9,9 +9,9 @@ JSON5 parsing, so trailing commas and comments are allowed.
 
 ```json5
 {
-  // Default engine when neither CLI flag nor env decide
-  engine: "api", // or "browser"
-  model: "gpt-5.5-pro", // older gpt-5.x-pro aliases → gpt-5.5-pro
+  // Default engine/model when neither CLI flags nor env override them
+  engine: "browser", // or "api"
+  model: "gpt-5-pro", // moving browser alias → GPT-5.6 Sol + Pro
   search: "on", // "on" | "off"
 
   notify: {
@@ -21,9 +21,9 @@ JSON5 parsing, so trailing commas and comments are allowed.
   },
 
   browser: {
-    transport: "cdp", // cdp | opencli; OpenCLI is the unattended GPT-5.6 Pro browser lane
-    opencliPath: null, // user config only; defaults to opencli on PATH
-    chromeProfile: "Default",
+    transport: "cdp", // canonical isolated profile; opencli is an explicit alternative
+    opencliPath: null, // user config only; used only when transport is opencli
+    chromeProfile: "Default", // compatibility cookie/copy paths only
     chromePath: null,
     chromeCookiePath: null,
     chatgptUrl: "https://chatgpt.com/", // root is fine; folder URLs also work
@@ -32,28 +32,29 @@ JSON5 parsing, so trailing commas and comments are allowed.
     remoteHost: "127.0.0.1:9473",
     remoteToken: "…", // written by `oracle bridge client` (kept private; not printed by default)
     remoteViaSshReverseTunnel: { ssh: "user@linux-host", remotePort: 9473 }, // optional metadata
-    debugPort: null, // fixed DevTools port (env: ORACLE_BROWSER_PORT / ORACLE_BROWSER_DEBUG_PORT)
+    debugPort: 9333, // optional fixed loopback port (env: ORACLE_BROWSER_PORT / ORACLE_BROWSER_DEBUG_PORT)
     timeoutMs: 1200000,
     inputTimeoutMs: 30000,
     attachmentTimeoutMs: 90000, // wait for file upload/readiness before clicking Send (default: 45s)
-    cookieSyncWaitMs: 0, // wait (ms) before retrying cookie sync when Chrome cookies are empty/locked
+    cookieSync: false, // canonical dedicated profile never copies personal Chrome cookies
+    cookieSyncWaitMs: 0, // ephemeral compatibility mode only
     assistantRecheckDelayMs: 0, // wait this long after timeout, then retry capture (0 = disabled)
     assistantRecheckTimeoutMs: 120000, // time budget for the recheck attempt (default: 2m)
-    reuseChromeWaitMs: 10000, // wait for a shared Chrome profile to appear before launching (parallel runs)
-    profileLockTimeoutMs: 300000, // wait for the manual-login profile lock before sending (parallel runs)
-    maxConcurrentTabs: 3, // soft limit for concurrent ChatGPT tabs using one manual-login profile (or set ORACLE_BROWSER_MAX_CONCURRENT_TABS)
+    reuseChromeWaitMs: 10000, // wait for the dedicated profile's existing Chrome endpoint
+    profileLockTimeoutMs: 300000, // serialize dedicated-profile startup/composer mutation
+    maxConcurrentTabs: 3, // soft limit for concurrent ChatGPT tabs in the dedicated profile
     autoReattachDelayMs: 0, // delay before starting periodic auto-reattach attempts (0 = disabled)
     autoReattachIntervalMs: 0, // interval between auto-reattach attempts (0 = disabled)
     autoReattachTimeoutMs: 120000, // time budget per auto-reattach attempt (default: 2m)
     modelStrategy: "select", // select | current | ignore (ChatGPT only; ignored for Gemini web)
-    thinkingTime: "extended", // light | standard | extended | extra-high | pro | heavy (ChatGPT Thinking/Pro models)
+    thinkingTime: "pro", // light | standard | extended | extra-high | pro | heavy
     researchMode: "off", // off | deep (ChatGPT Deep Research; browser only)
-    manualLogin: false, // set true to reuse a persistent automation profile and sign in once (Windows defaults to true when unset)
-    manualLoginProfileDir: null, // override profile dir (or set ORACLE_BROWSER_PROFILE_DIR)
+    manualLogin: true, // historical name for the canonical persistent isolated profile
+    manualLoginProfileDir: "/Users/you/.oracle/browser-profile", // or ORACLE_BROWSER_PROFILE_DIR
     headless: false,
-    hideWindow: false,
+    hideWindow: true, // macOS normal runs: headful but off-screen; setup remains visible
     keepBrowser: false,
-    manualLoginCookieSync: false, // allow cookie sync even in manual-login mode
+    manualLoginCookieSync: false, // keep false to preserve the personal-profile boundary
   },
 
   // Azure OpenAI defaults (only used when endpoint is set)
@@ -126,11 +127,29 @@ CLI flags and explicit override environment variables → effective config (proj
 - `sessionRetentionHours` controls the default value for `--retain-hours`. When unset, `ORACLE_RETAIN_HOURS` (if present) becomes the fallback, and the CLI flag still wins over both.
 - `ORACLE_MAX_FILE_SIZE_BYTES` overrides `maxFileSizeBytes` when set. Oracle validates it as a positive integer number of bytes before reading any `--file` inputs.
 - `browser.chatgptUrl` accepts either the root ChatGPT URL (`https://chatgpt.com/`) or a folder/workspace URL (e.g., `https://chatgpt.com/g/.../project`); `browser.url` remains as a legacy alias.
-- Browser automation defaults can be set under `browser.*`, including `browser.transport` (CLI override: `--browser-transport`), `browser.manualLogin`, `browser.manualLoginProfileDir`, `browser.attachRunning`, `browser.thinkingTime` (CLI override: `--browser-thinking-time`), and `browser.researchMode` (CLI override: `--browser-research`). Project configs may select `browser.transport`, but only the user config or hidden `--opencli-path` flag may select a machine-local OpenCLI executable. On Windows, `browser.manualLogin` defaults to `true` when omitted.
+- Browser automation defaults can be set under `browser.*`, including `browser.transport` (CLI override: `--browser-transport`), `browser.manualLogin`, `browser.manualLoginProfileDir`, `browser.attachRunning`, `browser.thinkingTime` (CLI override: `--browser-thinking-time`), and `browser.researchMode` (CLI override: `--browser-research`). Direct CDP defaults to the persistent isolated profile with cookie sync disabled on every platform. `manualLogin` is the retained compatibility name for that mode. Project configs may select `browser.transport`, but only the user config or hidden `--opencli-path` flag may select a machine-local OpenCLI executable.
 
 If the config is missing or invalid, Oracle falls back to defaults and prints a warning for parse errors.
 
-Chromium-based browsers usually need both `chromePath` (binary) and `chromeCookiePath` (cookie DB) set so automation can launch the right executable and reuse your login. See [docs/chromium-forks.md](chromium-forks.md) for detailed paths per browser/OS.
+Canonical dedicated-profile mode records a separate Chrome for Testing
+`chromePath`; its login lives inside `manualLoginProfileDir`. On macOS Oracle
+rejects the everyday `com.google.Chrome` app identity because another
+`user-data-dir` does not isolate system URL routing. Explicit ephemeral
+cookie-copy compatibility mode may also need `chromeCookiePath`. See
+[Chromium forks](chromium-forks.md) for browser-specific paths.
+
+Initialize and validate the dedicated profile outside a consultation:
+
+```bash
+oracle browser install
+oracle browser setup --profile-dir "/Users/you/.oracle/browser-profile"
+# sign in and close the entire Chrome for Testing browser
+oracle browser smoke --profile-dir "/Users/you/.oracle/browser-profile" --port 9333
+```
+
+Neither command submits a prompt. See
+[Dedicated Chrome transport](dedicated-chrome.md) for the security and smoke
+contract.
 
 ## Session retention
 

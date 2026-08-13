@@ -5,22 +5,26 @@ description: "Use Oracle from Claude Code, Codex, Cursor, and any other coding a
 
 Oracle is built to be called _by_ coding agents as much as by humans. In this
 fork, the default unattended browser pattern is: the agent gathers exact
-project context, Oracle seals and records the turn, OpenCLI crosses the
-authenticated browser boundary, and GPT-5.6 Pro returns a second opinion to the
-same recoverable Oracle session.
+project context, Oracle records the turn, its isolated Chrome profile crosses
+the authenticated browser boundary over loopback CDP, and GPT-5.6 Pro returns a
+second opinion to the same recoverable Oracle session. OpenCLI remains an
+explicit alternative, not the default.
 
 ## The 30-second wiring
 
 Drop this into the project's `AGENTS.md` or `CLAUDE.md`:
 
 ```
-- This Oracle fork sends sealed project context to ChatGPT GPT-5.6 Pro through
-  OpenCLI Browser Bridge while Oracle owns sessions, recovery, transcripts, and
-  follow-up lineage. Use it for difficult debugging, architecture, refactoring,
-  or consequential review.
-- Run `oracle --help` once per session before first use. For unattended browser
-  work, select `--engine browser --browser-transport opencli --model gpt-5-pro`.
-  Inspect `oracle status` before retrying a long or interrupted run.
+- This Oracle fork gives Oracle a dedicated persistent Chrome profile and uses
+  direct loopback CDP for ChatGPT GPT-5.6 Pro. Oracle owns browser actions,
+  sessions, recovery, transcripts, and follow-up lineage; it does not attach to
+  personal Chrome by default.
+- The operator must complete `oracle browser install`, `oracle browser setup`,
+  and `oracle browser smoke` once before unattended work. Agents use
+  `--engine browser --browser-transport cdp --model gpt-5-pro`, preview private
+  bundles, and inspect `oracle status` before retrying a quiet/interrupted run.
+- Treat every Pro reply captured in under 60 seconds as rejected evidence. Do
+  not quote, adopt, or summarize it as Pro advice.
 ```
 
 That's enough for most agents to discover and use Oracle correctly. The patterns below cover the deeper integrations.
@@ -33,7 +37,7 @@ That's enough for most agents to discover and use Oracle correctly. The patterns
 oracle bridge claude-config --local-browser > .mcp.json
 ```
 
-That writes a `.mcp.json` configured for the local browser path, so Claude Code can call `oracle.consult` and `oracle.sessions` without any API keys. For this fork's GPT-5.6 Pro lane, set `browser.transport` to `"opencli"` in `~/.oracle/config.json`, then pass `engine: "browser"` and `model: "gpt-5-pro"`; add `dryRun: true` to inspect the resolved bundle before sending. The upstream `chatgpt-pro-heavy` preset still follows its own legacy model/effort contract.
+That writes a `.mcp.json` configured for the local browser path, so Claude Code can call `oracle.consult` and `oracle.sessions` without API keys. Set `browser.transport` to `"cdp"`, `browser.manualLogin` to `true`, and `browser.manualLoginProfileDir` to the isolated profile in `~/.oracle/config.json`; then pass `engine:"browser"` and `model:"gpt-5-pro"`. Use `dryRun:true` to inspect the resolved bundle before sending. The operator, not the MCP caller, owns transport/profile selection. The upstream `chatgpt-pro-heavy` preset retains its separate model/effort contract.
 
 See [MCP](mcp.md) for connection details and other clients.
 
@@ -50,7 +54,7 @@ Then reference `oracle` in `CLAUDE.md`. Claude Code will load `SKILL.md` wheneve
 
 ### As a slash command
 
-Many users alias Oracle behind a custom `/consult` slash command that wraps `npx -y @steipete/oracle --engine browser …`. Pair with `--browser-tab current` to keep all consults in one ChatGPT conversation.
+Many users alias the linked fork binary behind a custom `/consult` slash command. Prefer explicit `--followup <session-id>` lineage over silently routing unrelated consults into one current tab.
 
 ## Codex
 
@@ -95,37 +99,45 @@ For autonomous dry-runs, use the JSON preview to inspect the resolved bundle bef
 ```bash
 oracle --dry-run json \
   --engine browser \
-  --browser-transport opencli \
+  --browser-transport cdp \
   --model gpt-5-pro \
   -p "$TASK" --file "$RELEVANT_FILES"
 ```
 
 Completed runs persist answers, usage, cost, session ids, model choices, and lineage under `~/.oracle/sessions/<id>/`. Exit code is non-zero on failure.
 
-## OpenCLI concurrency and account boundaries
+## Dedicated-profile concurrency and account boundaries
 
-OpenCLI consultations share one Oracle-owned transport lock across model
-selection and submission. Model selection and submission are short-lived
-commands. The long answer harvest is one `chatgpt oracle-wait` command holding
-one isolated ephemeral tab for its entire lifetime; it explicitly releases that
-lease before returning and never polls by launching repeated OpenCLI processes.
-Agents must not retry an interrupted submission blindly: check the Oracle
-session first, because a stored conversation receipt changes recovery into a
-waiter-only read.
+Direct-CDP consultations share Oracle's dedicated profile but own distinct tab
+leases. Startup converges on one exact profile endpoint, and model
+selection/submission is serialized at the composer boundary. Long waiting stays
+inside the browser worker; the coding agent does not need to poll, reopen the
+same URL, or create a duplicate Oracle session. Agents must not retry an
+interrupted submission blindly: check the Oracle session first, because a
+stored conversation receipt changes recovery into read-only capture.
 
 Authentication, model entitlement, and account challenges remain human-owned.
-Unattended means routine Chrome debugging approval is absent from the happy
-path; it does not mean bypassing account controls.
+Unattended means Oracle connects to its isolated profile without a recurring
+personal-browser debugging approval. It does not mean bypassing account
+controls.
 
-## Multi-agent shared profile (legacy CDP browser mode)
+OpenCLI's alternative transport uses one Oracle-owned transport lock for model
+selection/submission and one long-lived waiter tab for answer harvest. It does
+not launch repeated OpenCLI processes/tabs as a polling loop.
 
-When multiple agents share one signed-in Chrome profile (the manual-login workflow), Oracle coordinates browser tab slots so parallel runs queue instead of crashing. Tune with:
+## Multi-agent shared profile
+
+When multiple agents share Oracle's dedicated profile, Oracle coordinates browser tab slots so parallel runs queue instead of crashing. Tune with:
 
 - `--browser-max-concurrent-tabs` — default 3 simultaneous tabs.
 - `--browser-profile-lock-timeout` — wait for the profile lock before sending.
 - `--browser-reuse-wait` — wait for a shared Chrome profile before launching.
 
-For the most reliable shared setup: run one signed-in Chrome with remote debugging, point all callers at it via `--remote-chrome <host:port>`. See [Browser Mode](browser-mode.md).
+The normal local launcher already reuses one signed-in dedicated Chrome process
+when it is reachable; do not expose or manually route its port. Use
+`--remote-chrome` only when a separately controlled host actually owns the
+browser. See [Dedicated Chrome](dedicated-chrome.md) and
+[Browser Mode](browser-mode.md).
 
 ## Cost / safety hygiene
 
@@ -136,7 +148,7 @@ For the most reliable shared setup: run one signed-in Chrome with remote debuggi
 
 ## Patterns that work
 
-- **Stuck → Oracle.** When the agent has been spinning on the same bug, hand the failing test plus the involved files to GPT-5.6 Pro through the OpenCLI lane. Keep the question self-contained so the second model can challenge the actual evidence rather than reconstructing the first agent's context.
+- **Stuck → Oracle.** When the agent has been spinning on the same bug, hand the failing test plus the involved files to GPT-5.6 Pro through the dedicated-CDP lane. Keep the question self-contained so the second model can challenge the actual evidence rather than reconstructing the first agent's context.
 - **Plan → Oracle → execute.** Draft the plan, ask Claude Opus or Gemini 3 Pro to challenge it, then implement.
 - **Refactor → cross-check.** After a non-trivial refactor, send the diff plus the spec to a different provider than the one that wrote the diff. Catches drift fast.
 - **Followup chain.** Use `--followup <id>` to keep one Pro session alive across iterations rather than re-bundling the whole repo every time. See [Followup](followup.md).

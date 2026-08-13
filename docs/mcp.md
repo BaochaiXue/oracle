@@ -6,12 +6,26 @@
 
 Claude Code can call `oracle-mcp` and ask a subscription-backed ChatGPT browser session for a second opinion. Use the `chatgpt-pro-heavy` preset when you want a compact MCP request that targets ChatGPT browser mode, the current Pro picker alias, and Pro Extended thinking time. The preset is intentionally boring at the API layer: it is a shortcut for existing browser-mode fields, not a new model id.
 
-For this fork's unattended GPT-5.6 Pro transport, set
-`browser.transport: "opencli"` in the Oracle user config and call `consult` with
-`engine: "browser"`, `model: "gpt-5-pro"`, and
-`browserModelStrategy: "select"`. Transport selection is an operator-level
-config boundary rather than an agent-supplied MCP field. The current ChatGPT and
-OpenCLI receipt remains the UI-native short label `Pro`.
+For this fork's canonical GPT-5.6 Pro transport, first initialize and validate
+the Oracle-only Chrome profile outside MCP:
+
+```bash
+oracle browser install
+oracle browser setup
+# sign in, close the entire Chrome for Testing browser
+oracle browser smoke
+```
+
+Then set `browser.transport:"cdp"`, `browser.manualLogin:true`, and the dedicated
+profile path in the Oracle user config. Call `consult` with
+`engine:"browser"`, `model:"gpt-5-pro"`, and
+`browserModelStrategy:"select"`. Transport and browser identity are
+operator-level boundaries rather than agent-supplied MCP fields. The effective
+UI receipt is model `GPT-5.6 Sol` plus reasoning tier `Pro`.
+
+Set `browser.transport:"opencli"` only when the operator explicitly chooses the
+Browser Bridge alternative. MCP never changes transports in response to a
+runtime failure.
 
 ## Tools
 
@@ -46,7 +60,7 @@ OpenCLI receipt remains the UI-native short label `Pro`.
 
 #### Long browser consults from agents
 
-Browser-backed GPT-5.6 Pro consults can legitimately run for many minutes. Some MCP clients show little progress while a tool call is active, so agents should treat a long Oracle call as a running browser job, not as a failed step. With the OpenCLI transport, use `engine:"browser"` and `model:"gpt-5-pro"` explicitly, then inspect the shared session store (`sessions`, `oracle status`, or `oracle session <id>`) before retrying a prompt. The legacy `chatgpt-pro-heavy` preset retains its upstream model/effort contract. If the selected browser plan says Oracle will launch visible Chrome, that is the explicit CDP path; use attach/remote Chrome only when the operator is present.
+Browser-backed GPT-5.6 Pro consults can legitimately run for many minutes. Some MCP clients show little progress while a tool call is active, so agents should treat a long Oracle call as a running browser job, not as a failed step. Use `engine:"browser"` and `model:"gpt-5-pro"` explicitly, then inspect the shared session store (`sessions`, `oracle status`, or `oracle session <id>`) before retrying a prompt. Direct CDP waits inside one browser worker and OpenCLI waits inside one tool-side waiter; neither needs the calling agent to poll or open duplicate sessions. The legacy `chatgpt-pro-heavy` preset retains its upstream model/effort contract. Window visibility follows the operator's stored control policy: setup is visible, direct-CDP macOS runs can be consistently off-screen, and OpenCLI window presentation remains Browser Bridge-owned.
 
 #### ChatGPT images from agents
 
@@ -85,26 +99,26 @@ The MCP response includes `structuredContent.images[]` with the saved file path,
 
 ## Launching & usage
 
-- Installed from npm:
+- Upstream npm (does not include this fork's dedicated-profile changes):
   - One-off: `npx @steipete/oracle oracle-mcp`
-  - Global: `oracle-mcp`
-- From the repo (contributors):
+- From this fork checkout:
   - `pnpm build`
+  - `npm link`
   - `pnpm mcp` (or `oracle-mcp` in the repo root)
 - mcporter example (stdio):
   ```json
   {
     "name": "oracle",
     "type": "stdio",
-    "command": "npx",
-    "args": ["@steipete/oracle", "oracle-mcp"]
+    "command": "node",
+    "args": ["/absolute/path/to/oracle/dist/bin/oracle-mcp.js"]
   }
   ```
 - Project-scoped Claude (.mcp.json) example:
   ```json
   {
     "mcpServers": {
-      "oracle": { "type": "stdio", "command": "npx", "args": ["@steipete/oracle", "oracle-mcp"] }
+      "oracle": { "type": "stdio", "command": "oracle-mcp", "args": [] }
     }
   }
   ```

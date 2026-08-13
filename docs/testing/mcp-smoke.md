@@ -15,7 +15,8 @@ Shared prereqs
 - `OPENAI_API_KEY` set in env
 - `config/mcporter.json` contains the `oracle` entry pointing to `npx -y @steipete/oracle oracle-mcp` (already committed).
 - mcporter available at `/Users/steipete/Library/pnpm/global/5/node_modules/.bin/mcporter`
-- For browser runs: Chrome installed; macOS host (headful).
+- For browser runs: `oracle browser install` and setup/smoke completed; macOS
+  host (headful).
 - macOS notifications: `vendor/oracle-notifier/OracleNotifier.app` ships with the package (preferred); falls back to toasted-notifier if missing/broken.
 
 ## CLI smokes

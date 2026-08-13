@@ -1,118 +1,207 @@
-# Oracle × OpenCLI 🧿
+# Oracle × Dedicated Chrome 🧿
 
 <p align="center">
   <img src="./README-header.png" alt="Oracle CLI header banner" width="1100">
 </p>
 
 <p align="center">
-  <a href="https://github.com/IndelibleVivi/oracle/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/IndelibleVivi/oracle/ci.yml?branch=codex%2Fopencli-browser-transport&style=flat-square&label=fork%20ci" alt="Fork CI status"></a>
+  <a href="https://github.com/IndelibleVivi/oracle/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/IndelibleVivi/oracle/ci.yml?branch=main&style=flat-square&label=fork%20ci" alt="Fork CI status"></a>
   <img src="https://img.shields.io/badge/ChatGPT-GPT--5.6%20Pro-7257d5?style=flat-square" alt="ChatGPT GPT-5.6 Pro">
-  <img src="https://img.shields.io/badge/browser-OpenCLI%20Bridge-2f80ed?style=flat-square" alt="OpenCLI Browser Bridge">
-  <img src="https://img.shields.io/badge/human%20gate-exceptional-147d64?style=flat-square" alt="Exceptional human gate">
+  <img src="https://img.shields.io/badge/browser-isolated%20CDP-2f80ed?style=flat-square" alt="Isolated Chrome DevTools Protocol">
+  <img src="https://img.shields.io/badge/human%20gate-first%20sign--in%20only-147d64?style=flat-square" alt="First sign-in only">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/IndelibleVivi/oracle?style=flat-square" alt="License"></a>
 </p>
 
-**A recoverable, unattended browser path from coding agents to ChatGPT GPT-5.6 Pro.**
+**A recoverable browser path from coding agents to ChatGPT GPT-5.6 Pro, using an
+Oracle-only Chrome profile instead of attaching to your personal browser.**
 
 This public fork keeps [Oracle](https://github.com/steipete/oracle) in charge of
-the work that makes a second-model consultation trustworthy—bundle assembly,
-authorization, sessions, transcripts, follow-up lineage, and recovery—while
-delegating only the authenticated browser boundary to
-[OpenCLI](https://github.com/jackwener/opencli). Routine Chrome debugging
-approval is no longer part of the happy path.
-
-The point is not merely fewer clicks. It is preserving **one canonical session
-authority** while making long GPT-5.6 Pro consultations able to finish when the
-operator is away from the computer.
-
-## The design
-
-| Boundary          | Owner   | Contract                                                                                                 |
-| ----------------- | ------- | -------------------------------------------------------------------------------------------------------- |
-| Prompt and files  | Oracle  | Assemble locally, preview when needed, then seal the exact authorized turn.                              |
-| Session truth     | Oracle  | Persist submission state, conversation receipt, answer, transcript, and follow-up lineage.               |
-| Browser access    | OpenCLI | Use the authenticated Browser Bridge, select `Pro`, submit sealed files, and return structured evidence. |
-| Account decisions | Human   | Sign in, resolve challenges, and choose when private material may be sent.                               |
+the prompt bundle, browser actions, session receipt, recovery, transcripts, and
+follow-up lineage. Its canonical ChatGPT transport is deliberately simple:
 
 ```text
 coding agent / human
         │  prompt + selected files
         ▼
-Oracle ── seal turn ── persist intent ── own session + recovery
+Oracle ── session + dispatch receipt + recovery
         │
-        │  mode-0600 payload + versioned manifest
+        │  CDP on 127.0.0.1
         ▼
-OpenCLI Browser Bridge ── authenticated tab lease ── ChatGPT GPT-5.6 Pro
-        │                                                │
-        └──── receipt + one single-lease waiter ─────────┘
+Chrome for Testing ── ~/.oracle/browser-profile ── ChatGPT GPT-5.6 Pro
+  separate app id      dedicated user-data-dir
+                       ChatGPT login only
 ```
 
-A sidecar wrapper would look smaller, but it would also become a second session
-engine: conversation references, retries, follow-ups, and provenance would be
-split between two tools. This fork instead adds one thin
-`OpenCliBrowserTransport` inside Oracle. The transport is replaceable; Oracle's
-record remains canonical.
+The installer supplies an official Chrome for Testing binary whose application
+identity is separate from everyday Chrome. Setup opens the Oracle profile in
+that browser as a normal window: no CDP endpoint and no automation flags. The
+operator signs in to ChatGPT and closes the whole browser; the setup command
+waits for that exit instead of leaving an orphan process. Later runs launch the
+same binary and profile with a loopback debugging port,
+connect directly through CDP, select the requested model and reasoning tier,
+submit the turn, collect the answer, and close their tab or browser according to
+the recorded policy. They do not request permission to debug the operator's
+already-running personal Chrome.
 
-Read the complete rationale and failure contract in
-[Why the OpenCLI transport lives inside Oracle](docs/opencli-transport.md).
+[OpenCLI](https://github.com/jackwener/opencli) remains supported as an explicit
+alternative/recovery transport. It is no longer required for the normal path.
+
+## Why a dedicated profile
+
+Chrome now documents two different agent connection paths:
+
+- `--autoConnect` attaches to a running personal Chrome and displays a
+  permission dialog whenever an agent tries to connect.
+- Manual connection starts Chrome with `--remote-debugging-port` and a custom <!-- docs-check: external-flags -->
+  `--user-data-dir`, then lets the client connect to that loopback endpoint. <!-- docs-check: external-flags -->
+
+Chrome 136+ intentionally ignores remote-debugging switches against the default
+Chrome data directory. A non-default user-data directory is therefore not a
+workaround around the security boundary; it is the supported boundary. See
+[Chrome DevTools agent configuration](https://developer.chrome.com/docs/devtools/agents/get-started/configuration),
+[the Chrome 136 remote-debugging change](https://developer.chrome.com/blog/remote-debugging-port),
+and [ChromeDriver custom profiles](https://developer.chrome.com/docs/chromedriver/capabilities).
+
+On macOS, a separate `user-data-dir` isolates data but does not change an app's
+LaunchServices identity. Two processes launched from `Google Chrome.app` are
+still `com.google.Chrome`, so an Oracle window can receive a normal “Open in
+Chrome” event. Chrome itself recommends
+[Chrome for Testing for browser automation](https://developer.chrome.com/blog/chrome-for-testing/).
+This fork therefore uses both boundaries: a Chrome for Testing app identity
+and an Oracle-only user-data directory. A canonical macOS run fails closed if
+its executable resolves to everyday `Google Chrome.app`.
+
+This fork turns that distinction into a product contract:
+
+| Boundary          | Owner              | Contract                                                                                 |
+| ----------------- | ------------------ | ---------------------------------------------------------------------------------------- |
+| Prompt and files  | Oracle             | Assemble locally and send only the selected context.                                     |
+| Session truth     | Oracle             | Persist dispatch state, conversation identity, answer, artifacts, and follow-up lineage. |
+| Browser process   | Oracle             | Launch a non-default persistent profile and bind CDP to `127.0.0.1`.                     |
+| App identity      | Chrome for Testing | Do not register an Oracle process as everyday `com.google.Chrome` on macOS.              |
+| Browser data      | Dedicated profile  | Keep ChatGPT login state separate from personal browsing and other accounts.             |
+| Account decisions | Human              | Perform the first sign-in and resolve real account or anti-bot challenges.               |
+
+The profile root is created with owner-only permissions on Unix-like systems.
+Oracle never points its launcher at the default personal Chrome data directory.
+
+Read the full lifecycle and trust model in
+[Dedicated Chrome transport](docs/dedicated-chrome.md).
 
 ## Install this fork
 
 The published npm and Homebrew packages are upstream Oracle and do not include
-this transport yet. Install the fork from source together with its companion
-OpenCLI adapters:
+these fork changes. Install this repository from source:
 
 ```bash
-npm install -g @jackwener/opencli@1.8.6
 git clone https://github.com/IndelibleVivi/oracle.git
 cd oracle
 corepack enable
 pnpm install
 pnpm build
-pnpm link -g
-node scripts/install-opencli-submit-file-adapter.mjs
-opencli validate chatgpt/submit-file
-opencli validate chatgpt/oracle-wait
+npm link
 ```
 
 Requirements:
 
 - Node.js 24 or newer.
-- OpenCLI 1.8.6 or newer in the 1.x line. Oracle generates its proven native
-  picker expressions into the companion adapter; OpenCLI executes them in the
-  exact submission tab and does not own model semantics.
-- An authenticated OpenCLI Browser Bridge.
-- ChatGPT account access to the current Pro tier.
+- Official Chrome for Testing (installed by the command below), or an explicit
+  compatible Chromium browser with a separate app identity.
+- A ChatGPT account with access to the requested model/tier.
+- One local directory dedicated to Oracle's browser identity. The default is
+  `~/.oracle/browser-profile`.
 
-Run a preflight without sending private content:
+Install the official stable automation browser. This stores it under
+`~/.oracle/browsers`, writes its executable to `browser.chromePath`, and does
+not change the system default browser. If the archive download is interrupted,
+rerun the same command; Oracle resumes the retained partial archive instead of
+starting it again from byte zero:
 
 ```bash
-opencli daemon status
-opencli validate chatgpt/submit-file
-opencli validate chatgpt/oracle-wait
-oracle --dry-run summary --files-report \
-  --engine browser \
-  --browser-transport opencli \
-  --model gpt-5-pro \
-  -p "Audit this change for correctness and missing tests." \
-  --file "src/**"
+oracle browser install
 ```
 
-Then remove `--dry-run summary` to dispatch the sealed turn. To make OpenCLI the
-default browser transport, add this to `~/.oracle/config.json`:
+Open the dedicated profile for the one-time sign-in:
+
+```bash
+oracle browser setup
+```
+
+The command remains attached while the sign-in window is open. Sign in to
+ChatGPT, then close the **entire Chrome for Testing browser**; only then does
+setup return. Validate the steady-state transport without sending a prompt:
+
+```bash
+oracle browser smoke
+```
+
+The smoke performs two real cold starts against the same profile. Each cycle
+connects over `127.0.0.1`, verifies that ChatGPT is authenticated and the
+composer is ready, submits no prompt, closes Chrome, and waits for the endpoint
+to disappear before the second cycle. A passing result is direct evidence that
+the persisted login and unattended CDP attachment work after restart.
+
+Port `9333` is used by the smoke and ordinary CDP runs by default. Setup does
+not open a debugging port. If `9333` is occupied, choose another explicit port
+for the smoke and use the same value as `browser.debugPort`:
+
+```bash
+oracle browser smoke --port 9444
+```
+
+## Configure the canonical browser lane
+
+`cdp` and the isolated persistent profile are the defaults in this fork. A
+deliberately explicit macOS configuration looks like this:
 
 ```json
 {
   "engine": "browser",
   "model": "gpt-5-pro",
   "browser": {
-    "transport": "opencli",
-    "modelStrategy": "select"
+    "transport": "cdp",
+    "chromePath": "/Users/you/.oracle/browsers/.../Google Chrome for Testing",
+    "manualLogin": true,
+    "manualLoginProfileDir": "/Users/you/.oracle/browser-profile",
+    "debugPort": 9333,
+    "cookieSync": false,
+    "hideWindow": true,
+    "modelStrategy": "select",
+    "thinkingTime": "pro",
+    "profileLockTimeoutMs": 300000,
+    "maxConcurrentTabs": 3
   }
 }
 ```
 
-Long GPT-5.6 Pro answers remain recoverable Oracle sessions:
+`oracle browser install` writes the exact `chromePath`; the abbreviated path
+above is illustrative. `hideWindow:true` keeps normal macOS runs headful but positions Oracle Chrome
+off-screen so ChatGPT still renders and trusted CDP clicks continue to work.
+`oracle browser setup` is always visible because signing in is a human action;
+it is an ordinary isolated Chrome launch with CDP disabled. Persistent CDP
+runs retain Chrome's renderer throttling, hang monitor, IPC flood protection,
+Safe Browsing, and real macOS Keychain behavior instead of inheriting the
+aggressive flags intended for short browser test jobs.
+Set `hideWindow:false` when you want every normal run visible for debugging.
+
+If ChatGPT displays a request-frequency gate before the user turn enters the
+conversation, Oracle records `promptSubmitted:false`,
+`submissionCommitted:false`, and `retrySafe:true`. It does not wait for an
+assistant that was never invoked, reattach, or automatically click Send again.
+
+Preview a consultation without touching the browser:
+
+```bash
+oracle --dry-run summary --files-report \
+  --engine browser \
+  --browser-transport cdp \
+  --model gpt-5-pro \
+  -p "Audit this change for correctness and missing tests." \
+  --file "src/**"
+```
+
+Remove `--dry-run summary` to dispatch. Long answers remain recoverable Oracle
+sessions:
 
 ```bash
 oracle status --hours 72
@@ -121,84 +210,113 @@ oracle --followup <session-id> \
   -p "Challenge the previous recommendation and return the final decision."
 ```
 
+Do not start a duplicate consultation merely because Pro is quiet. Oracle
+stores the conversation and runtime receipt so the existing run can be
+reattached instead.
+
 ## The GPT-5.6 Pro naming contract
 
-The effective browser target and its two UI controls have different names:
+The effective browser target and its UI controls have different names:
 
-| Layer                | Name            | Why                                                                                                |
-| -------------------- | --------------- | -------------------------------------------------------------------------------------------------- |
-| Human-facing product | **GPT-5.6 Pro** | Names the effective ChatGPT experience this fork targets.                                          |
-| Oracle browser alias | `gpt-5-pro`     | Stable CLI alias for the browser lane; it is not an OpenAI API model ID.                           |
-| ChatGPT model        | `GPT-5.6 Sol`   | Exact selected model evidence from the submission tab.                                             |
-| ChatGPT reasoning    | `Pro`           | Exact selected Intelligence tier; combined with the model above, it verifies the effective target. |
+| Layer                | Name            | Meaning                                                                        |
+| -------------------- | --------------- | ------------------------------------------------------------------------------ |
+| Human-facing product | **GPT-5.6 Pro** | The effective ChatGPT browser experience this fork targets.                    |
+| Oracle browser alias | `gpt-5-pro`     | Stable CLI alias for the moving current Pro browser lane; not an API model ID. |
+| ChatGPT model        | `GPT-5.6 Sol`   | Exact model Oracle selects and verifies in the live submission tab.            |
+| ChatGPT reasoning    | `Pro`           | Exact Intelligence tier Oracle selects and verifies for that model.            |
 
 `gpt-5.5-pro` remains Oracle's upstream API model/default and is intentionally
-not mass-renamed. Likewise, API reasoning mode for GPT-5.6 remains a separate
-provider contract. This fork's GPT-5.6 Pro label describes the browser lane.
+not renamed. Versioned legacy browser aliases remain pinned to their documented
+families; the unversioned `gpt-5-pro` alias moves with the current fork target.
 
-## What “unattended” means
+Picker evidence proves what Oracle requested in the visible UI. It cannot prove
+ChatGPT's server-side routing identity. This fork therefore also measures from
+the durable dispatch timestamp to the first stable captured answer and rejects
+every purported Pro reply captured in under 60 seconds. The rejected text is
+not printed or stored as trusted advisory evidence; only its digest and timing
+receipt survive. Waiting and reattaching later cannot make that same fast answer
+admissible. Passing 60 seconds is not positive proof of Pro—it only clears this
+known-fast failure class.
 
-Unattended means the normal consult does not stop for Chrome's local debugging
-approval. It does **not** mean bypassing account controls or pretending browser
-automation can never need a person.
+The gate is transport-independent and applies to both direct CDP and OpenCLI.
 
-Before submission, Oracle verifies the OpenCLI version, Browser Bridge, adapter
-contracts, target host, selected `Pro` state, and sealed artifact identity. Prompt
-and file contents are passed through mode-`0600` session artifacts rather than
-shell arguments. Model selection and submission share one Oracle-owned lock.
+## Window, concurrency, and recovery behavior
 
-After submission, Oracle records the conversation receipt before starting one
-`chatgpt oracle-wait` command. That command owns one isolated ephemeral tab for
-the entire long wait, observes the stored conversation on the same page, and
-explicitly releases the lease before returning Markdown. It does not spawn a
-new OpenCLI process or tab every few seconds. If a receipt exists, recovery
-retries the waiter only and never silently sends the turn twice. If submission
-may have happened but no durable receipt exists, Oracle marks the attempt
-ambiguous instead of guessing. There is no silent fallback to direct CDP.
+The normal direct-CDP lifecycle is deterministic:
 
-The picker receipt proves what Oracle requested in the submission tab; it cannot
-prove how ChatGPT routed the response server-side. This fork therefore measures
-from durable `dispatch-intent` to the captured stable answer and **rejects every
-sub-minute reply** as untrusted for GPT-5.6 Pro. The answer is not printed or
-stored as a trusted transcript. A slower reply is still not proof by timing
-alone—it remains subject to normal source and architecture review.
+1. Oracle acquires a profile/tab lease.
+2. It reuses the already-running dedicated Chrome only when the profile and
+   loopback DevTools receipt match; otherwise it cold-starts the profile.
+3. Every submission gets its own target identity and durable dispatch time.
+4. Long waiting happens inside the browser worker, not by repeatedly waking the
+   calling coding model or opening duplicate sessions.
+5. A recoverable connection drop reattaches to the stored conversation. It does
+   not silently submit the same turn again.
+6. Successful one-shots close their owned target; Chrome lifecycle follows the
+   recorded `keepBrowser` policy.
 
-Every Oracle-owned OpenCLI browser command internally requests background
-window mode. This is a no-focus policy, not headless browsing: Chrome may still
-be visibly open behind other windows or on the current desktop, but Oracle does
-not intentionally bring it to the foreground. The chosen policy is stored in
-session runtime metadata so mixed behavior can be audited instead of guessed
-from whether a window happened to be noticeable.
+Up to three ChatGPT tabs may share the dedicated profile by default. Startup and
+composer mutation are separately locked so parallel agents do not race one
+another into the same tab. Tune the soft tab limit with
+`browser.maxConcurrentTabs` or `ORACLE_BROWSER_MAX_CONCURRENT_TABS`.
 
-Human attention can still be required for first-time sign-in, expired sessions,
-account challenges, model entitlement, or an OpenCLI/ChatGPT contract change.
+## Alternative OpenCLI transport
+
+OpenCLI Browser Bridge remains useful when direct CDP cannot be launched or when
+an operator explicitly prefers the bridge. It is opt-in and never an automatic
+fallback:
+
+```json
+{
+  "browser": {
+    "transport": "opencli",
+    "modelStrategy": "select"
+  }
+}
+```
+
+Install and validate the companion adapters before using that path:
+
+```bash
+npm install -g @jackwener/opencli@1.8.6
+node scripts/install-opencli-submit-file-adapter.mjs
+opencli validate chatgpt/submit-file
+opencli validate chatgpt/oracle-wait
+```
+
+OpenCLI owns its own browser/window behavior and ephemeral tab leases. Oracle
+still owns the sealed payload, dispatch journal, conversation receipt, answer,
+and waiter-only recovery. There is no OpenCLI-to-CDP or CDP-to-OpenCLI fallback
+after dispatch. See [OpenCLI alternative transport](docs/opencli-transport.md).
 
 ## Current fork scope
 
-| Capability                            | OpenCLI transport         |
-| ------------------------------------- | ------------------------- |
-| New GPT-5.6 Pro text consult          | Yes                       |
-| Sealed files and prompt               | Yes                       |
-| Durable conversation receipt          | Yes                       |
-| Answer recovery without resubmission  | Yes                       |
-| Oracle `--followup` lineage           | Yes                       |
-| Sub-minute Pro-answer admission       | Hard reject               |
-| Same-invocation `--browser-follow-up` | Not yet; use `--followup` |
-| Deep Research                         | No; fails before dispatch |
-| Image generation                      | No; fails before dispatch |
-| Silent fallback to CDP                | Never                     |
+| Capability                                | Dedicated CDP |       OpenCLI alternative |
+| ----------------------------------------- | ------------: | ------------------------: |
+| New GPT-5.6 Pro text consult              |           Yes |                       Yes |
+| Persistent isolated ChatGPT login         |           Yes |      Browser Bridge-owned |
+| No recurring personal-Chrome Allow dialog |           Yes |                       Yes |
+| Files and prompt                          |           Yes |     Yes, sealed artifacts |
+| Durable conversation receipt              |           Yes |                       Yes |
+| Recovery without resubmission             |           Yes |                       Yes |
+| Oracle `--followup` lineage               |           Yes |                       Yes |
+| Same-invocation browser follow-ups        |           Yes |      No; use `--followup` |
+| Deep Research                             |           Yes | No; fails before dispatch |
+| Image generation/download                 |           Yes | No; fails before dispatch |
+| Sub-minute Pro-answer admission           |   Hard reject |               Hard reject |
+| Automatic cross-transport fallback        |         Never |                     Never |
 
-The legacy CDP, attach-running, Gemini web, API, MCP, and render paths remain
-available when selected explicitly. See [Browser Mode](docs/browser-mode.md) for
-their separate setup and trust boundaries.
+Attach-running against a personal Chrome, remote Chrome, Gemini web, API, MCP,
+and render paths remain available as separate explicit modes. Their trust and
+account boundaries are documented in [Browser Mode](docs/browser-mode.md).
 
 ## Upstream Oracle
 
 Oracle is a CLI and MCP server that bundles a prompt with selected files, sends
 that context through an API or signed-in browser, and stores the result as a
-session. The upstream distribution supports OpenAI, Azure OpenAI, Anthropic,
-Gemini, xAI, OpenRouter, compatible endpoints, direct Chrome automation, and a
-manual `--render --copy` fallback.
+session. Upstream supports OpenAI, Azure OpenAI, Anthropic, Gemini, xAI,
+OpenRouter, compatible endpoints, direct Chrome automation, and a manual
+`--render --copy` fallback.
 
 Upstream packages:
 
@@ -209,19 +327,20 @@ npx -y @steipete/oracle --help
 ```
 
 Those commands install [steipete/oracle](https://github.com/steipete/oracle),
-not this fork's OpenCLI transport. Full upstream documentation is at
+not this fork. Full upstream documentation is at
 [askoracle.sh](https://askoracle.sh).
 
 ## Documentation
 
-| Start here                                                                      | Deeper reference                                           |
-| ------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| [OpenCLI transport design](docs/opencli-transport.md)                           | Ownership, state machine, recovery, privacy, and non-goals |
-| [Browser Mode](docs/browser-mode.md)                                            | OpenCLI setup plus explicit legacy browser paths           |
-| [Quickstart](docs/quickstart.md)                                                | First fork run, API path, render path, and reattach        |
-| [Coding Agents](docs/agents.md)                                                 | Codex, Claude Code, Cursor, CLI, and MCP patterns          |
-| [Sessions](docs/sessions.md) · [Follow-ups](docs/followup.md)                   | Durable runs and conversation lineage                      |
-| [Configuration](docs/configuration.md) · [CLI reference](docs/cli-reference.md) | Flags, config precedence, and limits                       |
+| Start here                                                                      | Deeper reference                                                              |
+| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [Dedicated Chrome transport](docs/dedicated-chrome.md)                          | Canonical topology, setup, lifecycle, privacy, and verification               |
+| [Browser Mode](docs/browser-mode.md)                                            | Direct CDP, attach-running, remote Chrome, OpenCLI, Deep Research, and images |
+| [Quickstart](docs/quickstart.md)                                                | First sign-in, smoke, first consult, API, render, and reattach                |
+| [OpenCLI alternative](docs/opencli-transport.md)                                | Sealed bridge handoff and waiter-only recovery                                |
+| [Coding Agents](docs/agents.md)                                                 | Codex, Claude Code, Cursor, CLI, and MCP patterns                             |
+| [Sessions](docs/sessions.md) · [Follow-ups](docs/followup.md)                   | Durable runs and conversation lineage                                         |
+| [Configuration](docs/configuration.md) · [CLI reference](docs/cli-reference.md) | Config precedence, flags, and limits                                          |
 
 ## Development
 
@@ -231,17 +350,19 @@ pnpm check
 pnpm test
 pnpm build
 pnpm docs:check
+pnpm test:packed-cli
 ```
 
-The narrow OpenCLI contract tests exercise a sealed new turn, an explicit
-stored-conversation follow-up, and single-waiter recovery without touching a
-real account. Manual browser/provider checks remain documented in
-[docs/manual-tests.md](docs/manual-tests.md).
+The admission tests cover both transports, including persistence of the first
+fast-answer timing receipt across reattach. `oracle browser smoke` is the
+account-safe live transport test: it cold-starts twice and never submits a
+conversation.
 
 ## Provenance and license
 
 This is a public fork of [steipete/oracle](https://github.com/steipete/oracle),
-preserving upstream history and MIT licensing. The OpenCLI transport is an
-independent fork feature and is not an upstream release or an OpenAI product.
+preserving upstream history and MIT licensing. The dedicated-profile defaults,
+transport-independent Pro admission gate, and OpenCLI alternative are fork
+features; this is not an upstream release or an OpenAI product.
 
 MIT. See [LICENSE](LICENSE).
