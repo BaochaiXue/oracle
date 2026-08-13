@@ -99,16 +99,18 @@ executable path.
 1. creates `~/.oracle/browser-profile` with owner-only directory permissions on
    Unix-like systems;
 2. launches a normal Chrome for Testing window with that directory, without CDP
-   or prompt automation (`--use-mock-keychain` is added on macOS when explicitly
-   configured);
+   or prompt automation, with browser sync and extensions disabled
+   (`--use-mock-keychain` is added on macOS when explicitly configured);
 3. opens `https://chatgpt.com/` visibly;
 4. submits no prompt and waits while the operator signs in;
 5. returns only after the entire sign-in browser exits.
 
-Sign in to ChatGPT in that window. Keep this profile narrowly scoped: do not use
-it as a general browser and do not sign unrelated accounts into it. Close the
-Chrome for Testing browser after sign-in so the cold-start validation can own
-the profile exclusively. Closing a single tab is insufficient.
+Sign in to ChatGPT in that window. Google OAuth may still authenticate the
+ChatGPT web session, but setup does not allow that account to import Chrome
+sync data or run unrelated extensions. Keep this profile narrowly scoped: do
+not use it as a general browser and do not sign unrelated accounts into it.
+Close the Chrome for Testing browser after sign-in so the cold-start validation
+can own the profile exclusively. Closing a single tab is insufficient.
 
 On macOS, the Chrome for Testing app identity does not own everyday Chrome's
 `Chrome Safe Storage` Keychain ACL. System-Keychain mode can therefore ask for

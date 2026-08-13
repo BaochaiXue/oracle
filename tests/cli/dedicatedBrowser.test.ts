@@ -26,6 +26,8 @@ describe("dedicated browser setup", () => {
       `--user-data-dir=${profileDir}`,
       "--no-first-run",
       "--no-default-browser-check",
+      "--disable-extensions",
+      "--disable-sync",
       "--new-window",
       "https://chatgpt.com/",
     ]);
@@ -33,6 +35,13 @@ describe("dedicated browser setup", () => {
     expect(args).not.toContain("--disable-background-timer-throttling");
     expect(args).not.toContain("--disable-hang-monitor");
     expect(args).not.toContain("--use-mock-keychain");
+  });
+
+  test("keeps Google sign-in from importing browser sync or extensions", () => {
+    const args = buildDedicatedSetupArgsForTest("/Users/example/.oracle/browser-profile");
+
+    expect(args).toContain("--disable-sync");
+    expect(args).toContain("--disable-extensions");
   });
 
   test("uses the mock keychain for unattended macOS cold starts when explicitly enabled", () => {

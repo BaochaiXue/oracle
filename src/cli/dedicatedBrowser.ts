@@ -193,6 +193,11 @@ function buildDedicatedSetupArgs(profileDir: string, useMockKeychain = false): s
     `--user-data-dir=${profileDir}`,
     "--no-first-run",
     "--no-default-browser-check",
+    // The setup window exists only to establish ChatGPT's web session. Keep a
+    // Google OAuth sign-in from turning the dedicated profile into a synced
+    // copy of the operator's normal browser or activating unrelated extensions.
+    "--disable-extensions",
+    "--disable-sync",
     ...(useMockKeychain && process.platform === "darwin" ? ["--use-mock-keychain"] : []),
     "--new-window",
     CHATGPT_URL,

@@ -130,7 +130,9 @@ oracle browser setup --use-mock-keychain
 
 The command remains attached while the sign-in window is open. Sign in to
 ChatGPT, then close the **entire Chrome for Testing browser**; only then does
-setup return. Validate the steady-state transport without sending a prompt:
+setup return. Setup disables browser sync and extensions, so a Google OAuth
+sign-in cannot turn the dedicated profile into a copy of the operator's normal
+browser. Validate the steady-state transport without sending a prompt:
 
 ```bash
 oracle browser smoke
