@@ -107,7 +107,7 @@ const consultInputShape = {
     .enum(["auto", "always", "never"])
     .optional()
     .describe(
-      'Browser-only: archive completed ChatGPT conversations after local artifacts are saved. "auto" archives successful non-project one-shots only.',
+      'Browser-only: control ChatGPT conversation archiving after local artifacts are saved. Defaults to "never"; "auto" archives successful non-project one-shots only.',
     ),
   browserFollowUps: z
     .array(z.string())

@@ -2,6 +2,13 @@
 
 ## 0.17.3 — Unreleased
 
+### Changed
+
+- Browser: preserve completed ChatGPT conversations by default so users can
+  inspect and continue the original Pro exchange. Automatic one-shot archiving
+  remains available as the explicit `--browser-archive auto` opt-in, with
+  `always` retained for archive-all-on-success workflows.
+
 ### Fixed
 
 - Direct CDP submission: foreground the exact ChatGPT target immediately before

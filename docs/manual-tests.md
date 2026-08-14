@@ -215,7 +215,7 @@ Confirm the logs report model `GPT-5.6 Sol` followed by `Thinking time: Pro`. An
 
 8. **Auto-archive smoke**
    `pnpm run oracle -- --engine browser --model gpt-5-pro --browser-thinking-time pro --browser-archive always --prompt "Reply exactly CHECK_ARCHIVE_OK."`
-   Confirm the output contains `CHECK_ARCHIVE_OK`, `oracle session <id> --render` still shows the transcript, and ChatGPT shows the conversation under archived chats rather than the active sidebar. Also confirm a default `--browser-archive auto` run with Deep Research or follow-ups is not archived.
+   Confirm the output contains `CHECK_ARCHIVE_OK`, `oracle session <id> --render` still shows the transcript, and ChatGPT shows the conversation under archived chats rather than the active sidebar. Also confirm a run with no archive flag remains visible by default, and an explicit `--browser-archive auto` run archives an ordinary successful one-shot but not Deep Research or follow-up runs.
 
 Record session IDs and outcomes in the PR description (pass/fail, notable delays). This ensures reviewers can audit real runs.
 

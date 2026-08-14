@@ -164,7 +164,7 @@ function logBrowserArchivePolicy(
   log: (message: string) => void,
   label: string,
 ) {
-  const mode = browserConfig?.archiveConversations ?? "auto";
+  const mode = browserConfig?.archiveConversations ?? "never";
   log(chalk.dim(`[${label}] ChatGPT archive policy: ${mode}.`));
 }
 

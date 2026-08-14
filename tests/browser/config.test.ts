@@ -44,7 +44,7 @@ describe("resolveBrowserConfig", () => {
     expect(resolved.attachmentTimeoutMs).toBe(45_000);
     expect(resolved.maxConcurrentTabs).toBe(3);
     expect(resolved.researchMode).toBe("off");
-    expect(resolved.archiveConversations).toBe("auto");
+    expect(resolved.archiveConversations).toBe("never");
   });
 
   test("does not apply dedicated-profile defaults to OpenCLI", () => {
@@ -52,6 +52,18 @@ describe("resolveBrowserConfig", () => {
 
     expect(resolved.manualLogin).toBe(false);
     expect(resolved.manualLoginProfileDir).toBeNull();
+  });
+
+  test("preserves explicit archive policy overrides", () => {
+    expect(resolveBrowserConfig({ archiveConversations: "auto" }).archiveConversations).toBe(
+      "auto",
+    );
+    expect(resolveBrowserConfig({ archiveConversations: "always" }).archiveConversations).toBe(
+      "always",
+    );
+    expect(resolveBrowserConfig({ archiveConversations: "never" }).archiveConversations).toBe(
+      "never",
+    );
   });
 
   test("treats explicit inline cookies as an ephemeral compatibility path", () => {

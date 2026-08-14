@@ -235,7 +235,7 @@ Notes:
 - `--browser-research deep`: activate ChatGPT Deep Research before submitting the prompt. Use this for broad public-web research and final cited reports, not as a replacement for GPT-5.x Pro Heavy code review or pure reasoning.
 - `--browser-follow-up <prompt>`: submit another prompt in the same ChatGPT conversation after the initial answer. Repeat the flag for multi-turn reviews such as “challenge your recommendation”, “compare against this constraint”, then “give the final decision”. Deep Research has its own report lifecycle, so browser follow-ups are rejected when `--browser-research deep` is enabled.
 - `--followup <session-id>`: reopen the exact saved ChatGPT conversation from a completed browser session. Oracle inherits the parent browser profile, configuration, and model, then verifies the thread and prior turns before submitting.
-- `--browser-archive <auto|always|never>`: archive completed ChatGPT conversations after local artifacts are saved. The default `auto` archives only successful one-shot chats and skips project, Deep Research, multi-turn, failed, and incomplete sessions.
+- `--browser-archive <auto|always|never>`: control ChatGPT conversation archiving after local artifacts are saved. The default `never` preserves the original conversation for inspection and manual follow-up. Explicit `auto` archives only successful one-shot chats and skips project, Deep Research, multi-turn, failed, and incomplete sessions.
 - `--browser-port <port>` (alias: `--browser-debug-port`; env: `ORACLE_BROWSER_PORT`/`ORACLE_BROWSER_DEBUG_PORT`): pin the DevTools port (handy on WSL/Windows firewalls). When omitted, a random open port is chosen.
 - `ORACLE_CHATGPT_ACCOUNT_EMAIL`: exact saved-account email to select if ChatGPT shows its “Welcome back” account picker. Set it on the machine running browser automation. Oracle never logs the address; without it, Oracle selects only a single unambiguous saved account and fails closed when several are present.
 - `--browser-manual-login` is the historical flag name for the persistent isolated profile and is enabled by default for direct CDP in this fork. `--browser-no-cookie-sync`, `--browser-headless`, `--browser-hide-window`, `--browser-keep-browser`, and global `-v/--verbose` control the explicit compatibility/visibility lifecycle.
@@ -304,9 +304,9 @@ When ChatGPT generates downloadable files in the assistant response (for example
 
 ### Conversation archiving
 
-Browser mode keeps the local session as the source of truth, so Oracle can optionally archive the ChatGPT conversation after a successful run. The default `--browser-archive auto` archives only successful non-project, non-Deep-Research, non-multi-turn one-shot chats after `transcript.md`, generated artifacts, the final answer, and the conversation URL are saved locally.
+Browser mode keeps both the local session and the original ChatGPT conversation by default. The default `--browser-archive never` leaves successful conversations visible for inspection, provenance, and manual follow-up even after `transcript.md`, generated artifacts, the final answer, and the conversation URL are saved locally.
 
-Oracle does not auto-archive failed, incomplete, running, project, Deep Research, or multi-turn sessions. Use `--browser-archive never` to disable archiving, or `--browser-archive always` when you explicitly want a successful browser conversation archived even outside the default one-shot policy. Archived chats are still visible and manageable from ChatGPT's own archive UI.
+Use `--browser-archive auto` to opt into cleanup of successful non-project, non-Deep-Research, non-multi-turn one-shot chats; failed, incomplete, running, project, Deep Research, and multi-turn sessions remain unarchived. Use `--browser-archive always` when you explicitly want every successful browser conversation archived. Archived chats are still visible and manageable from ChatGPT's own archive UI.
 
 ### ChatGPT Project Sources
 

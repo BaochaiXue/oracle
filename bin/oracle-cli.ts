@@ -838,7 +838,7 @@ program
   .addOption(
     new Option(
       "--browser-archive <mode>",
-      "Archive completed ChatGPT browser conversations after local artifacts are saved (auto archives successful non-project one-shots only).",
+      "Control ChatGPT conversation archiving after local artifacts are saved (default never preserves conversations; auto archives successful non-project one-shots only).",
     ).choices(["auto", "always", "never"]),
   )
   .addOption(

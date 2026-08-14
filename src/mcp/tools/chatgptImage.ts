@@ -51,7 +51,9 @@ const chatGptImageInputShape = {
   browserArchive: z
     .enum(["auto", "always", "never"])
     .optional()
-    .describe("Archive completed ChatGPT conversations after local artifacts are saved."),
+    .describe(
+      'Control ChatGPT conversation archiving after local artifacts are saved. Defaults to "never".',
+    ),
   browserKeepBrowser: z
     .boolean()
     .optional()

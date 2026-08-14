@@ -70,7 +70,7 @@ export const DEFAULT_BROWSER_CONFIG: ResolvedBrowserConfig = {
   manualLoginProfileDir: null,
   manualLoginCookieSync: false,
   researchMode: "off",
-  archiveConversations: "auto",
+  archiveConversations: "never",
   resumeConversationUrl: null,
 };
 
@@ -188,7 +188,9 @@ function normalizeResearchMode(value: unknown): "off" | "deep" {
 }
 
 function normalizeArchiveMode(value: unknown): "auto" | "always" | "never" {
-  return value === "always" || value === "never" ? value : "auto";
+  return value === "auto" || value === "always" || value === "never"
+    ? value
+    : DEFAULT_BROWSER_CONFIG.archiveConversations;
 }
 
 function parseDebugPort(raw?: string | null): number | null {

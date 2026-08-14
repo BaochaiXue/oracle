@@ -100,6 +100,11 @@ Put a project-level config at `.oracle/config.json` inside any project folder:
 }
 ```
 
+`browser.archiveConversations` defaults to `"never"`, preserving the original
+ChatGPT conversation for inspection and manual follow-up. Set it to `"auto"`
+to archive successful ordinary one-shot chats after local artifacts are saved,
+or `"always"` to archive every successful browser conversation.
+
 Oracle discovers every `.oracle/config.json` from the current directory upward
 until your home directory, then applies them from parent to child after the user
 config. Nested objects are merged, while scalars and arrays replace earlier

@@ -185,8 +185,10 @@ derives the HTTP timeout unless `--http-timeout` is supplied.
 - Use `--slug "<3-5 words>"` for readable session IDs.
 - If a run times out, reattach; do not re-run it. Use `--force` only when a
   genuinely new identical run is intended.
-- Successful non-project browser one-shots are archived automatically by
-  default; override with `--browser-archive never|always`.
+- ChatGPT conversations remain visible by default for inspection and manual
+  follow-up. Use `--browser-archive auto` to opt into archiving successful
+  ordinary one-shots, or `--browser-archive always` for explicit
+  archive-all-on-success behavior.
 
 ## Prompt template
 
