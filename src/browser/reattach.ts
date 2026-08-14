@@ -335,9 +335,9 @@ async function resumeBrowserSessionViaNewChrome(
     await DOM.enable();
   }
   if (!resolved.headless && resolved.hideWindow) {
-    await positionChromeWindowOffscreen(client, logger);
+    await positionChromeWindowOffscreen(client, userDataDir, logger);
   } else if (!resolved.headless) {
-    await positionChromeWindowOnscreen(client, logger);
+    await positionChromeWindowOnscreen(client, userDataDir, logger);
   }
   let appliedCookies = 0;
   if (shouldSyncBrowserCookies(resolved, { manualLogin })) {

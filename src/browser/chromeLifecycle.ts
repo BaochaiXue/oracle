@@ -1,7 +1,9 @@
-import { rm } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
+import path from "node:path";
 import CDP from "chrome-remote-interface";
 import { launch, Launcher, type LaunchedChrome } from "chrome-launcher";
+import type Protocol from "devtools-protocol";
 import type { BrowserLogger, ResolvedBrowserConfig, ChromeClient } from "./types.js";
 import { cleanupStaleProfileState } from "./profileState.js";
 import { delay } from "./utils.js";
@@ -55,27 +57,46 @@ export async function launchChrome(
 
 export async function positionChromeWindowOffscreen(
   client: ChromeClient,
+  userDataDir: string,
   logger: BrowserLogger,
 ): Promise<void> {
   if (process.platform !== "darwin") {
     logger("Window hiding is only supported on macOS");
     return;
   }
+  let savedState = false;
   try {
     const { windowId } = await client.Browser.getWindowForTarget();
+    if (!(await readSavedChromeWindowState(userDataDir))) {
+      const { bounds } = await client.Browser.getWindowBounds({ windowId });
+      const previousBounds = (await isLegacyOracleOffscreenWindow(client, bounds))
+        ? defaultOnscreenBounds(bounds)
+        : bounds;
+      await writeFile(
+        chromeWindowStatePath(userDataDir),
+        `${JSON.stringify({ version: 1, bounds: previousBounds })}\n`,
+        "utf8",
+      );
+      savedState = true;
+    }
     await client.Browser.setWindowBounds({
       windowId,
       bounds: { left: -32_000, top: -32_000, windowState: "normal" },
     });
-    logger("Chrome window positioned off-screen");
   } catch (error) {
+    if (savedState) {
+      await rm(chromeWindowStatePath(userDataDir), { force: true }).catch(() => undefined);
+    }
     const message = error instanceof Error ? error.message : String(error);
     logger(`Failed to position Chrome window off-screen: ${message}`);
+    return;
   }
+  logger("Chrome window positioned off-screen");
 }
 
 export async function positionChromeWindowOnscreen(
   client: ChromeClient,
+  userDataDir: string,
   logger: BrowserLogger,
 ): Promise<void> {
   if (process.platform !== "darwin") {
@@ -83,15 +104,127 @@ export async function positionChromeWindowOnscreen(
   }
   try {
     const { windowId } = await client.Browser.getWindowForTarget();
+    const savedState = await readSavedChromeWindowState(userDataDir);
+    if (savedState) {
+      await client.Browser.setWindowBounds({
+        windowId,
+        bounds: restoreWindowBounds(savedState.bounds),
+      });
+      await rm(chromeWindowStatePath(userDataDir), { force: true });
+      logger("Chrome window restored to its pre-hide bounds");
+      return;
+    }
+    const { bounds } = await client.Browser.getWindowBounds({ windowId });
+    if (!(await isLegacyOracleOffscreenWindow(client, bounds))) {
+      return;
+    }
     await client.Browser.setWindowBounds({
       windowId,
-      bounds: { left: 80, top: 80, windowState: "normal" },
+      bounds: defaultOnscreenBounds(bounds),
     });
-    logger("Chrome window positioned on-screen");
+    logger("Chrome window restored from legacy off-screen bounds");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger(`Failed to position Chrome window on-screen: ${message}`);
   }
+}
+
+const CHROME_WINDOW_STATE_FILENAME = "oracle-window-state.json";
+
+interface SavedChromeWindowState {
+  version: 1;
+  bounds: Protocol.Browser.Bounds;
+}
+
+interface BrowserScreenBounds {
+  availLeft: number;
+  availTop: number;
+  availWidth: number;
+  availHeight: number;
+}
+
+function chromeWindowStatePath(userDataDir: string): string {
+  return path.join(userDataDir, CHROME_WINDOW_STATE_FILENAME);
+}
+
+async function readSavedChromeWindowState(
+  userDataDir: string,
+): Promise<SavedChromeWindowState | null> {
+  try {
+    const parsed = JSON.parse(
+      await readFile(chromeWindowStatePath(userDataDir), "utf8"),
+    ) as Partial<SavedChromeWindowState>;
+    if (parsed.version !== 1 || !parsed.bounds || typeof parsed.bounds !== "object") {
+      return null;
+    }
+    return { version: 1, bounds: parsed.bounds };
+  } catch {
+    return null;
+  }
+}
+
+function restoreWindowBounds(bounds: Protocol.Browser.Bounds): Protocol.Browser.Bounds {
+  const windowState = bounds.windowState ?? "normal";
+  if (windowState !== "normal") {
+    return { windowState };
+  }
+  return {
+    left: bounds.left ?? 80,
+    top: bounds.top ?? 80,
+    width: bounds.width,
+    height: bounds.height,
+    windowState: "normal",
+  };
+}
+
+function defaultOnscreenBounds(bounds: Protocol.Browser.Bounds): Protocol.Browser.Bounds {
+  return {
+    left: 80,
+    top: 80,
+    width: bounds.width,
+    height: bounds.height,
+    windowState: "normal",
+  };
+}
+
+async function isLegacyOracleOffscreenWindow(
+  client: ChromeClient,
+  bounds: Protocol.Browser.Bounds,
+): Promise<boolean> {
+  if (
+    bounds.windowState !== "normal" ||
+    bounds.left === undefined ||
+    bounds.top === undefined ||
+    bounds.width === undefined ||
+    bounds.height === undefined
+  ) {
+    return false;
+  }
+  if (bounds.left >= 0) {
+    return false;
+  }
+  const evaluation = await client.Runtime.evaluate({
+    expression:
+      "({ availLeft: window.screen.availLeft, availTop: window.screen.availTop, availWidth: window.screen.availWidth, availHeight: window.screen.availHeight })",
+    returnByValue: true,
+  });
+  const screen = evaluation.result.value as BrowserScreenBounds | undefined;
+  if (!screen) {
+    return false;
+  }
+  const screenRight = screen.availLeft + screen.availWidth;
+  const screenBottom = screen.availTop + screen.availHeight;
+  const windowRight = bounds.left + bounds.width;
+  const windowBottom = bounds.top + bounds.height;
+  const visibleWidth = Math.max(
+    0,
+    Math.min(windowRight, screenRight) - Math.max(bounds.left, screen.availLeft),
+  );
+  const visibleHeight = Math.max(
+    0,
+    Math.min(windowBottom, screenBottom) - Math.max(bounds.top, screen.availTop),
+  );
+  return bounds.left < screen.availLeft && visibleWidth <= 64 && visibleHeight > 64;
 }
 
 export function registerTerminationHooks(

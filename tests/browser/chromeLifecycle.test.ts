@@ -162,43 +162,152 @@ describe("hidden-window launch flags", () => {
     }
   });
 
-  test("moves a running macOS Chrome window without minimizing it", async () => {
-    const { positionChromeWindowOffscreen } = await import("../../src/browser/chromeLifecycle.js");
+  test("restores the exact pre-hide bounds for a persistent macOS window", async () => {
+    const { positionChromeWindowOffscreen, positionChromeWindowOnscreen } =
+      await import("../../src/browser/chromeLifecycle.js");
+    const userDataDir = await mkdtemp(path.join(os.tmpdir(), "oracle-window-state-"));
     const browser = {
       getWindowForTarget: vi.fn().mockResolvedValue({ windowId: 7 }),
+      getWindowBounds: vi.fn().mockResolvedValue({
+        bounds: { left: 240, top: 120, width: 1100, height: 760, windowState: "normal" },
+      }),
       setWindowBounds: vi.fn().mockResolvedValue(undefined),
     };
     const logger = vi.fn();
 
-    await positionChromeWindowOffscreen({ Browser: browser } as never, logger as never);
+    try {
+      await positionChromeWindowOffscreen(
+        { Browser: browser } as never,
+        userDataDir,
+        logger as never,
+      );
+      await positionChromeWindowOnscreen(
+        { Browser: browser } as never,
+        userDataDir,
+        logger as never,
+      );
 
-    if (process.platform === "darwin") {
-      expect(browser.setWindowBounds).toHaveBeenCalledWith({
-        windowId: 7,
-        bounds: { left: -32_000, top: -32_000, windowState: "normal" },
-      });
-    } else {
-      expect(browser.setWindowBounds).not.toHaveBeenCalled();
+      if (process.platform === "darwin") {
+        expect(browser.setWindowBounds).toHaveBeenNthCalledWith(1, {
+          windowId: 7,
+          bounds: { left: -32_000, top: -32_000, windowState: "normal" },
+        });
+        expect(browser.setWindowBounds).toHaveBeenNthCalledWith(2, {
+          windowId: 7,
+          bounds: { left: 240, top: 120, width: 1100, height: 760, windowState: "normal" },
+        });
+      } else {
+        expect(browser.setWindowBounds).not.toHaveBeenCalled();
+      }
+    } finally {
+      await rm(userDataDir, { recursive: true, force: true });
     }
   });
 
-  test("restores a visible macOS Chrome window without resizing it", async () => {
+  test("preserves an ordinary visible macOS window", async () => {
     const { positionChromeWindowOnscreen } = await import("../../src/browser/chromeLifecycle.js");
+    const userDataDir = await mkdtemp(path.join(os.tmpdir(), "oracle-visible-window-"));
     const browser = {
       getWindowForTarget: vi.fn().mockResolvedValue({ windowId: 9 }),
+      getWindowBounds: vi.fn().mockResolvedValue({
+        bounds: { left: 320, top: 140, width: 1280, height: 720, windowState: "maximized" },
+      }),
+      setWindowBounds: vi.fn().mockResolvedValue(undefined),
+    };
+    const runtime = {
+      evaluate: vi.fn().mockResolvedValue({
+        result: {
+          value: { availLeft: 0, availTop: 29, availWidth: 1728, availHeight: 1080 },
+        },
+      }),
+    };
+    const logger = vi.fn();
+
+    try {
+      await positionChromeWindowOnscreen(
+        { Browser: browser, Runtime: runtime } as never,
+        userDataDir,
+        logger as never,
+      );
+
+      expect(browser.setWindowBounds).not.toHaveBeenCalled();
+    } finally {
+      await rm(userDataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("restores a pre-hide maximized macOS window without forcing normal bounds", async () => {
+    const { positionChromeWindowOffscreen, positionChromeWindowOnscreen } =
+      await import("../../src/browser/chromeLifecycle.js");
+    const userDataDir = await mkdtemp(path.join(os.tmpdir(), "oracle-maximized-window-"));
+    const browser = {
+      getWindowForTarget: vi.fn().mockResolvedValue({ windowId: 10 }),
+      getWindowBounds: vi.fn().mockResolvedValue({ bounds: { windowState: "maximized" } }),
       setWindowBounds: vi.fn().mockResolvedValue(undefined),
     };
     const logger = vi.fn();
 
-    await positionChromeWindowOnscreen({ Browser: browser } as never, logger as never);
+    try {
+      await positionChromeWindowOffscreen(
+        { Browser: browser } as never,
+        userDataDir,
+        logger as never,
+      );
+      await positionChromeWindowOnscreen(
+        { Browser: browser } as never,
+        userDataDir,
+        logger as never,
+      );
 
-    if (process.platform === "darwin") {
-      expect(browser.setWindowBounds).toHaveBeenCalledWith({
-        windowId: 9,
-        bounds: { left: 80, top: 80, windowState: "normal" },
-      });
-    } else {
-      expect(browser.setWindowBounds).not.toHaveBeenCalled();
+      if (process.platform === "darwin") {
+        expect(browser.setWindowBounds).toHaveBeenNthCalledWith(2, {
+          windowId: 10,
+          bounds: { windowState: "maximized" },
+        });
+      } else {
+        expect(browser.setWindowBounds).not.toHaveBeenCalled();
+      }
+    } finally {
+      await rm(userDataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("recovers a legacy Oracle-offscreen macOS window without saved state", async () => {
+    const { positionChromeWindowOnscreen } = await import("../../src/browser/chromeLifecycle.js");
+    const userDataDir = await mkdtemp(path.join(os.tmpdir(), "oracle-legacy-window-"));
+    const browser = {
+      getWindowForTarget: vi.fn().mockResolvedValue({ windowId: 11 }),
+      getWindowBounds: vi.fn().mockResolvedValue({
+        bounds: { left: -1240, top: 29, width: 1280, height: 720, windowState: "normal" },
+      }),
+      setWindowBounds: vi.fn().mockResolvedValue(undefined),
+    };
+    const runtime = {
+      evaluate: vi.fn().mockResolvedValue({
+        result: {
+          value: { availLeft: 0, availTop: 29, availWidth: 1280, availHeight: 803 },
+        },
+      }),
+    };
+    const logger = vi.fn();
+
+    try {
+      await positionChromeWindowOnscreen(
+        { Browser: browser, Runtime: runtime } as never,
+        userDataDir,
+        logger as never,
+      );
+
+      if (process.platform === "darwin") {
+        expect(browser.setWindowBounds).toHaveBeenCalledWith({
+          windowId: 11,
+          bounds: { left: 80, top: 80, width: 1280, height: 720, windowState: "normal" },
+        });
+      } else {
+        expect(browser.setWindowBounds).not.toHaveBeenCalled();
+      }
+    } finally {
+      await rm(userDataDir, { recursive: true, force: true });
     }
   });
 });
