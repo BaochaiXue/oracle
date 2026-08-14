@@ -10,6 +10,8 @@
 ### Fixed
 
 - Browser: detect a disabled ChatGPT effort tier (e.g. an exhausted Pro allotment) before clicking it, and report the account's own reset notice instead of a misleading "selection unverified" failure. Thanks @enieuwy!
+- Browser: restore locally launched macOS Chrome windows to an on-screen position for visible runs after a prior `--browser-hide-window` run moved the persistent window off-screen.
+
 ## 0.17.3 — 2026-08-13
 
 **Highlight:** browser-mode answers and recovery are reliable again — no more

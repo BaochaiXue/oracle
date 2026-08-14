@@ -74,6 +74,26 @@ export async function positionChromeWindowOffscreen(
   }
 }
 
+export async function positionChromeWindowOnscreen(
+  client: ChromeClient,
+  logger: BrowserLogger,
+): Promise<void> {
+  if (process.platform !== "darwin") {
+    return;
+  }
+  try {
+    const { windowId } = await client.Browser.getWindowForTarget();
+    await client.Browser.setWindowBounds({
+      windowId,
+      bounds: { left: 80, top: 80, windowState: "normal" },
+    });
+    logger("Chrome window positioned on-screen");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger(`Failed to position Chrome window on-screen: ${message}`);
+  }
+}
+
 export function registerTerminationHooks(
   chrome: LaunchedChrome,
   userDataDir: string,

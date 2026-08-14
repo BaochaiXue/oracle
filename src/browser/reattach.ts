@@ -17,6 +17,7 @@ import {
   launchChrome,
   connectToChrome,
   positionChromeWindowOffscreen,
+  positionChromeWindowOnscreen,
   connectToRemoteChromeTarget,
   listRemoteChromeTargets,
 } from "./chromeLifecycle.js";
@@ -335,6 +336,8 @@ async function resumeBrowserSessionViaNewChrome(
   }
   if (!resolved.headless && resolved.hideWindow) {
     await positionChromeWindowOffscreen(client, logger);
+  } else if (!resolved.headless) {
+    await positionChromeWindowOnscreen(client, logger);
   }
   let appliedCookies = 0;
   if (shouldSyncBrowserCookies(resolved, { manualLogin })) {
