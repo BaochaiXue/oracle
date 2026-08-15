@@ -24,6 +24,36 @@ const ENTER_KEY_EVENT = {
 } as const;
 const ENTER_KEY_TEXT = "\r";
 
+// Input.insertText gives ProseMirror plain text, but ProseMirror renders each
+// line as a direct block. HTMLElement.innerText inserts an extra newline
+// between those blocks, so an unchanged multiline prompt appears mutated.
+// Reconstruct the plain-text value from the editor blocks instead. Real text,
+// empty paragraphs, and explicit hard breaks remain identity-bearing.
+const COMPOSER_VALUE_READER_SOURCE = `
+      const readComposerValue = (node) => {
+        if (!node) return '';
+        if (node instanceof HTMLTextAreaElement) return node.value ?? '';
+        const readInlineText = (current) => {
+          if (current?.nodeType === Node.TEXT_NODE) return current.nodeValue ?? '';
+          if (!(current instanceof HTMLElement)) return '';
+          if (current.tagName === 'BR') {
+            return current.classList.contains('ProseMirror-trailingBreak') ? '' : '\\n';
+          }
+          return Array.from(current.childNodes).map(readInlineText).join('');
+        };
+        if (
+          node instanceof HTMLElement &&
+          (node.isContentEditable || node.getAttribute('contenteditable') === 'true')
+        ) {
+          const blocks = Array.from(node.children);
+          return blocks.length > 0
+            ? blocks.map(readInlineText).join('\\n')
+            : readInlineText(node);
+        }
+        return node.innerText ?? node.textContent ?? '';
+      };
+`;
+
 export interface AttachmentReadyExpectation {
   name: string;
   generatedBundle?: boolean;
@@ -116,11 +146,7 @@ export async function submitPrompt(
       const editor = document.querySelector(${primarySelectorLiteral});
       const fallback = document.querySelector(${fallbackSelectorLiteral});
       const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
-      const readValue = (node) => {
-        if (!node) return '';
-        if (node instanceof HTMLTextAreaElement) return node.value ?? '';
-        return node.innerText ?? '';
-      };
+      ${COMPOSER_VALUE_READER_SOURCE}
       const isVisible = (node) => {
         if (!node || typeof node.getBoundingClientRect !== 'function') return false;
         const rect = node.getBoundingClientRect();
@@ -131,9 +157,9 @@ export async function submitPrompt(
         .filter((node) => Boolean(node));
       const active = candidates.find((node) => isVisible(node)) || candidates[0] || null;
       return {
-        editorText: editor?.innerText ?? '',
+        editorText: readComposerValue(editor),
         fallbackValue: fallback?.value ?? '',
-        activeValue: active ? readValue(active) : '',
+        activeValue: readComposerValue(active),
       };
     })()`,
     returnByValue: true,
@@ -171,11 +197,7 @@ export async function submitPrompt(
       const editor = document.querySelector(${primarySelectorLiteral});
       const fallback = document.querySelector(${fallbackSelectorLiteral});
       const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
-      const readValue = (node) => {
-        if (!node) return '';
-        if (node instanceof HTMLTextAreaElement) return node.value ?? '';
-        return node.innerText ?? '';
-      };
+      ${COMPOSER_VALUE_READER_SOURCE}
       const isVisible = (node) => {
         if (!node || typeof node.getBoundingClientRect !== 'function') return false;
         const rect = node.getBoundingClientRect();
@@ -186,9 +208,9 @@ export async function submitPrompt(
         .filter((node) => Boolean(node));
       const active = candidates.find((node) => isVisible(node)) || candidates[0] || null;
       return {
-        editorText: editor?.innerText ?? '',
+        editorText: readComposerValue(editor),
         fallbackValue: fallback?.value ?? '',
-        activeValue: active ? readValue(active) : '',
+        activeValue: readComposerValue(active),
       };
     })()`,
     returnByValue: true,
@@ -685,11 +707,7 @@ async function attemptSendButton(
     const selectors = ${JSON.stringify(SEND_BUTTON_SELECTORS)};
     const expectedPrompt = ${expectedPromptLiteral};
     const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
-    const readValue = (node) => {
-      if (!node) return '';
-      if (node instanceof HTMLTextAreaElement) return node.value ?? '';
-      return node.innerText ?? '';
-    };
+    ${COMPOSER_VALUE_READER_SOURCE}
     const normalizeComposer = (value) => String(value ?? '')
       .replace(/\\r\\n?/g, '\\n')
       .replace(/\\u00a0/g, ' ');
@@ -717,7 +735,7 @@ async function attemptSendButton(
         .map((selector) => document.querySelector(selector))
         .filter((node) => Boolean(node));
       const active = inputs.find((node) => isVisible(node)) || inputs[0] || null;
-      const observed = readValue(active);
+      const observed = readComposerValue(active);
       if (normalizeComposer(observed) !== normalizeComposer(expectedPrompt)) {
         return { status: 'mutated', observedLength: observed.length };
       }
@@ -813,15 +831,11 @@ async function assertComposerUnchanged(
   const result = await Runtime.evaluate({
     expression: `(() => {
       const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
+      ${COMPOSER_VALUE_READER_SOURCE}
       const isVisible = (node) => {
         if (!node || typeof node.getBoundingClientRect !== 'function') return false;
         const rect = node.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0;
-      };
-      const readValue = (node) => {
-        if (!node) return '';
-        if (node instanceof HTMLTextAreaElement) return node.value ?? '';
-        return node.innerText ?? '';
       };
       const normalizeComposer = (value) => String(value ?? '')
         .replace(/\\r\\n?/g, '\\n')
@@ -830,7 +844,7 @@ async function assertComposerUnchanged(
         .map((selector) => document.querySelector(selector))
         .filter((node) => Boolean(node));
       const active = inputs.find((node) => isVisible(node)) || inputs[0] || null;
-      const observed = readValue(active);
+      const observed = readComposerValue(active);
       return {
         unchanged: normalizeComposer(observed) === normalizeComposer(${JSON.stringify(expectedPrompt)}),
         observedLength: observed.length,
@@ -1134,6 +1148,7 @@ function normalizeComposerText(value: string): string {
 // biome-ignore lint/style/useNamingConvention: test-only export used in vitest suite
 export const __test__ = {
   attemptSendButton,
+  composerValueReaderSource: COMPOSER_VALUE_READER_SOURCE,
   sendButtonTimeoutMs,
   verifyPromptCommitted,
 };

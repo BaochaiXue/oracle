@@ -10,6 +10,115 @@ import {
 } from "../../src/browser/constants.js";
 
 describe("promptComposer", () => {
+  test("reconstructs exact multiline text from ProseMirror blocks", () => {
+    class FakeNode {
+      static TEXT_NODE = 3;
+
+      nodeType = 1;
+      nodeValue: string | null = null;
+    }
+    class FakeText extends FakeNode {
+      override nodeType = FakeNode.TEXT_NODE;
+
+      constructor(override nodeValue: string) {
+        super();
+      }
+    }
+    class FakeElement extends FakeNode {
+      isContentEditable = false;
+
+      constructor(
+        readonly tagName: string,
+        readonly childNodes: FakeNode[] = [],
+        readonly classNames: string[] = [],
+      ) {
+        super();
+      }
+
+      get children() {
+        return this.childNodes.filter((node): node is FakeElement => node instanceof FakeElement);
+      }
+
+      get classList() {
+        return { contains: (name: string) => this.classNames.includes(name) };
+      }
+
+      getAttribute(name: string) {
+        return name === "contenteditable" && this.isContentEditable ? "true" : null;
+      }
+    }
+    class FakeTextArea extends FakeElement {
+      value = "";
+
+      constructor() {
+        super("TEXTAREA");
+      }
+    }
+
+    const paragraph = (text: string) => new FakeElement("P", [new FakeText(text)]);
+    const blankParagraph = new FakeElement("P", [
+      new FakeElement("BR", [], ["ProseMirror-trailingBreak"]),
+    ]);
+    const hardBreakParagraph = new FakeElement("P", [
+      new FakeText("line 3"),
+      new FakeElement("BR"),
+      new FakeText("continued"),
+    ]);
+    const editor = new FakeElement("DIV", [
+      paragraph("line 1"),
+      blankParagraph,
+      paragraph("line 2"),
+      hardBreakParagraph,
+    ]);
+    editor.isContentEditable = true;
+
+    const readComposerValue = Function(
+      "node",
+      "Node",
+      "HTMLElement",
+      "HTMLTextAreaElement",
+      `${promptComposer.composerValueReaderSource}\nreturn readComposerValue(node);`,
+    ) as (
+      node: FakeElement,
+      nodeClass: typeof FakeNode,
+      elementClass: typeof FakeElement,
+      textareaClass: typeof FakeTextArea,
+    ) => string;
+
+    expect(readComposerValue(editor, FakeNode, FakeElement, FakeTextArea)).toBe(
+      "line 1\n\nline 2\nline 3\ncontinued",
+    );
+  });
+
+  test("keeps textarea values byte-for-byte apart from newline normalization", () => {
+    class FakeNode {
+      static TEXT_NODE = 3;
+    }
+    class FakeElement {}
+    class FakeTextArea extends FakeElement {
+      constructor(readonly value: string) {
+        super();
+      }
+    }
+    const textarea = new FakeTextArea("first\r\nsecond");
+    const readComposerValue = Function(
+      "node",
+      "Node",
+      "HTMLElement",
+      "HTMLTextAreaElement",
+      `${promptComposer.composerValueReaderSource}\nreturn readComposerValue(node);`,
+    ) as (
+      node: FakeTextArea,
+      nodeClass: typeof FakeNode,
+      elementClass: typeof FakeElement,
+      textareaClass: typeof FakeTextArea,
+    ) => string;
+
+    expect(readComposerValue(textarea, FakeNode, FakeElement, FakeTextArea)).toBe(
+      "first\r\nsecond",
+    );
+  });
+
   test("fails composer clearing when stale text remains", async () => {
     const runtime = {
       evaluate: vi.fn().mockResolvedValue({
