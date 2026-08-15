@@ -909,9 +909,14 @@ function buildChromeFlags(
   useMockKeychain = false,
 ): string[] {
   const persistentProfileFlags = [
-    // A dedicated profile may stay alive for a long Pro turn. Keep Chrome's
-    // renderer throttling, hang monitor, IPC flood protection, Safe Browsing,
-    // and Safe Browsing behavior intact. Keychain behavior is selected below.
+    // A dedicated profile may stay alive behind the caller's active app for a
+    // long Pro turn. Do not let macOS window occlusion background that page:
+    // ChatGPT can render the full answer but delay its terminal UI transition
+    // until a human foregrounds the window, leaving Oracle on a stale Stop
+    // control. Keep ordinary timer/renderer throttling, the hang monitor, IPC
+    // flood protection, and Safe Browsing intact. Keychain behavior is selected
+    // below.
+    "--disable-backgrounding-occluded-windows",
     "--disable-component-extensions-with-background-pages",
     "--disable-default-apps",
     "--disable-extensions",

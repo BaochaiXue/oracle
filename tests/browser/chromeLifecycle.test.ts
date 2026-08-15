@@ -138,7 +138,7 @@ describe("persistent-profile launch flags", () => {
     expect(__macLaunchTest__.resolveMacAppBundle("/usr/bin/chromium")).toBeNull();
   });
 
-  test("keeps Chrome resource safeguards and the real keychain enabled", async () => {
+  test("keeps long Pro turns live without dropping persistent-profile safeguards", async () => {
     const { buildChromeFlagsForTest, resolveChromeLaunchOptionsForTest } =
       await import("../../src/browser/chromeLifecycle.js");
     const flags = buildChromeFlagsForTest(false, "127.0.0.1", false, true);
@@ -147,7 +147,9 @@ describe("persistent-profile launch flags", () => {
     expect(options.ignoreDefaultFlags).toBe(true);
     expect(options.chromeFlags).toContain("--remote-debugging-address=127.0.0.1");
     expect(options.chromeFlags).toContain("--disable-extensions");
+    expect(options.chromeFlags).toContain("--disable-backgrounding-occluded-windows");
     expect(options.chromeFlags).not.toContain("--disable-background-timer-throttling");
+    expect(options.chromeFlags).not.toContain("--disable-renderer-backgrounding");
     expect(options.chromeFlags).not.toContain("--disable-hang-monitor");
     expect(options.chromeFlags).not.toContain("--disable-ipc-flooding-protection");
     expect(options.chromeFlags).not.toContain("--safebrowsing-disable-auto-update");
