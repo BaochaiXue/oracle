@@ -107,10 +107,14 @@ export interface BrowserRuntimeMetadata {
   promptSubmitted?: boolean;
   /** PID of the controller process that launched this browser run. Helps detect orphaned sessions. */
   controllerPid?: number;
-  /** Dispatch timestamp used by the transport-independent Pro response admission gate. */
+  /** Dispatch timestamp used for transport-independent Pro response timing. */
   proDispatchAt?: string;
   /** First observed elapsed time from dispatch to a stable Pro answer. */
   proResponseElapsedMs?: number;
+  /** Estimated input tokens used by the workload-aware Pro timing guard. */
+  proInputTokens?: number;
+  /** Uploaded payload bytes used by the workload-aware Pro timing guard. */
+  proAttachmentBytes?: number;
   /** Oracle-owned operation reference for this OpenCLI dispatch attempt. */
   opencliOperationRef?: string;
   /** OpenCLI version verified before dispatch. */
@@ -119,7 +123,7 @@ export interface BrowserRuntimeMetadata {
   opencliPayloadSha256?: string;
   /** Browser Bridge window policy used for every tab lease in this operation. */
   opencliWindowMode?: "background" | "foreground";
-  /** Durable dispatch-intent timestamp used for Pro response-quality admission. */
+  /** Durable dispatch-intent timestamp used for Pro response timing. */
   opencliDispatchAt?: string;
   /** Elapsed wall time from dispatch intent to the captured stable assistant answer. */
   opencliResponseElapsedMs?: number;

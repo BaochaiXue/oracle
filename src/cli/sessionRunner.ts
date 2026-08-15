@@ -522,9 +522,9 @@ export async function performSessionRun({
     const cloudflareChallenge =
       userError?.category === "browser-automation" &&
       (userError.details as { stage?: string } | undefined)?.stage === "cloudflare-challenge";
-    const modelQualityRejected =
+    const missingDispatchReceipt =
       userError?.category === "browser-automation" &&
-      (userError.details as { stage?: string } | undefined)?.stage === "model-quality-gate";
+      (userError.details as { code?: string } | undefined)?.code === "dispatch-timestamp-missing";
     const submissionGate =
       userError?.category === "browser-automation" &&
       (userError.details as { code?: string } | undefined)?.code === "chatgpt-submission-gate";
@@ -757,7 +757,7 @@ export async function performSessionRun({
       mode === "browser" && browserCanReattach
         ? (userError?.details as { runtime?: BrowserRuntimeMetadata } | undefined)?.runtime
         : undefined;
-    if (!cloudflareChallenge && !modelQualityRejected && !submissionGate && browserCanReattach) {
+    if (!cloudflareChallenge && !missingDispatchReceipt && !submissionGate && browserCanReattach) {
       logBrowserReattachGuidance(browserRuntime ?? currentBrowser?.runtime);
     }
     const completedAt = new Date().toISOString();
@@ -1239,6 +1239,7 @@ async function autoReattachUntilComplete({
         promptPreview: sessionMeta.promptPreview,
       });
       captureSucceeded = true;
+      const responseRuntime = result.runtime ?? runtime;
       const answerText = result.answerMarkdown || result.answerText || "";
       const outputTokens = estimateTokenCount(answerText);
       const artifacts = await ensureSessionArtifacts({
@@ -1297,7 +1298,7 @@ async function autoReattachUntilComplete({
         browser: {
           ...browserMetadata,
           config: browserConfig,
-          runtime,
+          runtime: responseRuntime,
         },
         artifacts: mergeArtifacts(sessionMeta.artifacts, artifacts),
         response: { status: "completed" },
@@ -1307,6 +1308,42 @@ async function autoReattachUntilComplete({
       log(kleur.green("Auto-reattach succeeded; session marked completed."));
       return true;
     } catch (error) {
+      const timingError = asOracleUserError(error);
+      const terminalTimingRejection =
+        timingError?.category === "browser-automation" &&
+        (timingError.details as { code?: string } | undefined)?.code ===
+          "pro-fast-substantive-response-untrusted";
+      if (terminalTimingRejection) {
+        const errorRuntime = (
+          timingError.details as { runtime?: BrowserRuntimeMetadata } | undefined
+        )?.runtime;
+        const persistedError = {
+          category: timingError.category,
+          message: timingError.message,
+          details: timingError.details,
+        };
+        if (modelForStatus) {
+          await sessionStore.updateModelRun(sessionMeta.id, modelForStatus, {
+            status: "error",
+            completedAt: new Date().toISOString(),
+            response: { status: "error" },
+            error: persistedError,
+          });
+        }
+        await sessionStore.updateSession(sessionMeta.id, {
+          status: "error",
+          completedAt: new Date().toISOString(),
+          errorMessage: timingError.message,
+          browser: {
+            ...browserMetadata,
+            config: browserConfig,
+            runtime: errorRuntime ?? runtime,
+          },
+          response: { status: "error" },
+          error: persistedError,
+        });
+        throw error;
+      }
       if (captureSucceeded) {
         const message = formatError(error);
         if (modelForStatus) {

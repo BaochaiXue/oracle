@@ -53,8 +53,9 @@ Oracle buildPrompt
   → observe the same page until the new assistant Markdown is stable
   → explicitly close the waiter tab
   → measure dispatch intent to stable answer
-      ↳ sub-minute: record digest/timing and terminate as untrusted
-      ↳ admitted: persist answer and transcript
+      ↳ record elapsed time as telemetry
+      ↳ tiny workload: persist answer and transcript
+      ↳ substantive + sub-minute: retain digest/timing and fail closed
 ```
 
 Model selection happens for every turn and shares a lock with submission.
@@ -106,14 +107,15 @@ These names should not be collapsed:
 Oracle distinguishes failures by whether the browser may have accepted the
 turn:
 
-| Point of failure                                               | Oracle behavior                | Safe next action                         |
-| -------------------------------------------------------------- | ------------------------------ | ---------------------------------------- |
-| Preflight, auth, model verification, lock, or bundle integrity | Fails before dispatch          | Fix the reported condition and retry     |
-| Handoff began but no durable receipt was captured              | Marks the attempt ambiguous    | Reconcile manually; do not auto-resubmit |
-| Receipt exists but answer collection timed out                 | Keeps the conversation receipt | Resume the waiter only                   |
-| Stable answer arrives less than 60 seconds after dispatch      | Rejects it as untrusted        | Do not use it as Pro advice              |
-| Follow-up baseline cannot be established                       | Fails before dispatch          | Recover the stored conversation first    |
-| Stored remote conversation is missing                          | Stops                          | Never open a replacement chat silently   |
+| Point of failure                                               | Oracle behavior                 | Safe next action                          |
+| -------------------------------------------------------------- | ------------------------------- | ----------------------------------------- |
+| Preflight, auth, model verification, lock, or bundle integrity | Fails before dispatch           | Fix the reported condition and retry      |
+| Handoff began but no durable receipt was captured              | Marks the attempt ambiguous     | Reconcile manually; do not auto-resubmit  |
+| Receipt exists but answer collection timed out                 | Keeps the conversation receipt  | Resume the waiter only                    |
+| Tiny answer arrives quickly                                    | Accepts with timing telemetry   | Use normally                              |
+| Substantive answer arrives below 60 seconds                    | Rejects with digest/timing only | Inspect route evidence; do not use answer |
+| Follow-up baseline cannot be established                       | Fails before dispatch           | Recover the stored conversation first     |
+| Stored remote conversation is missing                          | Stops                           | Never open a replacement chat silently    |
 
 The central invariant is simple:
 
@@ -128,16 +130,15 @@ returns a second versioned row containing the new assistant index, digest,
 stable duration, and Markdown. Unknown versions or incomplete receipts fail
 closed.
 
-Model-picker evidence is request-side evidence, not server-routing proof. This
-fork applies an additional opinionated admission rule: it reads the durable
-`dispatch-intent` timestamp, measures until the stable assistant answer is
-captured, and rejects any result below 60 seconds with
-`pro-fast-response-untrusted`. Only the answer digest and timing evidence are
-kept; the text is not surfaced or persisted as a trusted transcript. Passing
-the threshold does not prove Pro routing—it only avoids this known-fast failure
-class. The first captured elapsed time is retained in session runtime metadata,
-so waiting a minute and reattaching cannot make the same rejected answer
-admissible.
+Model-picker evidence is request-side evidence, not server-routing proof. The
+transport reads the durable `dispatch-intent` timestamp and records elapsed time
+until the stable assistant answer is captured. Tiny workloads (at most 256
+estimated input tokens and 16 KiB of uploaded payload) are duration-exempt
+because a simple Pro request may legitimately complete in seconds. A substantive
+workload captured below 60 seconds fails closed with only its digest and timing
+evidence retained. The first captured elapsed time remains in session runtime
+metadata; very large workloads that pass the guard but finish before 120 seconds
+emit an additional warning.
 
 The long wait has a separate lifecycle invariant: one Oracle operation starts
 exactly one `chatgpt oracle-wait` process, and that process keeps exactly one
@@ -203,7 +204,8 @@ The repository tests cover:
 - explicit new-chat versus stored-conversation targets;
 - follow-up baseline markers;
 - one waiter command per harvest, with no polling process/tab fan-out;
-- hard rejection of sub-minute GPT-5.6 Pro answers measured from dispatch intent;
+- fast tiny-workload acceptance and substantive-workload timing rejection from
+  durable dispatch intent;
 - waiter-only reattach with no second model selection or dispatch;
 - generation-control detection that does not inspect answer prose;
 - supported OpenCLI/adapter contract versions;

@@ -15,10 +15,10 @@ import type {
 import { computeFileSha256 } from "./artifacts.js";
 import { acquireProfileRunLock } from "./profileState.js";
 import {
-  MIN_TRUSTED_PRO_RESPONSE_MS,
-  assertTrustedProResponse,
   elapsedSinceDispatch,
-} from "./proResponseAdmission.js";
+  recordProResponseTiming,
+  verifyStoredProResponseWorkloadTiming,
+} from "./proResponseTiming.js";
 import type { BrowserLogger, BrowserRunOptions, BrowserRunResult } from "./types.js";
 import { estimateTokenCount } from "./utils.js";
 
@@ -298,9 +298,9 @@ export async function runOpenCliBrowserMode(
   };
   if (!runtime.opencliDispatchAt) {
     throw new BrowserAutomationError(
-      "OpenCLI returned a conversation receipt without the durable dispatch timestamp required by Oracle's Pro response-quality gate.",
+      "OpenCLI returned a conversation receipt without the durable dispatch timestamp required for Pro response timing.",
       {
-        stage: "model-quality-gate",
+        stage: "response-timing",
         code: "dispatch-timestamp-missing",
         runtime,
       },
@@ -324,18 +324,9 @@ export async function runOpenCliBrowserMode(
       responseElapsedMs,
       at: capturedAt.toISOString(),
     });
-    if (responseElapsedMs !== undefined && responseElapsedMs < MIN_TRUSTED_PRO_RESPONSE_MS) {
-      await appendJournal(prepared.journalPath, {
-        event: "rejected",
-        operationRef,
-        conversationUrl,
-        code: "pro-fast-response-untrusted",
-        responseElapsedMs,
-        thresholdMs: MIN_TRUSTED_PRO_RESPONSE_MS,
-        at: capturedAt.toISOString(),
-      }).catch(() => undefined);
-    }
-    assertTrustedProResponse(answer, completedRuntime, capturedAt, { requireTimestamp: true });
+    const timedRuntime = recordProResponseTiming(completedRuntime, capturedAt, {
+      requireTimestamp: true,
+    });
     await appendJournal(prepared.journalPath, {
       event: "complete",
       operationRef,
@@ -351,7 +342,7 @@ export async function runOpenCliBrowserMode(
       tookMs: Date.now() - startedAt,
       answerTokens: estimateTokenCount(answer),
       answerChars: answer.length,
-      ...completedRuntime,
+      ...timedRuntime,
     };
   } catch (error) {
     if (error instanceof BrowserAutomationError) throw error;
@@ -368,7 +359,11 @@ export async function resumeOpenCliBrowserSession(
   config: BrowserSessionConfig | undefined,
   logger: BrowserLogger,
   deps: OpenCliTransportDeps = {},
-): Promise<{ answerText: string; answerMarkdown: string }> {
+): Promise<{
+  answerText: string;
+  answerMarkdown: string;
+  runtime: BrowserRuntimeMetadata;
+}> {
   const context = await preflightOpenCli(config ?? {}, deps);
   const conversationUrl = runtime.tabUrl;
   if (!extractConversationId(conversationUrl)) {
@@ -379,8 +374,12 @@ export async function resumeOpenCliBrowserSession(
   }
   const answer = await captureDetail(context, runtime, config ?? {});
   const capturedAt = deps.now?.() ?? new Date();
-  assertTrustedProResponse(answer, runtime, capturedAt);
-  return { answerText: answer, answerMarkdown: answer };
+  const timedRuntime = verifyStoredProResponseWorkloadTiming({
+    answer,
+    runtime,
+    capturedAt,
+  });
+  return { answerText: answer, answerMarkdown: answer, runtime: timedRuntime };
 }
 
 async function preflightOpenCli(

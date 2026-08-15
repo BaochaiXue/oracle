@@ -89,7 +89,7 @@ describe("resumeBrowserSession", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
-  test("does not recover around a persisted sub-minute Pro rejection", async () => {
+  test("accepts a persisted sub-minute Pro response without reopening the conversation", async () => {
     const runtime = {
       chromePort: 51559,
       chromeHost: "127.0.0.1",
@@ -97,6 +97,7 @@ describe("resumeBrowserSession", () => {
       tabUrl: "https://chatgpt.com/c/fast-pro",
       proDispatchAt: "2026-08-13T00:00:00.000Z",
       proResponseElapsedMs: 12_000,
+      proInputTokens: 83,
     };
     const listTargets = vi.fn(
       async () =>
@@ -140,10 +141,70 @@ describe("resumeBrowserSession", () => {
           waitForConversationHydration: vi.fn(async () => 2),
         },
       ),
+    ).resolves.toMatchObject({
+      answerText: "fast answer",
+      answerMarkdown: "fast answer",
+      runtime: expect.objectContaining({ proResponseElapsedMs: 12_000, proInputTokens: 83 }),
+    });
+    expect(close).toHaveBeenCalledOnce();
+    expect(recoverSession).not.toHaveBeenCalled();
+  });
+
+  test("keeps a persisted fast substantive Pro response rejected on reattach", async () => {
+    const runtime = {
+      chromePort: 51559,
+      chromeHost: "127.0.0.1",
+      chromeTargetId: "target-1",
+      tabUrl: "https://chatgpt.com/c/fast-substantive-pro",
+      proDispatchAt: "2026-08-13T00:00:00.000Z",
+      proResponseElapsedMs: 19_000,
+      proInputTokens: 4_096,
+      proAttachmentBytes: 0,
+    };
+    const close = vi.fn(async () => {});
+    const recoverSession = vi.fn(async () => ({
+      answerText: "must not recover",
+      answerMarkdown: "must not recover",
+    }));
+    const logger = vi.fn() as BrowserLogger;
+
+    await expect(
+      resumeBrowserSession(
+        runtime,
+        { timeoutMs: 2_000, thinkingTime: "pro", modelStrategy: "select" },
+        logger,
+        {
+          listTargets: async () => [{ targetId: "target-1", type: "page", url: runtime.tabUrl }],
+          connect: async () =>
+            ({
+              Runtime: {
+                enable: vi.fn(),
+                evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+                  if (expression === "location.href") {
+                    return { result: { value: runtime.tabUrl } };
+                  }
+                  if (expression === "1+1") return { result: { value: 2 } };
+                  return { result: { value: null } };
+                }),
+              },
+              DOM: { enable: vi.fn() },
+              close,
+            }) as unknown as ChromeClient,
+          recoverSession,
+          waitForAssistantResponse: vi.fn(async () => ({
+            text: "implausibly fast engineering review",
+            html: "",
+            meta: { messageId: "m1", turnId: "conversation-turn-1" },
+          })),
+          captureAssistantMarkdown: vi.fn(async () => "implausibly fast engineering review"),
+          waitForConversationHydration: vi.fn(async () => 2),
+        },
+      ),
     ).rejects.toMatchObject({
       details: expect.objectContaining({
-        stage: "model-quality-gate",
-        code: "pro-fast-response-untrusted",
+        code: "pro-fast-substantive-response-untrusted",
+        inputTokens: 4_096,
+        responseElapsedMs: 19_000,
       }),
     });
     expect(close).toHaveBeenCalledOnce();

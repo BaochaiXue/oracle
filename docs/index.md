@@ -95,10 +95,11 @@ security boundary, and two-cold-start acceptance test.
 - `Pro` is the selected reasoning tier.
 
 The picker proves requested UI state, not hidden server-side routing. Oracle
-therefore also rejects every purported Pro response first captured in under 60
-seconds. The answer text is not trusted or persisted as advisory evidence; the
-timing and digest are retained, and reattach cannot launder the same fast
-answer by waiting longer.
+records dispatch-to-answer elapsed time and applies a workload-aware anomaly
+guard: tiny prompts may legitimately finish quickly, while a substantive Pro
+bundle first captured below 60 seconds is rejected with only digest/timing
+evidence retained. Very large runs that pass that guard but still finish
+unexpectedly quickly emit an additional warning.
 
 ## Explicit alternatives
 
@@ -115,7 +116,7 @@ Deep Research, image generation, and render/copy are separate documented paths.
 
 - **Understand the fork.** [Dedicated Chrome transport](dedicated-chrome.md)
   explains the canonical topology, first login, smoke, runtime receipts,
-  admission gate, privacy boundary, and recovery invariants.
+  response timing, privacy boundary, and recovery invariants.
 - **Run a consultation.** [Quickstart](quickstart.md) covers first setup, direct
   CDP, API, render, and reattach.
 - **See every browser feature.** [Browser Mode](browser-mode.md) covers direct

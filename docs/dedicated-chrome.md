@@ -296,36 +296,40 @@ turn commits, Oracle stops the commit wait promptly and stores a terminal
 `retrySafe:true`. Recovery deliberately does not reattach or resubmit: the
 operator may start a new attempt after the page/account gate clears.
 
-## Pro response admission
+## Pro request evidence and response timing
 
 The ChatGPT picker is request-side evidence. It proves that Oracle selected the
 model and reasoning controls visible in the submission tab, not that the server
 honored an undocumented routing identity.
 
-This fork enforces one additional operator-defined rule for every run whose
-effective reasoning tier is `pro`:
+For every run whose effective reasoning tier is `pro`, Oracle records and
+classifies:
 
 ```text
 dispatch timestamp
        │
-       ├── first stable answer captured before 60s
-       │       → terminal model-quality-gate error
-       │       → keep timing + SHA-256 only
-       │       → do not print/store answer as trusted advice
-       │
-       └── first stable answer captured at or after 60s
-               → eligible for normal source/runtime review
-               → timing alone still does not prove Pro
+       └── first stable answer captured
+               ├── tiny workload (≤256 estimated tokens and ≤16 KiB upload)
+               │       → accept; simple Pro tasks can finish quickly
+               │
+               ├── substantive workload captured before 60s
+               │       → terminal response-timing error
+               │       → keep timing + SHA-256 only
+               │
+               └── substantive workload captured at or after 60s
+                       → retain for normal source/runtime review
+                       → timing alone still does not prove Pro
 ```
 
-The first observed elapsed time is durable runtime metadata. If a 12-second
-answer was rejected, reattaching twenty minutes later still evaluates the stored
-12-second receipt and rejects it. This prevents time-of-retrieval from laundering
-a known-fast answer. Old sessions created before this receipt existed remain
-readable; new Pro submissions fail closed if their dispatch timestamp is missing.
+The first observed elapsed time is durable runtime metadata. An 83-token fixed
+reply captured in 19 seconds is valid; a 4,096-token engineering review captured
+in 19 seconds is not. Runs at or above 25,000 input tokens that pass the
+60-second guard but finish before 120 seconds emit an additional warning. Old
+sessions created before the timing receipt existed remain readable; new Pro
+submissions fail closed if their dispatch timestamp is missing.
 
-The same admission module is used by direct CDP and the optional OpenCLI
-transport.
+The same workload-aware timing module is used by direct CDP and the optional
+OpenCLI transport.
 
 ## Window policy
 
@@ -410,8 +414,9 @@ The automated suite covers:
 - loopback debugging address on Oracle-launched Chrome;
 - current `gpt-5-pro` → `GPT-5.6 Sol` + `Pro` mapping;
 - dispatch receipt persistence through session results and reconnect errors;
-- sub-minute rejection and preservation of the first observed elapsed time;
-- reattach refusing to recover around a model-quality-gate rejection;
+- acceptance of fast tiny workloads and fail-closed rejection of fast
+  substantive workloads;
+- preservation of the first observed elapsed time across reattach;
 - direct-CDP versus explicit OpenCLI configuration boundaries.
 
 Return to [Browser Mode](browser-mode.md) for the full feature surface or the

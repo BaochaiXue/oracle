@@ -25,6 +25,7 @@ import {
   formatBrowserModelTarget,
   resolveBrowserModelDisplayName,
 } from "./modelDisplay.js";
+import { assertProResponseWorkloadTiming } from "./proResponseTiming.js";
 
 export interface BrowserExecutionResult {
   usage: {
@@ -137,6 +138,11 @@ export async function runBrowserSessionExecution(
 ): Promise<BrowserExecutionResult> {
   const assemblePrompt = deps.assemblePrompt ?? assembleBrowserPrompt;
   const promptArtifacts = await assemblePrompt(runOptions, { cwd });
+  const proInputTokens = promptArtifacts.estimatedInputTokens;
+  const proAttachmentBytes = promptArtifacts.attachments.reduce(
+    (total, attachment) => total + (attachment.sizeBytes ?? 0),
+    0,
+  );
   if (runOptions.verbose) {
     log(
       chalk.dim(
@@ -227,6 +233,8 @@ export async function runBrowserSessionExecution(
         const runtimeWithController = {
           ...runtime,
           controllerPid: runtime.controllerPid ?? process.pid,
+          proInputTokens,
+          proAttachmentBytes,
         };
         if (modelSelection) {
           await persistRuntimeHint(runtimeWithController, modelSelection);
@@ -237,6 +245,21 @@ export async function runBrowserSessionExecution(
     });
   } catch (error) {
     if (error instanceof BrowserAutomationError) {
+      const errorRuntime = error.details?.runtime;
+      if (errorRuntime && typeof errorRuntime === "object") {
+        throw new BrowserAutomationError(
+          error.message,
+          {
+            ...error.details,
+            runtime: {
+              ...(errorRuntime as BrowserRuntimeMetadata),
+              proInputTokens,
+              proAttachmentBytes,
+            },
+          },
+          error,
+        );
+      }
       throw error;
     }
     const message = error instanceof Error ? error.message : "Browser automation failed.";
@@ -248,6 +271,40 @@ export async function runBrowserSessionExecution(
     log(
       `[browser] Model selection evidence: ${formatBrowserModelSelectionEvidence(modelSelection, runOptions.model)}`,
     );
+  }
+  const browserRuntime: BrowserRuntimeMetadata = {
+    browserTransport: browserResult.browserTransport,
+    chromePid: browserResult.chromePid,
+    chromePort: browserResult.chromePort,
+    chromeHost: browserResult.chromeHost,
+    chromeBrowserWSEndpoint: browserResult.chromeBrowserWSEndpoint,
+    chromeProfileRoot: browserResult.chromeProfileRoot,
+    userDataDir: browserResult.userDataDir,
+    chromeTargetId: browserResult.chromeTargetId,
+    tabUrl: browserResult.tabUrl,
+    conversationId: browserResult.conversationId,
+    promptSubmitted: browserResult.promptSubmitted,
+    controllerPid: browserResult.controllerPid ?? process.pid,
+    proDispatchAt: browserResult.proDispatchAt,
+    proResponseElapsedMs: browserResult.proResponseElapsedMs,
+    proInputTokens,
+    proAttachmentBytes,
+    opencliOperationRef: browserResult.opencliOperationRef,
+    opencliVersion: browserResult.opencliVersion,
+    opencliPayloadSha256: browserResult.opencliPayloadSha256,
+    opencliWindowMode: browserResult.opencliWindowMode,
+    opencliDispatchAt: browserResult.opencliDispatchAt,
+    opencliResponseElapsedMs: browserResult.opencliResponseElapsedMs,
+    opencliBaselineAssistantIndex: browserResult.opencliBaselineAssistantIndex,
+    opencliBaselineAssistantSha256: browserResult.opencliBaselineAssistantSha256,
+  };
+  if (isRequestedProBrowserRun(runOptions, browserConfig, modelSelection)) {
+    assertProResponseWorkloadTiming({
+      answer: browserResult.answerMarkdown || browserResult.answerText || "",
+      runtime: browserRuntime,
+      inputTokens: proInputTokens,
+      attachmentBytes: proAttachmentBytes,
+    });
   }
   const warnings = buildBrowserRunWarnings({
     runOptions,
@@ -308,30 +365,7 @@ export async function runBrowserSessionExecution(
   return {
     usage,
     elapsedMs: browserResult.tookMs,
-    runtime: {
-      browserTransport: browserResult.browserTransport,
-      chromePid: browserResult.chromePid,
-      chromePort: browserResult.chromePort,
-      chromeHost: browserResult.chromeHost,
-      chromeBrowserWSEndpoint: browserResult.chromeBrowserWSEndpoint,
-      chromeProfileRoot: browserResult.chromeProfileRoot,
-      userDataDir: browserResult.userDataDir,
-      chromeTargetId: browserResult.chromeTargetId,
-      tabUrl: browserResult.tabUrl,
-      conversationId: browserResult.conversationId,
-      promptSubmitted: browserResult.promptSubmitted,
-      controllerPid: browserResult.controllerPid ?? process.pid,
-      proDispatchAt: browserResult.proDispatchAt,
-      proResponseElapsedMs: browserResult.proResponseElapsedMs,
-      opencliOperationRef: browserResult.opencliOperationRef,
-      opencliVersion: browserResult.opencliVersion,
-      opencliPayloadSha256: browserResult.opencliPayloadSha256,
-      opencliWindowMode: browserResult.opencliWindowMode,
-      opencliDispatchAt: browserResult.opencliDispatchAt,
-      opencliResponseElapsedMs: browserResult.opencliResponseElapsedMs,
-      opencliBaselineAssistantIndex: browserResult.opencliBaselineAssistantIndex,
-      opencliBaselineAssistantSha256: browserResult.opencliBaselineAssistantSha256,
-    },
+    runtime: browserRuntime,
     archive: browserResult.archive,
     modelSelection,
     warnings,

@@ -253,15 +253,16 @@ not renamed. Versioned legacy browser aliases remain pinned to their documented
 families; the unversioned `gpt-5-pro` alias moves with the current fork target.
 
 Picker evidence proves what Oracle requested in the visible UI. It cannot prove
-ChatGPT's server-side routing identity. This fork therefore also measures from
-the durable dispatch timestamp to the first stable captured answer and rejects
-every purported Pro reply captured in under 60 seconds. The rejected text is
-not printed or stored as trusted advisory evidence; only its digest and timing
-receipt survive. Waiting and reattaching later cannot make that same fast answer
-admissible. Passing 60 seconds is not positive proof of Pro—it only clears this
-known-fast failure class.
+ChatGPT's server-side routing identity. Oracle records the durable dispatch
+timestamp and elapsed time to the first stable captured answer. Tiny workloads
+(at most 256 estimated input tokens and 16 KiB of uploaded payload) may
+legitimately finish in seconds. Substantive workloads below that 60-second guard
+remain fail-closed as a routing-anomaly precaution; only the answer digest and
+timing evidence survive. Very large runs that pass the guard but still finish
+unexpectedly quickly emit an additional warning.
 
-The gate is transport-independent and applies to both direct CDP and OpenCLI.
+The workload-aware timing guard is transport-independent and applies to both
+direct CDP and OpenCLI.
 
 ## Window, concurrency, and recovery behavior
 
@@ -327,7 +328,7 @@ after dispatch. See [OpenCLI alternative transport](docs/opencli-transport.md).
 | Same-invocation browser follow-ups        |           Yes |      No; use `--followup` |
 | Deep Research                             |           Yes | No; fails before dispatch |
 | Image generation/download                 |           Yes | No; fails before dispatch |
-| Sub-minute Pro-answer admission           |   Hard reject |               Hard reject |
+| Workload-aware Pro timing guard           |           Yes |                       Yes |
 | Automatic cross-transport fallback        |         Never |                     Never |
 
 Attach-running against a personal Chrome, remote Chrome, Gemini web, API, MCP,
@@ -377,16 +378,16 @@ pnpm docs:check
 pnpm test:packed-cli
 ```
 
-The admission tests cover both transports, including persistence of the first
-fast-answer timing receipt across reattach. `oracle browser smoke` is the
-account-safe live transport test: it cold-starts twice and never submits a
-conversation.
+The timing tests cover both transports, including fast tiny-workload acceptance,
+substantive-workload rejection, and persistence across reattach. `oracle browser
+smoke` is the account-safe live transport test: it cold-starts twice and never
+submits a conversation.
 
 ## Provenance and license
 
 This is a public fork of [steipete/oracle](https://github.com/steipete/oracle),
 preserving upstream history and MIT licensing. The dedicated-profile defaults,
-transport-independent Pro admission gate, and OpenCLI alternative are fork
-features; this is not an upstream release or an OpenAI product.
+transport-independent workload-aware Pro timing guard, and OpenCLI alternative
+are fork features; this is not an upstream release or an OpenAI product.
 
 MIT. See [LICENSE](LICENSE).

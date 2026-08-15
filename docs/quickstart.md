@@ -141,11 +141,12 @@ oracle --dry-run summary --files-report --engine browser \
 reasoning tier `Pro`. Oracle verifies both controls in the submission tab and
 stores model-selection evidence with the session.
 
-A picker receipt is not server-routing proof. If the first stable answer arrives
-in under 60 seconds, Oracle terminates the run with
-`pro-fast-response-untrusted`, retains only digest/timing evidence, and does not
-surface that answer as Pro advice. A later reattach uses the first elapsed time;
-it cannot make the rejected response trusted by waiting.
+A picker receipt is not server-routing proof. Oracle also records the elapsed
+time from dispatch to the first stable answer. Tiny workloads (at most 256
+estimated input tokens and 16 KiB of uploaded payload) may legitimately finish
+quickly. A substantive Pro workload first captured below 60 seconds fails closed
+as a route-anomaly precaution; very large runs that pass that guard but still
+finish unexpectedly quickly emit an additional warning.
 
 ## 6. Recover or continue a long run
 

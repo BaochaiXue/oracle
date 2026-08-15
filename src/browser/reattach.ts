@@ -44,7 +44,7 @@ import { waitForDeepResearchCompletion } from "./actions/deepResearch.js";
 import { resumeOpenCliBrowserSession } from "./opencliTransport.js";
 import { ensureDedicatedBrowserProfileDirectory } from "./manualLoginProfile.js";
 import { BrowserAutomationError } from "../oracle/errors.js";
-import { assertTrustedProResponse, requiresProResponseAdmission } from "./proResponseAdmission.js";
+import { verifyStoredProResponseWorkloadTiming } from "./proResponseTiming.js";
 
 export interface ReattachDeps {
   listTargets?: () => Promise<TargetInfoLite[]>;
@@ -63,6 +63,7 @@ export interface ReattachDeps {
 export interface ReattachResult {
   answerText: string;
   answerMarkdown: string;
+  runtime?: BrowserRuntimeMetadata;
 }
 
 export async function resumeBrowserSession(
@@ -207,11 +208,16 @@ export async function resumeBrowserSession(
         timeoutMs + 5_000,
         "Reattach Deep Research response timed out",
       );
-      admitPersistedProResponse(researchResult.text, liveRuntime, config);
+      const responseRuntime = verifyStoredProResponseWorkloadTiming({
+        answer: researchResult.text,
+        runtime: liveRuntime,
+        capturedAt: new Date(),
+      });
       await closeAttached();
       return {
         answerText: researchResult.text,
         answerMarkdown: researchResult.text,
+        runtime: responseRuntime,
       };
     }
     const promptEcho = buildPromptEchoMatcher(deps.promptPreview);
@@ -235,13 +241,20 @@ export async function resumeBrowserSession(
         "Reattach markdown capture timed out",
       )) ?? recovered.text;
     const aligned = alignPromptEchoMarkdown(recovered.text, markdown, promptEcho, logger);
-    admitPersistedProResponse(aligned.answerText, liveRuntime, config);
-
+    const responseRuntime = verifyStoredProResponseWorkloadTiming({
+      answer: aligned.answerText,
+      runtime: liveRuntime,
+      capturedAt: new Date(),
+    });
     await closeAttached();
-    return { answerText: aligned.answerText, answerMarkdown: aligned.answerMarkdown };
+    return {
+      answerText: aligned.answerText,
+      answerMarkdown: aligned.answerMarkdown,
+      runtime: responseRuntime,
+    };
   } catch (error) {
     await closeAttached();
-    if (isModelQualityGateError(error)) {
+    if (isResponseTimingError(error)) {
       throw error;
     }
     const message = error instanceof Error ? error.message : String(error);
@@ -420,14 +433,20 @@ async function resumeBrowserSessionViaNewChrome(
         requireScopedTargetOwner: true,
       },
     );
+    let responseRuntime: BrowserRuntimeMetadata;
     try {
-      admitPersistedProResponse(researchResult.text, runtime, config);
+      responseRuntime = verifyStoredProResponseWorkloadTiming({
+        answer: researchResult.text,
+        runtime,
+        capturedAt: new Date(),
+      });
     } finally {
       await cleanup();
     }
     return {
       answerText: researchResult.text,
       answerMarkdown: researchResult.text,
+      runtime: responseRuntime,
     };
   }
   const promptEcho = buildPromptEchoMatcher(deps.promptPreview);
@@ -442,32 +461,26 @@ async function resumeBrowserSessionViaNewChrome(
   );
   const markdown = (await captureMarkdown(Runtime, recovered.meta, logger)) ?? recovered.text;
   const aligned = alignPromptEchoMarkdown(recovered.text, markdown, promptEcho, logger);
+  let responseRuntime: BrowserRuntimeMetadata;
   try {
-    admitPersistedProResponse(aligned.answerText, runtime, config);
+    responseRuntime = verifyStoredProResponseWorkloadTiming({
+      answer: aligned.answerText,
+      runtime,
+      capturedAt: new Date(),
+    });
   } finally {
     await cleanup();
   }
 
-  return { answerText: aligned.answerText, answerMarkdown: aligned.answerMarkdown };
+  return {
+    answerText: aligned.answerText,
+    answerMarkdown: aligned.answerMarkdown,
+    runtime: responseRuntime,
+  };
 }
 
-function admitPersistedProResponse(
-  answer: string,
-  runtime: BrowserRuntimeMetadata,
-  config: BrowserSessionConfig | undefined,
-): void {
-  if (!requiresProResponseAdmission(resolveBrowserConfig(config ?? {}))) return;
-  const hasAdmissionReceipt =
-    runtime.proDispatchAt !== undefined ||
-    runtime.proResponseElapsedMs !== undefined ||
-    runtime.opencliDispatchAt !== undefined ||
-    runtime.opencliResponseElapsedMs !== undefined;
-  if (!hasAdmissionReceipt) return;
-  assertTrustedProResponse(answer, runtime, new Date());
-}
-
-function isModelQualityGateError(error: unknown): boolean {
-  return error instanceof BrowserAutomationError && error.details?.stage === "model-quality-gate";
+function isResponseTimingError(error: unknown): boolean {
+  return error instanceof BrowserAutomationError && error.details?.stage === "response-timing";
 }
 
 async function readPromptPreviewTurnIndex(

@@ -239,52 +239,45 @@ describe("OpenCliBrowserTransport", () => {
     expect(result.opencliBaselineAssistantSha256).toMatch(/^[a-f0-9]{64}$/u);
   });
 
-  it("rejects a stable assistant answer captured less than one minute after dispatch", async () => {
+  it("accepts a stable assistant answer captured less than one minute after dispatch", async () => {
     const sessionDir = await createTempDir();
     const calls: string[][] = [];
     const events: string[] = [];
     const dispatchAt = "2026-08-13T01:00:00.000Z";
     const capturedAt = new Date("2026-08-13T01:00:42.000Z");
 
-    await expect(
-      runOpenCliBrowserMode(
-        {
-          prompt: "architecture review",
-          sessionId: "fast-mini-gate",
-          config: {
-            transport: "opencli",
-            desiredModel: "GPT-5.6 Pro",
-            modelStrategy: "select",
-            timeoutMs: 5_000,
-          },
+    const result = await runOpenCliBrowserMode(
+      {
+        prompt: "architecture review",
+        sessionId: "fast-mini-gate",
+        config: {
+          transport: "opencli",
+          desiredModel: "GPT-5.6 Pro",
+          modelStrategy: "select",
+          timeoutMs: 5_000,
         },
-        {
-          runCommand: successRunner(
-            calls,
-            events,
-            "https://chatgpt.com/c/fast-mini-answer",
-            false,
-            dispatchAt,
-          ),
-          resolveSessionDir: async () => sessionDir,
-          now: () => capturedAt,
-          randomId: () => "fast-turn",
-          acquireLock: async () => ({
-            path: "/test/lock",
-            lockId: "fast-lock",
-            release: async () => undefined,
-          }),
-        },
-      ),
-    ).rejects.toMatchObject({
-      message: expect.stringContaining("sub-minute replies are not trusted"),
-      details: {
-        stage: "model-quality-gate",
-        code: "pro-fast-response-untrusted",
-        responseElapsedMs: 42_000,
-        thresholdMs: 60_000,
       },
-    });
+      {
+        runCommand: successRunner(
+          calls,
+          events,
+          "https://chatgpt.com/c/fast-mini-answer",
+          false,
+          dispatchAt,
+        ),
+        resolveSessionDir: async () => sessionDir,
+        now: () => capturedAt,
+        randomId: () => "fast-turn",
+        acquireLock: async () => ({
+          path: "/test/lock",
+          lockId: "fast-lock",
+          release: async () => undefined,
+        }),
+      },
+    );
+
+    expect(result.answerText).toBe("Pro answer");
+    expect(result.proResponseElapsedMs).toBe(42_000);
 
     const artifactsDir = path.join(sessionDir, "artifacts");
     const journalName = (await fs.readdir(artifactsDir)).find((name) =>
@@ -293,8 +286,8 @@ describe("OpenCliBrowserTransport", () => {
     expect(journalName).toBeTruthy();
     const journal = await fs.readFile(path.join(artifactsDir, journalName!), "utf8");
     expect(journal).toContain('"event":"answer-captured"');
-    expect(journal).toContain('"event":"rejected"');
-    expect(journal).not.toContain('"event":"complete"');
+    expect(journal).not.toContain('"event":"rejected"');
+    expect(journal).toContain('"event":"complete"');
   });
 
   it("refuses to harvest when a successful receipt lacks a durable dispatch timestamp", async () => {
@@ -331,7 +324,7 @@ describe("OpenCliBrowserTransport", () => {
       ),
     ).rejects.toMatchObject({
       details: {
-        stage: "model-quality-gate",
+        stage: "response-timing",
         code: "dispatch-timestamp-missing",
       },
     });
@@ -369,7 +362,7 @@ describe("OpenCliBrowserTransport", () => {
     expect(calls.some((args) => args[0] === "chatgpt" && args[1] === "detail")).toBe(false);
   });
 
-  it("keeps a previously captured sub-minute answer rejected on later reattach", async () => {
+  it("accepts a previously captured sub-minute answer on later reattach", async () => {
     const calls: string[][] = [];
     const events: string[] = [];
     const runtime: BrowserRuntimeMetadata = {
@@ -392,12 +385,10 @@ describe("OpenCliBrowserTransport", () => {
           now: () => new Date("2026-08-13T01:10:00.000Z"),
         },
       ),
-    ).rejects.toMatchObject({
-      details: {
-        stage: "model-quality-gate",
-        code: "pro-fast-response-untrusted",
-        responseElapsedMs: 42_000,
-      },
+    ).resolves.toMatchObject({
+      answerText: "Pro answer",
+      answerMarkdown: "Pro answer",
+      runtime: expect.objectContaining({ opencliResponseElapsedMs: 42_000 }),
     });
 
     expect(events).toContain("oracle-wait");

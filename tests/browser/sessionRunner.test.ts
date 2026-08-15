@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import type { RunOracleOptions } from "../../src/oracle.js";
 import type { BrowserSessionConfig } from "../../src/sessionStore.js";
+import { BrowserAutomationError } from "../../src/oracle/errors.js";
 import {
   buildBrowserRunWarningsForTest,
   runBrowserSessionExecution,
@@ -46,6 +47,8 @@ describe("runBrowserSessionExecution", () => {
         answerTokens: 12,
         answerChars: 20,
         conversationId: "foo",
+        proDispatchAt: "2026-08-15T00:00:00.000Z",
+        proResponseElapsedMs: 18_854,
       };
     });
     const result = await runBrowserSessionExecution(
@@ -77,10 +80,22 @@ describe("runBrowserSessionExecution", () => {
       reasoningTokens: 0,
       totalTokens: 54,
     });
-    expect(result.runtime).toMatchObject({ chromePid: undefined, conversationId: "foo" });
+    expect(result.runtime).toMatchObject({
+      chromePid: undefined,
+      conversationId: "foo",
+      proResponseElapsedMs: 18_854,
+      proInputTokens: 42,
+      proAttachmentBytes: 0,
+    });
     expect(result.artifacts).toEqual([{ kind: "transcript", path: "/tmp/transcript.md" }]);
     expect(persistRuntimeHint).toHaveBeenCalledWith(
-      expect.objectContaining({ chromePort: 9999, chromeHost: "127.0.0.1", chromeTargetId: "t-1" }),
+      expect.objectContaining({
+        chromePort: 9999,
+        chromeHost: "127.0.0.1",
+        chromeTargetId: "t-1",
+        proInputTokens: 42,
+        proAttachmentBytes: 0,
+      }),
       expect.objectContaining({ resolvedLabel: "Pro", verified: true }),
     );
     expect(log).toHaveBeenCalled();
@@ -248,6 +263,97 @@ describe("runBrowserSessionExecution", () => {
         message: expect.stringContaining("Large browser Pro run completed quickly"),
       }),
     ]);
+  });
+
+  test("rejects a fast substantive Pro result before surfacing the answer", async () => {
+    const log = vi.fn();
+
+    await expect(
+      runBrowserSessionExecution(
+        {
+          runOptions: { ...baseRunOptions, model: "gpt-5-pro" },
+          browserConfig: { desiredModel: "GPT-5.6 Pro", thinkingTime: "pro" },
+          cwd: "/repo",
+          log,
+        },
+        {
+          assemblePrompt: async () => ({
+            markdown: "substantive prompt",
+            composerText: "substantive prompt",
+            estimatedInputTokens: 4_096,
+            attachments: [],
+            inlineFileCount: 1,
+            tokenEstimateIncludesInlineFiles: true,
+            attachmentsPolicy: "never",
+            attachmentMode: "inline",
+            fallback: null,
+          }),
+          executeBrowser: vi.fn(async () => ({
+            answerText: "private engineering review",
+            answerMarkdown: "private engineering review",
+            tookMs: 19_000,
+            answerTokens: 3,
+            answerChars: 26,
+            promptSubmitted: true,
+            proDispatchAt: "2026-08-15T00:00:00.000Z",
+            proResponseElapsedMs: 19_000,
+          })),
+        },
+      ),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "pro-fast-substantive-response-untrusted",
+        inputTokens: 4_096,
+        responseElapsedMs: 19_000,
+      }),
+    });
+
+    expect(log.mock.calls.map((call) => String(call[0])).join("\n")).not.toContain(
+      "private engineering review",
+    );
+  });
+
+  test("adds the Pro workload receipt to browser errors with recoverable runtime", async () => {
+    await expect(
+      runBrowserSessionExecution(
+        {
+          runOptions: { ...baseRunOptions, model: "gpt-5-pro" },
+          browserConfig: { desiredModel: "GPT-5.6 Pro", thinkingTime: "pro" },
+          cwd: "/repo",
+          log: vi.fn(),
+        },
+        {
+          assemblePrompt: async () => ({
+            markdown: "prompt",
+            composerText: "prompt",
+            estimatedInputTokens: 4_096,
+            attachments: [{ path: "/repo/input.bin", displayPath: "input.bin", sizeBytes: 20_000 }],
+            inlineFileCount: 0,
+            tokenEstimateIncludesInlineFiles: false,
+            attachmentsPolicy: "always",
+            attachmentMode: "upload",
+            fallback: null,
+          }),
+          executeBrowser: vi.fn(async () => {
+            throw new BrowserAutomationError("assistant timed out", {
+              stage: "assistant-timeout",
+              runtime: {
+                tabUrl: "https://chatgpt.com/c/recoverable",
+                promptSubmitted: true,
+                proDispatchAt: "2026-08-15T00:00:00.000Z",
+              },
+            });
+          }),
+        },
+      ),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        runtime: expect.objectContaining({
+          proInputTokens: 4_096,
+          proAttachmentBytes: 20_000,
+        }),
+      }),
+    });
   });
 
   test("passes ChatGPT image output paths into the browser runner", async () => {

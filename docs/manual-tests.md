@@ -190,7 +190,7 @@ Expect a near-instant response (no Thinking spinner) and confirm the composer pi
 
 2c. **GPT-5.6 Pro effort through the unified picker**
 `pnpm run oracle -- --engine browser --model gpt-5-pro --write-output response.txt --prompt "Say Hi!"`
-Confirm the logs report model `GPT-5.6 Sol` followed by `Thinking time: Pro`. An answer first captured under 60 seconds must terminate with `pro-fast-response-untrusted` and must not populate `response.txt` as trusted output; an admitted run may populate it. Exercise both a tab starting on another model and a retained tab where GPT-5.6 Sol is already selected. Never click ChatGPT's "Answer now" shortcut while the Pro response is thinking.
+Confirm the logs report model `GPT-5.6 Sol` followed by `Thinking time: Pro`, the tiny answer populates `response.txt`, and runtime metadata records dispatch-to-answer elapsed time even when it completes in under a minute. Then repeat with a bundle above 256 estimated input tokens and confirm a first stable answer below 60 seconds fails closed with `pro-fast-substantive-response-untrusted`. Exercise both a tab starting on another model and a retained tab where GPT-5.6 Sol is already selected. Never click ChatGPT's "Answer now" shortcut while the Pro response is thinking.
 
 3. **GPT-5.5 + attachment**
    Prepare `/tmp/browser-md.txt` with a short note, then run

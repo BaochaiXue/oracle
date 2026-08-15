@@ -122,7 +122,7 @@ import {
   extractStableConversationIdFromUrl as extractConversationIdFromUrl,
   isStableConversationUrl as isConversationUrl,
 } from "./conversationUrl.js";
-import { assertTrustedProResponse, requiresProResponseAdmission } from "./proResponseAdmission.js";
+import { recordProResponseTiming, requiresProResponseTiming } from "./proResponseTiming.js";
 
 export type { BrowserAutomationConfig, BrowserRunOptions, BrowserRunResult } from "./types.js";
 export { CHATGPT_URL, DEFAULT_MODEL_STRATEGY, DEFAULT_MODEL_TARGET } from "./constants.js";
@@ -957,7 +957,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
   let lastTargetId: string | undefined;
   let lastUrl: string | undefined;
   let promptSubmitted = false;
-  const proAdmissionRequired = requiresProResponseAdmission(config);
+  const proTimingRequired = requiresProResponseTiming(config);
   let proDispatchAt: string | undefined;
   let proResponseElapsedMs: number | undefined;
   let modelSelectionEvidence: BrowserModelSelectionEvidence | undefined;
@@ -996,7 +996,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     }
   };
   const markPromptDispatched = async (): Promise<void> => {
-    if (proAdmissionRequired && !proDispatchAt) {
+    if (proTimingRequired && !proDispatchAt) {
       proDispatchAt = new Date().toISOString();
     }
     await emitRuntimeHint();
@@ -1129,10 +1129,9 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
   }
   const { chrome, reusedChrome } = acquiredChrome;
   const chromeHost = (chrome as unknown as { host?: string }).host ?? "127.0.0.1";
-  const admitProResponse = (answer: string, capturedAt = new Date()): void => {
-    if (!proAdmissionRequired) return;
-    const admittedRuntime = assertTrustedProResponse(
-      answer,
+  const recordResponseTiming = (capturedAt = new Date()): void => {
+    if (!proTimingRequired) return;
+    const timedRuntime = recordProResponseTiming(
       {
         browserTransport: "cdp",
         chromePid: chrome.pid,
@@ -1150,7 +1149,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       capturedAt,
       { requireTimestamp: true },
     );
-    proResponseElapsedMs = admittedRuntime.proResponseElapsedMs;
+    proResponseElapsedMs = timedRuntime.proResponseElapsedMs;
   };
   if (tabLease) {
     await tabLease.update({
@@ -1584,7 +1583,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       await handle.release().catch(() => undefined);
     };
     const submitOnce = async (prompt: string, submissionAttachments: BrowserAttachment[]) => {
-      if (proAdmissionRequired) {
+      if (proTimingRequired) {
         proDispatchAt = undefined;
         proResponseElapsedMs = undefined;
       }
@@ -1806,7 +1805,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           },
         ),
       );
-      admitProResponse(researchResult.text);
+      recordResponseTiming();
       await updateConversationHint("post-deep-research", 15_000).catch(() => false);
       runStatus = "complete";
       const durationMs = Date.now() - startedAt;
@@ -2240,7 +2239,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
 
     const turns: BrowserConversationTurn[] = [];
     const initialTurn = await captureAssistantTurn(promptText, "Initial response");
-    admitProResponse(initialTurn.answerText);
+    recordResponseTiming();
     turns.push(initialTurn);
     answerText = initialTurn.answerText;
     answerMarkdown = initialTurn.answerMarkdown;
@@ -2271,7 +2270,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         await releaseProfileLockIfHeld();
       }
       const turn = await captureAssistantTurn(followUpPrompt, `Follow-up ${index + 1}`);
-      admitProResponse(turn.answerText);
+      recordResponseTiming();
       turns.push({ ...turn, prompt: followUpPrompt });
       answerText = turn.answerText;
       answerMarkdown = turn.answerMarkdown;
@@ -3002,7 +3001,7 @@ async function runRemoteBrowserMode(
   let tabLease: BrowserTabLease | null = null;
   let lastUrl: string | undefined;
   let promptSubmitted = false;
-  const proAdmissionRequired = requiresProResponseAdmission(config);
+  const proTimingRequired = requiresProResponseTiming(config);
   let proDispatchAt: string | undefined;
   let proResponseElapsedMs: number | undefined;
   let modelSelectionEvidence: BrowserModelSelectionEvidence | undefined;
@@ -3042,7 +3041,7 @@ async function runRemoteBrowserMode(
     }
   };
   const markPromptDispatched = async (): Promise<void> => {
-    if (proAdmissionRequired && !proDispatchAt) {
+    if (proTimingRequired && !proDispatchAt) {
       proDispatchAt = new Date().toISOString();
     }
     await emitRuntimeHint();
@@ -3066,10 +3065,9 @@ async function runRemoteBrowserMode(
   let connection: Awaited<ReturnType<typeof connectToRemoteChrome>> | null = null;
   const browserWSEndpoint = config.remoteChromeBrowserWSEndpoint ?? undefined;
   const chromeProfileRoot = config.remoteChromeProfileRoot ?? undefined;
-  const admitProResponse = (answer: string, capturedAt = new Date()): void => {
-    if (!proAdmissionRequired) return;
-    const admittedRuntime = assertTrustedProResponse(
-      answer,
+  const recordResponseTiming = (capturedAt = new Date()): void => {
+    if (!proTimingRequired) return;
+    const timedRuntime = recordProResponseTiming(
       {
         browserTransport: "cdp",
         chromePort: port,
@@ -3087,7 +3085,7 @@ async function runRemoteBrowserMode(
       capturedAt,
       { requireTimestamp: true },
     );
-    proResponseElapsedMs = admittedRuntime.proResponseElapsedMs;
+    proResponseElapsedMs = timedRuntime.proResponseElapsedMs;
   };
 
   try {
@@ -3276,7 +3274,7 @@ async function runRemoteBrowserMode(
       );
     }
     const submitOnce = async (prompt: string, submissionAttachments: BrowserAttachment[]) => {
-      if (proAdmissionRequired) {
+      if (proTimingRequired) {
         proDispatchAt = undefined;
         proResponseElapsedMs = undefined;
       }
@@ -3448,7 +3446,7 @@ async function runRemoteBrowserMode(
           targetBaselineCaptured: deepResearchTargetBaselineCaptured,
         },
       );
-      admitProResponse(researchResult.text);
+      recordResponseTiming();
       await activeConversationUrlMonitor.update("post-deep-research", 15_000).catch(() => false);
       const durationMs = Date.now() - startedAt;
       const tokens = estimateTokenCount(researchResult.text);
@@ -3840,7 +3838,7 @@ async function runRemoteBrowserMode(
     const followUpPrompts = normalizeBrowserFollowUpPrompts(options.followUpPrompts);
     const turns: BrowserConversationTurn[] = [];
     const initialTurn = await captureAssistantTurn(promptText, "Initial response");
-    admitProResponse(initialTurn.answerText);
+    recordResponseTiming();
     turns.push(initialTurn);
     answerText = initialTurn.answerText;
     answerMarkdown = initialTurn.answerMarkdown;
@@ -3865,7 +3863,7 @@ async function runRemoteBrowserMode(
       baselineTurns = submission.baselineTurns;
       baselineAssistantText = submission.baselineAssistantText;
       const turn = await captureAssistantTurn(followUpPrompt, `Follow-up ${index + 1}`);
-      admitProResponse(turn.answerText);
+      recordResponseTiming();
       turns.push({ ...turn, prompt: followUpPrompt });
       answerText = turn.answerText;
       answerMarkdown = turn.answerMarkdown;

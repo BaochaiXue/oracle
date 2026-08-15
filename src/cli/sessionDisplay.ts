@@ -6,7 +6,7 @@ import type {
   SessionTransportMetadata,
   SessionUserErrorMetadata,
 } from "../sessionStore.js";
-import type { OracleResponseMetadata } from "../oracle.js";
+import { asOracleUserError, type OracleResponseMetadata } from "../oracle.js";
 import { renderMarkdownAnsi } from "./markdownRenderer.js";
 import { formatFinishLine } from "../oracle/finishLine.js";
 import { sessionStore, wait } from "../sessionStore.js";
@@ -339,6 +339,7 @@ export async function attachSession(
         ),
         { promptPreview: metadata.promptPreview },
       );
+      const responseRuntime = result.runtime ?? runtime;
       const outputTokens = estimateTokenCount(result.answerMarkdown);
       const artifacts = await saveReattachBrowserArtifacts(sessionId, metadata, result);
       await writeReattachAnswer(
@@ -371,7 +372,7 @@ export async function attachSession(
         errorMessage: undefined,
         browser: {
           config: metadata.browser?.config,
-          runtime,
+          runtime: responseRuntime,
           modelSelection: metadata.browser?.modelSelection,
           warnings: metadata.browser?.warnings,
         },
@@ -385,6 +386,43 @@ export async function attachSession(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.log(chalk.red(`Reattach failed: ${message}`));
+      const timingError = asOracleUserError(error);
+      const terminalTimingRejection =
+        timingError?.category === "browser-automation" &&
+        (timingError.details as { code?: string } | undefined)?.code ===
+          "pro-fast-substantive-response-untrusted";
+      if (terminalTimingRejection) {
+        const errorRuntime = (
+          timingError.details as { runtime?: NonNullable<typeof runtime> } | undefined
+        )?.runtime;
+        const persistedError = {
+          category: timingError.category,
+          message: timingError.message,
+          details: timingError.details,
+        };
+        if (metadata.model) {
+          await sessionStore.updateModelRun(metadata.id, metadata.model, {
+            status: "error",
+            completedAt: new Date().toISOString(),
+            response: { status: "error" },
+            error: persistedError,
+          });
+        }
+        await sessionStore.updateSession(sessionId, {
+          status: "error",
+          completedAt: new Date().toISOString(),
+          errorMessage: timingError.message,
+          browser: {
+            config: metadata.browser?.config,
+            runtime: errorRuntime ?? runtime,
+            modelSelection: metadata.browser?.modelSelection,
+            warnings: metadata.browser?.warnings,
+          },
+          response: { status: "error" },
+          error: persistedError,
+        });
+        metadata = (await sessionStore.readSession(sessionId)) ?? metadata;
+      }
       if (completedDeepResearchPlaceholder) {
         if (metadata.model) {
           await sessionStore.updateModelRun(metadata.id, metadata.model, {

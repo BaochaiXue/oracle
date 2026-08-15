@@ -25,8 +25,9 @@ Drop this into the project's `AGENTS.md` or `CLAUDE.md`:
   `--engine browser --browser-transport cdp --model gpt-5-pro` directly and
   inspect `oracle status` before retrying a quiet/interrupted run. Dry-runs,
   smoke tests, and preflight checks are diagnostics, not normal consult steps.
-- Treat every Pro reply captured in under 60 seconds as rejected evidence. Do
-  not quote, adopt, or summarize it as Pro advice.
+- Tiny Pro requests can finish quickly. For substantive bundles, treat a
+  sub-minute timing rejection as a route-anomaly stop condition; inspect the
+  picker receipt and do not quote or adopt the rejected answer digest as advice.
 ```
 
 That's enough for most agents to discover and use Oracle correctly. The patterns below cover the deeper integrations.

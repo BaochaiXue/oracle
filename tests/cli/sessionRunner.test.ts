@@ -1268,17 +1268,16 @@ describe("performSessionRun", () => {
     expect(logLines).not.toContain("This run did not return cleanly");
   });
 
-  test("terminalizes a rejected fast Pro answer without offering reattach", async () => {
+  test("terminalizes a missing Pro dispatch receipt without offering reattach", async () => {
     const automationError = new BrowserAutomationError(
-      "Oracle rejected an assistant reply captured 42s after dispatch.",
+      "Browser transport returned an answer without the dispatch timestamp required for durable Pro response timing.",
       {
-        stage: "model-quality-gate",
-        code: "pro-fast-response-untrusted",
-        responseElapsedMs: 42_000,
+        stage: "response-timing",
+        code: "dispatch-timestamp-missing",
         runtime: {
           browserTransport: "opencli",
-          tabUrl: "https://chatgpt.com/c/fast-mini-answer",
-          conversationId: "fast-mini-answer",
+          tabUrl: "https://chatgpt.com/c/missing-dispatch-time",
+          conversationId: "missing-dispatch-time",
           promptSubmitted: true,
         },
       },
@@ -1296,7 +1295,7 @@ describe("performSessionRun", () => {
         write,
         version: cliVersion,
       }),
-    ).rejects.toThrow(/rejected an assistant reply/u);
+    ).rejects.toThrow(/without the dispatch timestamp/u);
 
     expect(sessionStoreMock.updateModelRun).toHaveBeenCalledWith(
       baseSessionMeta.id,
@@ -1304,14 +1303,14 @@ describe("performSessionRun", () => {
       expect.objectContaining({
         status: "error",
         error: expect.objectContaining({
-          details: expect.objectContaining({ code: "pro-fast-response-untrusted" }),
+          details: expect.objectContaining({ code: "dispatch-timestamp-missing" }),
         }),
       }),
     );
     expect(sessionStoreMock.updateSession.mock.calls.at(-1)?.[1]).toMatchObject({
       status: "error",
       error: expect.objectContaining({
-        details: expect.objectContaining({ code: "pro-fast-response-untrusted" }),
+        details: expect.objectContaining({ code: "dispatch-timestamp-missing" }),
       }),
     });
     const logLines = log.mock.calls.map((call) => String(call[0])).join("\n");
@@ -2056,6 +2055,73 @@ describe("performSessionRun", () => {
     expect(sessionStoreMock.updateSession.mock.invocationCallOrder.at(-1)).toBeGreaterThan(
       vi.mocked(sendSessionNotification).mock.invocationCallOrder.at(-1) ?? 0,
     );
+  });
+
+  test("terminalizes a fast substantive Pro answer captured by auto-reattach", async () => {
+    const runtime = {
+      chromePort: 9222,
+      chromeHost: "127.0.0.1",
+      tabUrl: "https://chatgpt.com/c/fast-substantive",
+      promptSubmitted: true,
+      proDispatchAt: "2026-08-15T00:00:00.000Z",
+      proInputTokens: 4_096,
+      proAttachmentBytes: 0,
+    };
+    vi.mocked(runBrowserSessionExecution).mockRejectedValueOnce(
+      new BrowserAutomationError("assistant timed out", {
+        stage: "assistant-timeout",
+        runtime,
+      }),
+    );
+    vi.mocked(resumeBrowserSession).mockRejectedValueOnce(
+      new BrowserAutomationError(
+        "Oracle rejected a substantive Pro reply captured 19s after dispatch.",
+        {
+          stage: "response-timing",
+          code: "pro-fast-substantive-response-untrusted",
+          inputTokens: 4_096,
+          responseElapsedMs: 19_000,
+          runtime: { ...runtime, proResponseElapsedMs: 19_000 },
+        },
+      ),
+    );
+
+    await expect(
+      performSessionRun({
+        sessionMeta: baseSessionMeta,
+        runOptions: baseRunOptions,
+        mode: "browser",
+        browserConfig: {
+          chromePath: null,
+          autoReattachDelayMs: 0,
+          autoReattachIntervalMs: 1,
+          autoReattachTimeoutMs: 1_000,
+        },
+        cwd: "/tmp",
+        log,
+        write,
+        version: cliVersion,
+      }),
+    ).rejects.toThrow(/rejected a substantive Pro reply/u);
+
+    expect(vi.mocked(resumeBrowserSession)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ensureSessionArtifacts)).not.toHaveBeenCalled();
+    expect(vi.mocked(sendSessionNotification)).not.toHaveBeenCalled();
+    expect(sessionStoreMock.updateSession.mock.calls.at(-1)?.[1]).toMatchObject({
+      status: "error",
+      error: expect.objectContaining({
+        details: expect.objectContaining({
+          code: "pro-fast-substantive-response-untrusted",
+          responseElapsedMs: 19_000,
+        }),
+      }),
+      browser: expect.objectContaining({
+        runtime: expect.objectContaining({
+          proInputTokens: 4_096,
+          proResponseElapsedMs: 19_000,
+        }),
+      }),
+    });
   });
 
   test("does not repeat completion side effects when auto-reattach persistence fails", async () => {

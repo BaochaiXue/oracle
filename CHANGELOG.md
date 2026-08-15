@@ -11,6 +11,11 @@
 
 ### Fixed
 
+- Browser: accept valid fast Pro answers for tiny workloads instead of treating
+  every sub-minute response as untrusted. Direct CDP and OpenCLI retain the
+  60-second fail-closed route-anomaly guard for substantive prompts and uploads,
+  persist dispatch-to-answer timing, and keep the additional warning for very
+  large runs that finish unexpectedly quickly.
 - Direct CDP submission: background-open the dedicated Chrome through macOS
   LaunchServices, create each new tab with `focus:false`, and use page-side
   focus emulation for trusted input. Oracle now verifies exact composer identity

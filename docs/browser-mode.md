@@ -78,7 +78,7 @@ workflows should choose an engine explicitly.
 composed prompt, lists uploaded versus inlined files, and reports bundle and
 control policy without launching Chrome.
 
-### GPT-5.6 Pro naming and admission
+### GPT-5.6 Pro naming and timing
 
 - `gpt-5-pro` is the stable moving alias for the current effective browser Pro
   target; it is not an API model id.
@@ -87,10 +87,11 @@ control policy without launching Chrome.
 - **GPT-5.6 Pro** is the human-facing combination.
 
 The model picker proves requested UI state, not server-side routing. Both direct
-CDP and OpenCLI record dispatch intent and reject any first stable Pro answer
-captured in under 60 seconds. Only timing and an answer digest survive the
-rejection; waiting and reattaching later cannot change the stored first elapsed
-time. Passing the threshold is not positive proof of Pro.
+CDP and OpenCLI record dispatch intent and the elapsed time to the first stable
+Pro answer. Tiny workloads can legitimately complete in seconds and are exempt
+from duration admission. Substantive workloads captured below 60 seconds fail
+closed with only digest/timing evidence retained. Very large runs that pass the
+guard but still complete unexpectedly quickly add a warning for operator review.
 
 Direct CDP distinguishes a Send attempt from a committed user turn. A visible
 request-frequency warning before commit produces a terminal, retry-safe receipt
