@@ -62,10 +62,11 @@ oracle --engine browser \
 ```
 
 On macOS, keep `browser.hideWindow:false` when normal runs should be visible and
-manually inspectable. Oracle brings the exact ChatGPT page forward immediately
-before the single trusted Send click. `true` is an explicit off-screen mode with
-reduced observability and no practical manual takeover; setup remains visible
-in either policy. Oracle never describes an off-screen window as headless.
+manually inspectable. A cold start is background-opened through LaunchServices;
+later targets use `focus:false` plus page-side focus emulation, so neither path
+activates Chrome over the current app. `true` is an explicit off-screen mode
+with reduced observability and no practical manual takeover; setup remains
+visible in either policy. Oracle never describes an off-screen window as headless.
 
 `oracle --engine browser` routes the assembled bundle through the selected web
 transport instead of the Responses API. Legacy `--browser` still aliases it.
@@ -207,7 +208,7 @@ Notes:
    - Navigates to `chatgpt.com`, switches to the requested current model (including `GPT-5.6 Sol`) and reasoning tier, optionally activates Deep Research, pastes the prompt, waits for completion, and captures Markdown through the built-in “copy turn” action.
    - Immediately probes the cookie-authenticated `/api/auth/session` endpoint in the ChatGPT tab and checks only whether it contains a user; returned tokens are never logged. If that endpoint is unavailable, Oracle falls back to the legacy `/backend-api/me` probe and a visible composer plus profile or chat-history authentication signals. Auth pages, visible login controls, resolved sessions without a user, composer-only shells, and pages without profile/history signals still fail with login guidance.
    - When `--file` inputs would push the pasted composer content over ~60k characters, we switch to uploading attachments (optionally bundled) and wait for ChatGPT to re-enable the send button before submitting the combined system+user prompt.
-   - Dedicated mode preserves its profile but closes the owned Chrome process unless `--browser-keep-browser` is passed. Ephemeral mode removes its temporary profile.
+   - Dedicated mode treats the persistent Chrome as a shared browser-scope resource and keeps it open by default; each run owns only its tab. Ephemeral mode removes its temporary profile unless explicitly retained.
 
 3. **Session integration** – browser sessions use the normal log writer, add `mode: "browser"` plus `browser.config/runtime` metadata, and persist Chrome pid/port or websocket attach metadata plus the Oracle-owned target/tab URL for reattach.
 4. **Usage accounting** – we estimate input tokens with the same tokenizer used for API runs and estimate output tokens via `estimateTokenCount`. `oracle status` therefore shows comparable cost/timing info even though the call ran through the browser.
@@ -238,7 +239,7 @@ Notes:
 - `--browser-archive <auto|always|never>`: control ChatGPT conversation archiving after local artifacts are saved. The default `never` preserves the original conversation for inspection and manual follow-up. Explicit `auto` archives only successful one-shot chats and skips project, Deep Research, multi-turn, failed, and incomplete sessions.
 - `--browser-port <port>` (alias: `--browser-debug-port`; env: `ORACLE_BROWSER_PORT`/`ORACLE_BROWSER_DEBUG_PORT`): pin the DevTools port (handy on WSL/Windows firewalls). When omitted, a random open port is chosen.
 - `ORACLE_CHATGPT_ACCOUNT_EMAIL`: exact saved-account email to select if ChatGPT shows its “Welcome back” account picker. Set it on the machine running browser automation. Oracle never logs the address; without it, Oracle selects only a single unambiguous saved account and fails closed when several are present.
-- `--browser-manual-login` is the historical flag name for the persistent isolated profile and is enabled by default for direct CDP in this fork. `--browser-no-cookie-sync`, `--browser-headless`, `--browser-hide-window`, `--browser-keep-browser`, and global `-v/--verbose` control the explicit compatibility/visibility lifecycle.
+- `--browser-manual-login` is the historical flag name for the persistent isolated profile and is enabled by default for direct CDP in this fork. The dedicated profile keeps its visible shared Chrome process open by default; `browser.keepBrowser:false` opts back into one-shot cleanup. `--browser-no-cookie-sync`, `--browser-headless`, `--browser-hide-window`, `--browser-keep-browser`, and global `-v/--verbose` control explicit compatibility/visibility overrides.
 - `--copy-profile <dir>`: copy a signed-in Chrome user-data directory (e.g. `"$HOME/Library/Application Support/Google/Chrome"`) to a throwaway profile and run against it, reusing your live ChatGPT session with no manual sign-in. Oracle copies the profile recorded as active in `Local State`; pass `--browser-chrome-profile <name>` to select another direct child profile. The copy is launched with the real Keychain (not mocked) so its encrypted cookies decrypt, and is always deleted afterward—including setup/launch failures, incomplete captures, Cloudflare challenges, and interrupts. Copied-profile runs cannot be kept or reattached. Not compatible with `--browser-keep-browser`, `--browser-manual-login`, `--browser-attach-running`, `--remote-chrome`, or `--remote-host`, and fails fast if the required `Local State` cannot be copied. macOS/Linux; requires `rsync`.
 - `--browser-url`: override ChatGPT base URL if needed.
 - `--browser-attachments <auto|never|always>`: control how `--file` inputs are delivered in browser mode. Default `auto` pastes text contents inline up to ~60k characters and uploads larger or raw files. `never` requires inline-compatible text inputs and rejects raw/binary files.
@@ -394,10 +395,15 @@ oracle browser smoke
 - The profile root is created with owner-only permissions on Unix-like systems.
 - Cookie copy from personal Chrome is disabled. Login state is created inside
   the dedicated profile by the operator.
-- Normal runs reuse that profile and preserve it after Chrome closes.
+- Normal runs reuse that profile and keep its shared Chrome process open by
+  default. A run owns its tab, not manually opened or concurrently generating
+  tabs in the same window.
 - `browser.hideWindow:false` keeps ordinary macOS runs visible and manually
-  recoverable; setup is also intentionally visible. `true` is an explicit
-  off-screen policy with reduced observability.
+  recoverable without activating the window or taking keyboard focus. Cold
+  starts use LaunchServices background-open semantics; later targets use
+  `focus:false`. Oracle restores only a previously hidden off-screen window, so
+  a user-positioned window or second-screen placement remains untouched. `true`
+  is an explicit off-screen policy with reduced observability.
 - `browser.useMockKeychain:true` avoids recurring macOS Keychain prompts for
   this isolated profile. It is user-config-only and trades OS-bound encryption
   for Chromium's deterministic test key; do not reuse a system-keychain profile

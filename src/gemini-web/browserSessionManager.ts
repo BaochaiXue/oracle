@@ -67,7 +67,12 @@ export async function openGeminiBrowserSession(
     log?.(`[gemini-web] Reusing Chrome on port ${port} for ${purpose}.`);
   }
 
-  const connection = await connectWithNewTab(port, log ?? (() => {}), undefined);
+  const connection = await connectWithNewTab(port, log ?? (() => {}), undefined, undefined, {
+    fallbackToDefault: false,
+    retries: 6,
+    retryDelayMs: 500,
+    preserveWindowFocus: true,
+  });
   const client = connection.client;
   const targetId = connection.targetId;
 

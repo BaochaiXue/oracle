@@ -138,6 +138,11 @@ function findChromeForProfileFromProcessList(
     const command = match[2] ?? "";
     const lower = command.toLowerCase();
     if (!Number.isFinite(pid) || pid <= 0) continue;
+    // macOS LaunchServices `open -g -W -a <Chrome.app> --args ...` stays alive
+    // as a wrapper and rewrites the forwarded switches with one leading dash in
+    // its own process title. It is not the browser owner; keep scanning for the
+    // actual app executable whose command line retains the real CDP flags.
+    if (lower === "/usr/bin/open" || lower.startsWith("/usr/bin/open ")) continue;
     if (!lower.includes("chrome") && !lower.includes("chromium")) continue;
     if (!lower.includes("user-data-dir") || !command.includes(userDataDir)) continue;
     const portMatch = command.match(/--remote-debugging-port(?:=|\s+)(\d+)/);

@@ -1,10 +1,14 @@
 import { rm } from "node:fs/promises";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import net from "node:net";
 import CDP from "chrome-remote-interface";
 import { launch, Launcher, type LaunchedChrome } from "chrome-launcher";
 import { resolveDedicatedBrowserExecutable } from "./dedicatedBrowserBinary.js";
 import type { BrowserLogger, ResolvedBrowserConfig, ChromeClient } from "./types.js";
-import { cleanupStaleProfileState } from "./profileState.js";
+import {
+  cleanupStaleProfileState,
+  findRunningChromeDebugTargetForProfile,
+} from "./profileState.js";
 import { delay } from "./utils.js";
 import { isWsl, resolveWslChromeLaunchRoute } from "./wslHost.js";
 
@@ -39,6 +43,8 @@ export async function launchChrome(
     usingCopiedProfile,
     persistentProfile,
   );
+  const shouldLaunchWithoutActivation =
+    process.platform === "darwin" && persistentProfile && !config.headless && !config.hideWindow;
   const launcher = usePatchedLauncher
     ? await launchWithCustomHost({
         chromeFlags: launchOptions.chromeFlags,
@@ -48,14 +54,23 @@ export async function launchChrome(
         requestedPort: debugPort ?? undefined,
         ignoreDefaultFlags: launchOptions.ignoreDefaultFlags,
       })
-    : await launch({
-        chromePath: chromePath ?? undefined,
-        chromeFlags: launchOptions.chromeFlags,
-        userDataDir,
-        handleSIGINT: false,
-        port: debugPort ?? undefined,
-        ignoreDefaultFlags: launchOptions.ignoreDefaultFlags,
-      });
+    : shouldLaunchWithoutActivation && chromePath
+      ? await launchVisibleChromeWithoutMacActivation({
+          chromeFlags: launchOptions.chromeFlags,
+          chromePath,
+          userDataDir,
+          requestedPort: debugPort ?? undefined,
+          ignoreDefaultFlags: launchOptions.ignoreDefaultFlags,
+          logger,
+        })
+      : await launch({
+          chromePath: chromePath ?? undefined,
+          chromeFlags: launchOptions.chromeFlags,
+          userDataDir,
+          handleSIGINT: false,
+          port: debugPort ?? undefined,
+          ignoreDefaultFlags: launchOptions.ignoreDefaultFlags,
+        });
   const pidLabel = typeof launcher.pid === "number" ? ` (pid ${launcher.pid})` : "";
   const hostLabel = connectHost ? ` on ${connectHost}` : "";
   logger(`Launched Chrome${pidLabel} on port ${launcher.port}${hostLabel}`);
@@ -63,6 +78,123 @@ export async function launchChrome(
     host?: string;
   };
 }
+
+async function launchVisibleChromeWithoutMacActivation({
+  chromeFlags,
+  chromePath,
+  userDataDir,
+  requestedPort,
+  ignoreDefaultFlags,
+  logger,
+}: {
+  chromeFlags: string[];
+  chromePath: string;
+  userDataDir: string;
+  requestedPort?: number;
+  ignoreDefaultFlags: boolean;
+  logger: BrowserLogger;
+}): Promise<LaunchedChrome> {
+  const appBundle = resolveMacAppBundle(chromePath);
+  if (!appBundle) {
+    throw new Error(`Dedicated Chrome executable is not inside a macOS app bundle: ${chromePath}`);
+  }
+  const backgroundSpawn = ((
+    _executable: string,
+    args: readonly string[],
+    options: SpawnOptions,
+  ): ChildProcess =>
+    spawn(
+      "/usr/bin/open",
+      ["-g", "-W", "-n", "-a", appBundle, "--args", ...args],
+      options,
+    )) as typeof spawn;
+  const launcher = new Launcher(
+    {
+      chromePath,
+      chromeFlags,
+      userDataDir,
+      handleSIGINT: false,
+      port: requestedPort,
+      ignoreDefaultFlags,
+    },
+    { spawn: backgroundSpawn },
+  );
+  await launcher.launch();
+
+  let discovered: Awaited<ReturnType<typeof findRunningChromeDebugTargetForProfile>> = null;
+  // LaunchServices can report the app open before the browser process has
+  // settled into the final command line visible to `ps`. CDP readiness alone
+  // is not enough to persist a safe, exact process owner, so allow a bounded
+  // discovery window before failing closed.
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    discovered = await findRunningChromeDebugTargetForProfile(userDataDir);
+    if (discovered?.port === launcher.port) {
+      break;
+    }
+    await delay(50);
+  }
+  if (!discovered || discovered.port !== launcher.port) {
+    await closeChromeOverCdp(launcher.port ?? 0).catch(() => undefined);
+    launcher.kill();
+    throw new Error(`Could not resolve the dedicated Chrome process for ${userDataDir}`);
+  }
+
+  const kill = async () => {
+    try {
+      await closeChromeOverCdp(discovered.port);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger(`Failed to close dedicated Chrome over CDP (${message}); sending SIGTERM.`);
+      const current = await findRunningChromeDebugTargetForProfile(userDataDir);
+      if (current?.pid === discovered.pid && current.port === discovered.port) {
+        process.kill(discovered.pid, "SIGTERM");
+      }
+    } finally {
+      launcher.kill();
+    }
+  };
+
+  return {
+    pid: discovered.pid,
+    port: discovered.port,
+    process: launcher.chromeProcess as NonNullable<LaunchedChrome["process"]>,
+    remoteDebuggingPipes: launcher.remoteDebuggingPipes,
+    kill,
+  };
+}
+
+async function closeChromeOverCdp(port: number): Promise<void> {
+  if (!port) {
+    throw new Error("Missing Chrome DevTools port");
+  }
+  const version = (await CDP.Version({ host: "127.0.0.1", port })) as {
+    webSocketDebuggerUrl?: string;
+  };
+  if (!version.webSocketDebuggerUrl) {
+    throw new Error("Chrome did not expose a browser WebSocket endpoint");
+  }
+  const browser = (await CDP({
+    target: version.webSocketDebuggerUrl,
+    local: true,
+  })) as ChromeClient;
+  try {
+    await browser.Browser.close();
+  } finally {
+    await browser.close().catch(() => undefined);
+  }
+}
+
+function resolveMacAppBundle(chromePath: string): string | null {
+  const marker = ".app/Contents/MacOS/";
+  const markerIndex = chromePath.indexOf(marker);
+  if (markerIndex < 0) {
+    return null;
+  }
+  return chromePath.slice(0, markerIndex + ".app".length);
+}
+
+// biome-ignore lint/style/useNamingConvention: test-only export used in vitest suite
+export const __macLaunchTest__ = { resolveMacAppBundle };
 
 export async function positionChromeWindowOffscreen(
   client: ChromeClient,
@@ -93,12 +225,20 @@ export async function positionChromeWindowOnscreen(
     return;
   }
   try {
-    const { windowId } = await client.Browser.getWindowForTarget();
+    const window = await client.Browser.getWindowForTarget();
+    const currentBounds =
+      window.bounds ?? (await client.Browser.getWindowBounds({ windowId: window.windowId })).bounds;
+    const wasHiddenOffscreen =
+      (typeof currentBounds.left === "number" && currentBounds.left <= -10_000) ||
+      (typeof currentBounds.top === "number" && currentBounds.top <= -10_000);
+    if (!wasHiddenOffscreen) {
+      return;
+    }
     await client.Browser.setWindowBounds({
-      windowId,
+      windowId: window.windowId,
       bounds: { left: 80, top: 80, width: 1280, height: 720, windowState: "normal" },
     });
-    logger("Chrome window positioned on-screen");
+    logger("Restored previously hidden Chrome window on-screen");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger(`Failed to position Chrome window on-screen: ${message}`);
@@ -222,15 +362,22 @@ export async function connectToRemoteChrome(
     });
   }
   if (targetUrl) {
-    const targetConnection = await connectToNewTarget(host, port, targetUrl, logger, {
-      opened: () => `Opened dedicated remote Chrome tab targeting ${targetUrl}`,
-      openFailed: (message) =>
-        `Failed to open dedicated remote Chrome tab (${message}); falling back to first target.`,
-      attachFailed: (targetId, message) =>
-        `Failed to attach to dedicated remote Chrome tab ${targetId} (${message}); falling back to first target.`,
-      closeFailed: (targetId, message) =>
-        `Failed to close unused remote Chrome tab ${targetId}: ${message}`,
-    });
+    const targetConnection = await connectToNewTarget(
+      host,
+      port,
+      targetUrl,
+      logger,
+      {
+        opened: () => `Opened dedicated remote Chrome tab targeting ${targetUrl}`,
+        openFailed: (message) =>
+          `Failed to open dedicated remote Chrome tab (${message}); falling back to first target.`,
+        attachFailed: (targetId, message) =>
+          `Failed to attach to dedicated remote Chrome tab ${targetId} (${message}); falling back to first target.`,
+        closeFailed: (targetId, message) =>
+          `Failed to close unused remote Chrome tab ${targetId}: ${message}`,
+      },
+      { preserveWindowFocus: true },
+    );
     if (targetConnection) {
       return {
         client: targetConnection.client,
@@ -352,10 +499,7 @@ export async function connectToRemoteChromeTarget(
   let targetId = options.targetId;
   try {
     if (!targetId) {
-      const created = await browser.Target.createTarget({
-        url: options.targetUrl ?? "about:blank",
-      });
-      targetId = created.targetId;
+      targetId = await createTargetWithoutWindowFocus(browser, options.targetUrl ?? "about:blank");
       logger(`Opened dedicated remote Chrome tab targeting ${options.targetUrl ?? "about:blank"}`);
     }
     const attached = await browser.Target.attachToTarget({ targetId, flatten: true });
@@ -447,7 +591,48 @@ async function connectToNewTarget(
   url: string,
   logger: BrowserLogger,
   messages: TargetConnectMessages,
+  options?: { preserveWindowFocus?: boolean },
 ): Promise<{ client: ChromeClient; targetId: string } | null> {
+  if (options?.preserveWindowFocus) {
+    let browser: ChromeClient | null = null;
+    let targetId: string | null = null;
+    let stage: "open" | "attach" = "open";
+    try {
+      const version = (await CDP.Version({ host, port })) as {
+        webSocketDebuggerUrl?: string;
+      };
+      if (!version.webSocketDebuggerUrl) {
+        throw new Error("Chrome did not expose a browser WebSocket endpoint");
+      }
+      browser = (await CDP({ target: version.webSocketDebuggerUrl, local: true })) as ChromeClient;
+      targetId = await createTargetWithoutWindowFocus(browser, url);
+      stage = "attach";
+      const attached = await browser.Target.attachToTarget({ targetId, flatten: true });
+      const client = createSessionBoundChromeClient(browser, attached.sessionId, {
+        closeBrowserOnClose: true,
+      });
+      if (messages.opened) {
+        logger(messages.opened(targetId));
+      }
+      return { client, targetId };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (targetId && browser) {
+        await browser.Target.closeTarget({ targetId }).catch((closeError: unknown) => {
+          const closeMessage =
+            closeError instanceof Error ? closeError.message : String(closeError);
+          logger(messages.closeFailed(targetId ?? "unknown", closeMessage));
+        });
+      }
+      await browser?.close().catch(() => undefined);
+      logger(
+        stage === "attach" && targetId
+          ? messages.attachFailed(targetId, message)
+          : messages.openFailed(message),
+      );
+      return null;
+    }
+  }
   try {
     const target = await CDP.New({ host, port, url });
     try {
@@ -473,7 +658,23 @@ async function connectToNewTarget(
   return null;
 }
 
-function createSessionBoundChromeClient(browser: ChromeClient, sessionId: string): ChromeClient {
+async function createTargetWithoutWindowFocus(browser: ChromeClient, url: string): Promise<string> {
+  const created = (await browser.send("Target.createTarget", {
+    url,
+    background: false,
+    focus: false,
+  })) as { targetId?: string };
+  if (!created.targetId) {
+    throw new Error("Target.createTarget did not return a target id");
+  }
+  return created.targetId;
+}
+
+function createSessionBoundChromeClient(
+  browser: ChromeClient,
+  sessionId: string,
+  options?: { closeBrowserOnClose?: boolean },
+): ChromeClient {
   const browserWithEvents = browser as ChromeClient & {
     on: (event: string, listener: (...args: unknown[]) => void) => void;
     once: (event: string, listener: (...args: unknown[]) => void) => void;
@@ -537,6 +738,9 @@ function createSessionBoundChromeClient(browser: ChromeClient, sessionId: string
     removeListener: browserWithEvents.removeListener.bind(browserWithEvents),
     close: async () => {
       await browser.Target.detachFromTarget({ sessionId }).catch(() => undefined);
+      if (options?.closeBrowserOnClose) {
+        await browser.close().catch(() => undefined);
+      }
     },
   } as ChromeClient;
 }
@@ -546,7 +750,12 @@ export async function connectWithNewTab(
   logger: BrowserLogger,
   initialUrl?: string,
   host?: string,
-  options?: { fallbackToDefault?: boolean; retries?: number; retryDelayMs?: number },
+  options?: {
+    fallbackToDefault?: boolean;
+    retries?: number;
+    retryDelayMs?: number;
+    preserveWindowFocus?: boolean;
+  },
 ): Promise<IsolatedTabConnection> {
   const effectiveHost = host ?? "127.0.0.1";
   const url = initialUrl ?? "about:blank";
@@ -559,14 +768,22 @@ export async function connectWithNewTab(
 
   let attempt = 0;
   while (attempt <= retries) {
-    const targetConnection = await connectToNewTarget(effectiveHost, port, url, logger, {
-      opened: (targetId) => `Opened isolated browser tab (target=${targetId})`,
-      openFailed: (message) => `Failed to open isolated browser tab (${message}); ${fallbackLabel}`,
-      attachFailed: (targetId, message) =>
-        `Failed to attach to isolated browser tab ${targetId} (${message}); ${fallbackLabel}`,
-      closeFailed: (targetId, message) =>
-        `Failed to close unused browser tab ${targetId}: ${message}`,
-    });
+    const targetConnection = await connectToNewTarget(
+      effectiveHost,
+      port,
+      url,
+      logger,
+      {
+        opened: (targetId) => `Opened isolated browser tab (target=${targetId})`,
+        openFailed: (message) =>
+          `Failed to open isolated browser tab (${message}); ${fallbackLabel}`,
+        attachFailed: (targetId, message) =>
+          `Failed to attach to isolated browser tab ${targetId} (${message}); ${fallbackLabel}`,
+        closeFailed: (targetId, message) =>
+          `Failed to close unused browser tab ${targetId}: ${message}`,
+      },
+      { preserveWindowFocus: options?.preserveWindowFocus },
+    );
     if (targetConnection) {
       return targetConnection;
     }
@@ -636,23 +853,24 @@ export async function createChromePageTarget(
   host?: string,
 ): Promise<string | undefined> {
   const effectiveHost = host ?? "127.0.0.1";
+  let browser: ChromeClient | null = null;
   try {
-    const created = (await CDP.New({
-      host: effectiveHost,
-      port,
-      url: "about:blank",
-    })) as { id?: string; targetId?: string };
-    const createdTargetId = created.targetId ?? created.id;
-    if (!createdTargetId) {
-      logger("Failed to create a replacement Chrome tab.");
-      return undefined;
+    const version = (await CDP.Version({ host: effectiveHost, port })) as {
+      webSocketDebuggerUrl?: string;
+    };
+    if (!version.webSocketDebuggerUrl) {
+      throw new Error("Chrome did not expose a browser WebSocket endpoint");
     }
+    browser = (await CDP({ target: version.webSocketDebuggerUrl, local: true })) as ChromeClient;
+    const createdTargetId = await createTargetWithoutWindowFocus(browser, "about:blank");
     logger(`Opened replacement Chrome tab (target=${createdTargetId})`);
     return createdTargetId;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger(`Failed to create a replacement Chrome tab: ${message}`);
     return undefined;
+  } finally {
+    await browser?.close().catch(() => undefined);
   }
 }
 
@@ -681,74 +899,6 @@ export async function ensureChromePageTargetAfterClose(
     logger(`Failed to inspect Chrome tabs before closing ${closingTargetId}: ${message}`);
   }
   return await createChromePageTarget(port, logger, host);
-}
-
-export async function closeBlankChromeTabs(
-  port: number,
-  logger: BrowserLogger,
-  host?: string,
-  options?: {
-    excludeTargetIds?: Iterable<string | null | undefined>;
-    preserveOneBlank?: boolean;
-  },
-): Promise<void> {
-  const effectiveHost = host ?? "127.0.0.1";
-  const excluded = new Set(
-    [...(options?.excludeTargetIds ?? [])].filter(
-      (targetId): targetId is string => typeof targetId === "string" && targetId.length > 0,
-    ),
-  );
-  let targets: Array<{ id?: string; targetId?: string; type?: string; url?: string }>;
-  try {
-    targets = (await CDP.List({ host: effectiveHost, port })) as Array<{
-      id?: string;
-      targetId?: string;
-      type?: string;
-      url?: string;
-    }>;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger(`Failed to inspect blank Chrome tabs: ${message}`);
-    return;
-  }
-
-  const preservedBlankTargetId = options?.preserveOneBlank
-    ? targets
-        .filter(isBlankPageTarget)
-        .map((target) => target.targetId ?? target.id)
-        .filter((targetId): targetId is string => Boolean(targetId))
-        .sort()[0]
-    : undefined;
-  let closed = 0;
-  for (const target of targets) {
-    const targetId = target.targetId ?? target.id;
-    if (
-      !targetId ||
-      targetId === preservedBlankTargetId ||
-      excluded.has(targetId) ||
-      !isBlankPageTarget(target)
-    ) {
-      continue;
-    }
-    try {
-      await CDP.Close({ host: effectiveHost, port, id: targetId });
-      closed += 1;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger(`Failed to close blank Chrome tab ${targetId}: ${message}`);
-    }
-  }
-  if (closed > 0) {
-    logger(`Closed ${closed} blank Chrome tab${closed === 1 ? "" : "s"}.`);
-  }
-}
-
-function isBlankPageTarget(target: { type?: string; url?: string }): boolean {
-  if (target.type && target.type !== "page") {
-    return false;
-  }
-  const url = (target.url ?? "").trim().toLowerCase();
-  return url === "about:blank" || url === "chrome://newtab/" || url === "chrome://new-tab-page/";
 }
 
 function buildChromeFlags(

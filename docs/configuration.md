@@ -52,9 +52,9 @@ JSON5 parsing, so trailing commas and comments are allowed.
     manualLogin: true, // historical name for the canonical persistent isolated profile
     manualLoginProfileDir: "/Users/you/.oracle/browser-profile", // or ORACLE_BROWSER_PROFILE_DIR
     headless: false,
-    hideWindow: false, // macOS normal runs: visible and manually inspectable
+    hideWindow: false, // macOS normal runs: visible, inspectable, background-opened
     useMockKeychain: true, // macOS isolated profile only; avoids recurring Keychain dialogs
-    keepBrowser: false,
+    keepBrowser: true, // dedicated profile default; ephemeral profiles still close
     manualLoginCookieSync: false, // keep false to preserve the personal-profile boundary
   },
 

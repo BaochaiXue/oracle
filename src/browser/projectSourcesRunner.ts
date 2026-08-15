@@ -158,12 +158,13 @@ export async function runBrowserProjectSources(
       },
     );
 
-    const strictTabIsolation = Boolean(manualLogin && reusedChrome);
+    const strictTabIsolation = manualLogin;
     const devtoolsRetries = manualLogin ? 6 : 0;
     const connection = await connectWithNewTab(chrome.port, logger, "about:blank", chromeHost, {
       fallbackToDefault: !strictTabIsolation,
       retries: devtoolsRetries,
       retryDelayMs: 500,
+      preserveWindowFocus: manualLogin,
     });
     client = connection.client;
     isolatedTargetId = connection.targetId ?? null;

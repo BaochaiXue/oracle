@@ -210,7 +210,7 @@ configuration records the full local policy:
     "cookieSync": false,
     "hideWindow": false,
     "useMockKeychain": true,
-    "keepBrowser": false,
+    "keepBrowser": true,
     "modelStrategy": "select",
     "thinkingTime": "pro",
     "profileLockTimeoutMs": 300000,
@@ -236,15 +236,21 @@ Important fields:
   default whenever the dedicated profile is active.
 - `hideWindow:false` keeps normal headful Chrome visible and manually
   inspectable, actively restoring remembered off-screen bounds to an on-screen
-  position. Oracle brings the exact ChatGPT page forward immediately before
-  its single trusted Send click, then requires a committed user turn before it
-  treats the prompt as submitted. `true` remains an off-screen opt-in with
-  reduced observability and no practical manual takeover.
+  position once without overriding a later user-positioned window. On macOS, a
+  cold start goes through LaunchServices with background-open semantics. New
+  targets become the current Chrome tab but use `focus:false`, so Oracle never
+  activates the Chrome window or takes the operator's keyboard focus. Page-side focus
+  emulation supports trusted input without changing OS focus. `true` remains an
+  off-screen opt-in with reduced observability and no practical manual takeover.
 - `useMockKeychain:true` is a user-config-only macOS unattended-mode choice. It
   avoids recurring Keychain approval dialogs for the isolated profile at the
   cost of deterministic, weaker at-rest cookie encryption. Do not enable it for
   an existing system-Keychain profile; create a fresh profile directory.
-- `keepBrowser:false` lets completed one-shots clean up the owned process.
+- `keepBrowser:true` is the dedicated-profile default. A run owns its tab, not
+  the shared Chrome process, so manually opened and concurrently generating
+  tabs survive another run's completion. Ephemeral compatibility profiles
+  still close by default; explicit `keepBrowser:false` restores one-shot
+  process cleanup when deliberately configured.
 - `profileLockTimeoutMs` serializes the short profile/composer mutation window.
 - `maxConcurrentTabs` caps simultaneous ChatGPT targets in the shared profile.
 
@@ -260,17 +266,20 @@ For a normal Pro consultation Oracle:
 2. acquires a tab lease for the dedicated profile;
 3. discovers a reachable Chrome already using that exact profile or launches
    one new process;
-4. creates and records an owned target;
+4. creates and records an owned target without activating the browser window;
 5. verifies ChatGPT login, model `GPT-5.6 Sol`, and reasoning tier `Pro`;
-6. records dispatch intent at the actual Send boundary while keeping
+6. re-reads the visible composer and refuses to send if its exact contents were
+   changed after Oracle populated it;
+7. records dispatch intent at the actual Send boundary while keeping
    `promptSubmitted:false`;
-7. marks `promptSubmitted:true` only after the user turn is verified in the
-   conversation, then persists its id/URL as soon as it becomes stable;
-8. waits in the browser worker for completion instead of spawning repeated
+8. marks `promptSubmitted:true` only after the exact user turn is verified in
+   the conversation, then persists its id/URL as soon as it becomes stable;
+9. waits in the browser worker for completion instead of spawning repeated
    command/tab polls;
-9. captures Markdown and local artifacts;
-10. closes only the targets/processes it owns, subject to `keepBrowser` and
-    recoverability policy.
+10. captures Markdown and local artifacts;
+11. closes its owned target after a completed run, retains that target when the
+    run is incomplete so it can be recovered, and leaves the shared dedicated
+    Chrome process running by default. It never sweeps unrelated blank tabs.
 
 If CDP disconnects after submission, the stored runtime contains the profile,
 port/browser endpoint, target, conversation receipt, and dispatch time. A
@@ -322,11 +331,11 @@ transport.
 
 There are three intentionally different visual states:
 
-| Operation                          | Policy                       | Reason                                                                         |
-| ---------------------------------- | ---------------------------- | ------------------------------------------------------------------------------ |
-| `oracle browser setup`             | Visible, command waits       | The operator authenticates; setup returns only after the whole browser exits.  |
-| Normal run with `hideWindow:false` | Visible                      | Observable, manually recoverable, and foregrounded for the trusted Send click. |
-| Normal run with `hideWindow:true`  | Headful, off-screen on macOS | Opt-in desktop quieting with reduced observability and no manual takeover.     |
+| Operation                          | Policy                       | Reason                                                                        |
+| ---------------------------------- | ---------------------------- | ----------------------------------------------------------------------------- |
+| `oracle browser setup`             | Visible, command waits       | The operator authenticates; setup returns only after the whole browser exits. |
+| Normal run with `hideWindow:false` | Visible, not activated       | Observable and manually recoverable without taking OS keyboard focus.         |
+| Normal run with `hideWindow:true`  | Headful, off-screen on macOS | Opt-in desktop quieting with reduced observability and no manual takeover.    |
 
 Headless Chrome remains available but is not the canonical ChatGPT lane because
 Cloudflare or ChatGPT may treat it differently. Off-screen is not headless: a

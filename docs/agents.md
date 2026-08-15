@@ -22,8 +22,9 @@ Drop this into the project's `AGENTS.md` or `CLAUDE.md`:
 - The operator must complete `oracle browser install`, `oracle browser setup
   --use-mock-keychain` on macOS, and `oracle browser smoke` once before
   unattended work. Agents use
-  `--engine browser --browser-transport cdp --model gpt-5-pro`, preview private
-  bundles, and inspect `oracle status` before retrying a quiet/interrupted run.
+  `--engine browser --browser-transport cdp --model gpt-5-pro` directly and
+  inspect `oracle status` before retrying a quiet/interrupted run. Dry-runs,
+  smoke tests, and preflight checks are diagnostics, not normal consult steps.
 - Treat every Pro reply captured in under 60 seconds as rejected evidence. Do
   not quote, adopt, or summarize it as Pro advice.
 ```
@@ -95,7 +96,8 @@ oracle --render --copy -p "$TASK" --file "$RELEVANT_FILES"
 
 …then the agent (or a human) pastes into whichever Pro model they have access to. No keys, no MCP, works everywhere.
 
-For autonomous dry-runs, use the JSON preview to inspect the resolved bundle before spending model time:
+For unusually large or uncertain bundles, the optional JSON diagnostic exposes
+the resolved scope before spending model time:
 
 ```bash
 oracle --dry-run json \
@@ -142,7 +144,7 @@ browser. See [Dedicated Chrome](dedicated-chrome.md) and
 
 ## Cost / safety hygiene
 
-- **Always preview Pro runs.** `--dry-run summary --files-report` before a Pro API call on a large bundle. Token counts are a close-enough proxy for dollars.
+- **Preview costly API bundles when scope is uncertain.** `--dry-run summary --files-report` is useful before a large metered API call. It is not a gate for normal subscription-backed browser consultations.
 - **Cap file size.** `~/.oracle/config.json` → `maxFileSizeBytes`, or `ORACLE_MAX_FILE_SIZE_BYTES`. Default is 1 MB per file.
 - **Excludes are your friend.** `--file "src/**" --file "!**/*.test.ts" --file "!**/*.snap"` cuts most fixtures.
 - **API mode runs cost real money.** If your agent runs Oracle autonomously, scope it: pin `--model`, set `--timeout`, and review the session log. Many users gate API mode behind explicit user consent and let browser mode run free.

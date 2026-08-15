@@ -35,6 +35,22 @@ describe("browser control plan", () => {
     expect(formatBrowserControlPlan(plan, "dry-run").join("\n")).toContain("--browser-hide-window");
   });
 
+  test("describes the macOS dedicated profile as visible without keyboard activation", () => {
+    const plan = describeBrowserControlPlan({ manualLogin: true, keepBrowser: true });
+    const output = formatBrowserControlPlan(plan, "browser").join("\n");
+
+    expect(plan).toMatchObject({
+      mode: "visible-window",
+      launchesChrome: true,
+      mayFocusWindow: process.platform !== "darwin",
+    });
+    expect(output).toContain("focus:false");
+    if (process.platform === "darwin") {
+      expect(output).toContain("leaves macOS keyboard focus with the active app");
+      expect(output).not.toContain("may focus/control");
+    }
+  });
+
   test("describes attach-running as a lower-disruption existing browser flow", () => {
     const plan = describeBrowserControlPlan({ attachRunning: true });
 

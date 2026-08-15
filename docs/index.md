@@ -49,18 +49,18 @@ oracle browser smoke
 The smoke cold-starts the same profile twice, attaches twice, verifies the
 persisted login and ready composer, and submits no prompt.
 
-Preview the exact consultation first:
+Normal browser consultations dispatch directly:
 
 ```bash
-oracle --dry-run summary --files-report \
-  --engine browser \
-  --browser-transport cdp \
+oracle --engine browser \
   --model gpt-5-pro \
   -p "Review the storage layer for schema drift" \
   --file "src/**/*.ts"
 ```
 
-Remove `--dry-run summary` to send. Oracle stores the run under
+Add `--dry-run summary --files-report` only when an unusually large or uncertain
+bundle needs a scope diagnostic. It is not part of the normal consultation
+path. Oracle stores every dispatched run under
 `~/.oracle/sessions/`, so a long answer can be recovered or continued:
 
 ```bash

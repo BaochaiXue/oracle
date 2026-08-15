@@ -90,6 +90,7 @@ Add an explicit policy to `~/.oracle/config.json`:
     "debugPort": 9333,
     "cookieSync": false,
     "hideWindow": false,
+    "keepBrowser": true,
     "useMockKeychain": true,
     "modelStrategy": "select",
     "thinkingTime": "pro"
@@ -98,9 +99,13 @@ Add an explicit policy to `~/.oracle/config.json`:
 ```
 
 Use the real absolute profile path for your account. On macOS,
-`hideWindow:false` keeps ordinary runs visible and manually inspectable;
-first-time setup is also visible. `hideWindow:true` is an explicit off-screen
-mode with reduced observability. On macOS, `useMockKeychain:true` prevents recurring Keychain password
+`hideWindow:false` keeps ordinary runs visible and manually inspectable, while
+the cold launch is background-opened and focus-safe CDP target creation leaves
+the currently active macOS app alone.
+`keepBrowser:true` keeps the dedicated Chrome process alive so manually opened
+tabs and other active Oracle runs survive a consultation finishing. First-time
+setup is also visible. `hideWindow:true` is an explicit off-screen mode with
+reduced observability. On macOS, `useMockKeychain:true` prevents recurring Keychain password
 dialogs for this isolated profile, with weaker deterministic at-rest cookie
 protection. Keep the profile owner-only and use a fresh directory when changing
 between system and mock keychain modes.
@@ -109,25 +114,23 @@ The fork defaults to `transport:"cdp"`, `manualLogin:true`, and
 `cookieSync:false` even when these fields are omitted. Writing them explicitly
 is useful for a shared setup because it makes the capability boundary visible.
 
-## 5. Preview and send a GPT-5.6 Pro consultation
+## 5. Send a GPT-5.6 Pro consultation
 
-Preview bundle scope without opening Chrome:
+Normal browser consultations dispatch directly:
 
 ```bash
-oracle --dry-run summary --files-report \
-  --engine browser \
-  --browser-transport cdp \
+oracle --engine browser \
   --model gpt-5-pro \
   -p "Audit the storage layer for race conditions and missing tests." \
   --file "src/storage/**/*.ts" \
   --file "!src/storage/**/*.test.ts"
 ```
 
-Then remove `--dry-run summary`:
+If the bundle is unusually large or its globs are uncertain, inspect it without
+opening Chrome by adding `--dry-run summary --files-report`:
 
 ```bash
-oracle --engine browser \
-  --browser-transport cdp \
+oracle --dry-run summary --files-report --engine browser \
   --model gpt-5-pro \
   -p "Audit the storage layer for race conditions and missing tests." \
   --file "src/storage/**/*.ts" \

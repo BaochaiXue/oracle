@@ -7,7 +7,6 @@ import { waitForAssistantResponse } from "../actions/assistantResponse.js";
 interface ChatgptDomProviderState {
   runtime: ChromeClient["Runtime"];
   input: ChromeClient["Input"];
-  page?: Pick<ChromeClient["Page"], "bringToFront">;
   logger: BrowserLogger;
   timeoutMs: number;
   inputTimeoutMs?: number;
@@ -43,7 +42,6 @@ async function submitPromptViaAdapter(ctx: ProviderDomFlowContext): Promise<void
     {
       runtime: state.runtime,
       input: state.input,
-      page: state.page,
       attachmentNames: state.attachmentNames ?? [],
       baselineTurns: state.baselineTurns ?? undefined,
       inputTimeoutMs: state.inputTimeoutMs ?? undefined,

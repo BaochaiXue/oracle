@@ -54,7 +54,7 @@ export const DEFAULT_BROWSER_CONFIG: ResolvedBrowserConfig = {
   inlineCookies: null,
   inlineCookiesSource: null,
   headless: false,
-  keepBrowser: false,
+  keepBrowser: true,
   hideWindow: false,
   useMockKeychain: false,
   desiredModel: DEFAULT_MODEL_TARGET,
@@ -154,7 +154,10 @@ export function resolveBrowserConfig(
     inlineCookies: config?.inlineCookies ?? DEFAULT_BROWSER_CONFIG.inlineCookies,
     inlineCookiesSource: config?.inlineCookiesSource ?? DEFAULT_BROWSER_CONFIG.inlineCookiesSource,
     headless: config?.headless ?? DEFAULT_BROWSER_CONFIG.headless,
-    keepBrowser: config?.keepBrowser ?? DEFAULT_BROWSER_CONFIG.keepBrowser,
+    // The canonical dedicated profile is a shared browser-scope resource: a
+    // single consult owns its tab, never the whole Chrome process. Ephemeral
+    // compatibility profiles still close unless explicitly retained.
+    keepBrowser: config?.keepBrowser ?? manualLogin,
     hideWindow: config?.hideWindow ?? DEFAULT_BROWSER_CONFIG.hideWindow,
     useMockKeychain: config?.useMockKeychain ?? DEFAULT_BROWSER_CONFIG.useMockKeychain,
     desiredModel,

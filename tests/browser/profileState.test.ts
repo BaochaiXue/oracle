@@ -208,6 +208,21 @@ describe("profileState", () => {
     });
   });
 
+  test("skips the macOS LaunchServices wrapper and records the real Chrome owner", () => {
+    const dir = "/Users/example/.oracle/browser-profile";
+    const processList = `
+      450 /usr/bin/open -g -W -n -a /Applications/Google Chrome for Testing.app -args -remote-debugging-port=9333 -user-data-dir=${dir}
+      456 /Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing --remote-debugging-port=9333 --user-data-dir=${dir} about:blank
+    `;
+
+    expect(
+      profileState.findChromeDebugTargetForProfileFromProcessListForTest(processList, dir),
+    ).toEqual({
+      pid: 456,
+      port: 9333,
+    });
+  });
+
   test("discovers a normal no-CDP Chrome using the dedicated profile", () => {
     const dir = "/Users/example/.oracle/browser-profile";
     const processList = `

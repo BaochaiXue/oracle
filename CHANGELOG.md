@@ -11,12 +11,16 @@
 
 ### Fixed
 
-- Direct CDP submission: foreground the exact ChatGPT target immediately before
-  the single trusted Send click, keep commit verification authoritative, and
-  report a retained composer draft as explicitly unsubmitted instead of an
-  ambiguous missing conversation receipt. Visible macOS runs actively restore
-  remembered off-screen bounds and are now the documented default policy;
-  off-screen mode remains an explicit opt-in.
+- Direct CDP submission: background-open the dedicated Chrome through macOS
+  LaunchServices, create each new tab with `focus:false`, and use page-side
+  focus emulation for trusted input. Oracle now verifies exact composer identity
+  at the final Send boundary, after all button and attachment waits, and accepts
+  dispatch only when a known-new user turn exactly matches the submitted prompt.
+  External keystrokes therefore fail closed instead of being submitted with the
+  prompt. The persistent dedicated profile keeps its shared Chrome process and
+  user-positioned window alive by default; completed runs close only their own
+  target, failed runs retain their recoverable target, and no URL-based blank-tab
+  sweep can remove manually opened or concurrently generating tabs.
 - macOS dedicated browser: add an explicit, user-config-only mock-keychain mode
   and apply it consistently to setup, two-cold-start smoke, normal runs, and
   reattach. This avoids recurring Chrome Safe Storage password dialogs for an

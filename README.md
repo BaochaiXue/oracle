@@ -179,6 +179,7 @@ deliberately explicit macOS configuration looks like this:
     "debugPort": 9333,
     "cookieSync": false,
     "hideWindow": false,
+    "keepBrowser": true,
     "useMockKeychain": true,
     "modelStrategy": "select",
     "thinkingTime": "pro",
@@ -190,10 +191,14 @@ deliberately explicit macOS configuration looks like this:
 
 `oracle browser install` writes the exact `chromePath`; the abbreviated path
 above is illustrative. `hideWindow:false` keeps normal macOS runs visible and
-human-observable, restoring a previously hidden persistent window to an
-on-screen position. Immediately before its single Send attempt, Oracle brings the
-exact ChatGPT page forward so trusted CDP input is not silently swallowed by a
-background or occluded window.
+human-observable, restoring only a previously hidden persistent window without
+overriding a later user-positioned window. A cold start uses macOS LaunchServices
+background-open semantics so the first visible window also leaves the active app
+alone. `keepBrowser:true` keeps the shared dedicated Chrome process alive between
+consultations while each run still owns and cleans up only its own tab. Oracle opens targets with CDP
+`Target.createTarget({background:false, focus:false})` and uses page-side focus
+emulation, so it can operate the visible page without activating Chrome or
+taking the operator's keyboard focus.
 `oracle browser setup` is always visible because signing in is a human action;
 it is an ordinary isolated Chrome launch with CDP disabled. Persistent CDP
 runs retain Chrome's renderer throttling, hang monitor, IPC flood protection,
@@ -208,19 +213,18 @@ conversation, Oracle records `promptSubmitted:false`,
 `submissionCommitted:false`, and `retrySafe:true`. It does not wait for an
 assistant that was never invoked, reattach, or automatically click Send again.
 
-Preview a consultation without touching the browser:
+Send a normal consultation directly:
 
 ```bash
-oracle --dry-run summary --files-report \
-  --engine browser \
-  --browser-transport cdp \
+oracle --engine browser \
   --model gpt-5-pro \
   -p "Audit this change for correctness and missing tests." \
   --file "src/**"
 ```
 
-Remove `--dry-run summary` to dispatch. Long answers remain recoverable Oracle
-sessions:
+For an unusually large or uncertain bundle, add
+`--dry-run summary --files-report` as an optional scope diagnostic; it is not a
+normal dispatch prerequisite. Long answers remain recoverable Oracle sessions:
 
 ```bash
 oracle status --hours 72
@@ -271,8 +275,9 @@ The normal direct-CDP lifecycle is deterministic:
    calling coding model or opening duplicate sessions.
 5. A recoverable connection drop reattaches to the stored conversation. It does
    not silently submit the same turn again.
-6. Successful one-shots close their owned target; Chrome lifecycle follows the
-   recorded `keepBrowser` policy.
+6. A completed run closes its owned target; an incomplete run retains that
+   target for recovery. The shared Chrome process follows the recorded
+   `keepBrowser` policy, and unrelated tabs are never swept by URL.
 
 Up to three ChatGPT tabs may share the dedicated profile by default. Startup and
 composer mutation are separately locked so parallel agents do not race one

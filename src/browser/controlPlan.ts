@@ -118,13 +118,19 @@ export function describeBrowserControlPlan(config: BrowserControlConfig = {}): B
 
   guidance.push(
     config.manualLogin
-      ? "Oracle launches its own persistent profile visibly for this run; it does not attach to personal Chrome."
+      ? "Oracle launches or reuses its own persistent profile visibly; it does not attach to personal Chrome. On macOS the cold launch is background-opened, and new targets use focus:false."
       : "A visible automation Chrome window may take focus while Oracle controls ChatGPT.",
   );
   appendKeychainGuidance(guidance, config);
-  guidance.push(
-    "Use --browser-hide-window, --browser-attach-running, or --remote-chrome to reduce desktop disruption.",
-  );
+  if (config.manualLogin) {
+    guidance.push(
+      "Oracle preserves a user-positioned visible window and uses page-side focus emulation without taking macOS keyboard focus.",
+    );
+  } else {
+    guidance.push(
+      "Use --browser-hide-window, --browser-attach-running, or --remote-chrome to reduce desktop disruption.",
+    );
+  }
   if (config.keepBrowser) {
     guidance.push(
       "Chrome will remain open after the run because --browser-keep-browser is enabled.",
@@ -134,7 +140,7 @@ export function describeBrowserControlPlan(config: BrowserControlConfig = {}): B
   return {
     mode: "visible-window",
     launchesChrome: true,
-    mayFocusWindow: true,
+    mayFocusWindow: !(config.manualLogin && process.platform === "darwin"),
     summary: "launch visible Chrome",
     guidance,
   };
@@ -151,7 +157,9 @@ function appendKeychainGuidance(guidance: string[], config: BrowserControlConfig
 export function formatBrowserControlPlan(plan: BrowserControlPlan, label = "browser"): string[] {
   const risk = plan.mayFocusWindow
     ? "may focus/control the browser UI"
-    : "does not use a visible local browser window";
+    : plan.mode === "visible-window"
+      ? "leaves macOS keyboard focus with the active app"
+      : "does not use a visible local browser window";
   return [
     `[${label}] Browser control: ${plan.summary}; ${risk}.`,
     ...plan.guidance.map((entry) => `[${label}] Browser guidance: ${entry}`),

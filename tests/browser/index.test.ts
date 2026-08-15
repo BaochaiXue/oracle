@@ -109,22 +109,11 @@ describe("browser run target cleanup", () => {
     ).toBe(true);
   });
 
-  test("keeps the completed conversation tab when keepBrowser is enabled", () => {
+  test("closes the owned completed tab while keeping browser lifetime independent", () => {
     expect(
       __test__.shouldCloseOwnedRunTargetAfterRun({
         runStatus: "complete",
         ownsTarget: true,
-        keepBrowser: true,
-      }),
-    ).toBe(false);
-  });
-
-  test("closes owned completed tabs by default", () => {
-    expect(
-      __test__.shouldCloseOwnedRunTargetAfterRun({
-        runStatus: "complete",
-        ownsTarget: true,
-        keepBrowser: false,
       }),
     ).toBe(true);
   });
@@ -134,7 +123,6 @@ describe("browser run target cleanup", () => {
       __test__.shouldCloseOwnedRunTargetAfterRun({
         runStatus: "complete",
         ownsTarget: true,
-        keepBrowser: true,
         closeOwnedTabOnComplete: true,
       }),
     ).toBe(true);
@@ -145,7 +133,6 @@ describe("browser run target cleanup", () => {
       __test__.shouldCloseOwnedRunTargetAfterRun({
         runStatus: "complete",
         ownsTarget: false,
-        keepBrowser: false,
         closeOwnedTabOnComplete: true,
       }),
     ).toBe(false);
@@ -153,61 +140,17 @@ describe("browser run target cleanup", () => {
       __test__.shouldCloseOwnedRunTargetAfterRun({
         runStatus: "attempted",
         ownsTarget: true,
-        keepBrowser: false,
         closeOwnedTabOnComplete: true,
       }),
     ).toBe(false);
   });
 
-  test("schedules final blank cleanup for retained manual-login Chrome", () => {
+  test("allows an explicit caller to preserve its owned completed target", () => {
     expect(
-      __test__.shouldCleanupBlankTabsAfterLastLease({
+      __test__.shouldCloseOwnedRunTargetAfterRun({
         runStatus: "complete",
         ownsTarget: true,
-        connectionClosedUnexpectedly: false,
-        manualLogin: true,
-        keepBrowser: true,
-        chromePort: 9222,
-      }),
-    ).toBe(true);
-    expect(
-      __test__.shouldCleanupBlankTabsAfterLastLease({
-        runStatus: "complete",
-        ownsTarget: true,
-        connectionClosedUnexpectedly: false,
-        manualLogin: true,
-        keepBrowser: false,
-        chromePort: 9222,
-      }),
-    ).toBe(false);
-    expect(
-      __test__.shouldCleanupBlankTabsAfterLastLease({
-        runStatus: "attempted",
-        ownsTarget: true,
-        connectionClosedUnexpectedly: false,
-        manualLogin: true,
-        keepBrowser: true,
-        chromePort: 9222,
-      }),
-    ).toBe(false);
-    expect(
-      __test__.shouldCleanupBlankTabsAfterLastLease({
-        runStatus: "complete",
-        ownsTarget: false,
-        connectionClosedUnexpectedly: false,
-        manualLogin: true,
-        keepBrowser: true,
-        chromePort: 9222,
-      }),
-    ).toBe(false);
-    expect(
-      __test__.shouldCleanupBlankTabsAfterLastLease({
-        runStatus: "complete",
-        ownsTarget: true,
-        connectionClosedUnexpectedly: true,
-        manualLogin: true,
-        keepBrowser: true,
-        chromePort: 9222,
+        closeOwnedTabOnComplete: false,
       }),
     ).toBe(false);
   });

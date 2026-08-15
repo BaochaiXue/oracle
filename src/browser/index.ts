@@ -23,7 +23,6 @@ import {
   closeTab,
   createChromePageTarget,
   ensureChromePageTargetAfterClose,
-  closeBlankChromeTabs,
 } from "./chromeLifecycle.js";
 import { clearStaleChatGptConversationCookies, syncCookies } from "./cookies.js";
 import {
@@ -895,31 +894,12 @@ async function closeRemoteConnectionAfterRun(options: {
 function shouldCloseOwnedRunTargetAfterRun(options: {
   runStatus: "attempted" | "complete";
   ownsTarget: boolean;
-  keepBrowser: boolean;
   closeOwnedTabOnComplete?: boolean;
 }): boolean {
   return (
     options.runStatus === "complete" &&
     options.ownsTarget &&
-    (Boolean(options.closeOwnedTabOnComplete) || !options.keepBrowser)
-  );
-}
-
-function shouldCleanupBlankTabsAfterLastLease(options: {
-  runStatus: "attempted" | "complete";
-  ownsTarget: boolean;
-  connectionClosedUnexpectedly: boolean;
-  manualLogin: boolean;
-  keepBrowser: boolean;
-  chromePort?: number;
-}): boolean {
-  return (
-    options.runStatus === "complete" &&
-    options.ownsTarget &&
-    !options.connectionClosedUnexpectedly &&
-    options.manualLogin &&
-    options.keepBrowser &&
-    Boolean(options.chromePort)
+    options.closeOwnedTabOnComplete !== false
   );
 }
 
@@ -1228,12 +1208,13 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           `Attached to existing ChatGPT tab ${attached.targetId}${attached.tab.url ? ` (${attached.tab.url})` : ""}`,
         );
       } else {
-        const strictTabIsolation = Boolean(manualLogin && reusedChrome);
+        const strictTabIsolation = manualLogin;
         const devtoolsRetries = manualLogin ? 6 : 0;
         const connection = await connectWithNewTab(chrome.port, logger, "about:blank", chromeHost, {
           fallbackToDefault: !strictTabIsolation,
           retries: devtoolsRetries,
           retryDelayMs: 500,
+          preserveWindowFocus: manualLogin,
         });
         client = connection.client;
         isolatedTargetId = connection.targetId ?? null;
@@ -1674,7 +1655,6 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       const providerState: Record<string, unknown> = {
         runtime: Runtime,
         input: Input,
-        page: Page,
         logger,
         timeoutMs: config.timeoutMs,
         inputTimeoutMs: config.inputTimeoutMs ?? undefined,
@@ -2542,7 +2522,6 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     const shouldCloseOwnedRunTarget = shouldCloseOwnedRunTargetAfterRun({
       runStatus,
       ownsTarget,
-      keepBrowser: effectiveKeepBrowser,
       closeOwnedTabOnComplete: options.closeOwnedTabOnComplete,
     });
     let keepBrowserOpen = shouldKeepLocalBrowserOpen({
@@ -2609,38 +2588,15 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         }
       }
     };
-    const cleanupBlankTabs = async () => {
-      if (
-        !shouldCleanupBlankTabsAfterLastLease({
-          runStatus,
-          ownsTarget,
-          connectionClosedUnexpectedly,
-          manualLogin,
-          keepBrowser: effectiveKeepBrowser,
-          chromePort: chrome?.port,
-        }) ||
-        !chrome?.port
-      ) {
-        return;
-      }
-      await closeBlankChromeTabs(chrome.port, logger, chromeHost, {
-        excludeTargetIds: [isolatedTargetId, lastTargetId],
-        preserveOneBlank: true,
-      });
-    };
     if (tabLease) {
       const handle = tabLease;
       tabLease = null;
-      const onRelease = async ({ isLastLease }: { isLastLease: boolean }) => {
+      const onRelease = async () => {
         await closeOwnedRunTarget();
-        if (isLastLease) {
-          await cleanupBlankTabs();
-        }
       };
       await handle.release({ onRelease }).catch(() => undefined);
     } else {
       await closeOwnedRunTarget();
-      await cleanupBlankTabs();
     }
     removeDialogHandler?.();
     removeTerminationHooks?.();
@@ -4092,7 +4048,6 @@ async function runRemoteBrowserMode(
     const shouldCloseOwnedRemoteTarget = shouldCloseOwnedRunTargetAfterRun({
       runStatus,
       ownsTarget,
-      keepBrowser: keepRemoteBrowser,
       closeOwnedTabOnComplete: options.closeOwnedTabOnComplete,
     });
     const closeOwnedRemoteTarget = async () => {
@@ -4152,7 +4107,6 @@ export const __test__ = {
   listIgnoredRemoteChromeFlags,
   normalizeAuthenticatedModelSelectionError,
   resolveManualLoginWaitMs,
-  shouldCleanupBlankTabsAfterLastLease,
   shouldCloseOwnedRunTargetAfterRun,
   shouldKeepLocalBrowserOpen,
   waitForAssistantResponseWithReload,

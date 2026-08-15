@@ -20,6 +20,10 @@ work.
 Recommended defaults:
 
 - Engine: browser (`--engine browser`)
+- Browser transport: direct CDP (`--browser-transport cdp`)
+- Window: visible, persistent, and never activated for submission; macOS cold
+  starts use LaunchServices background-open semantics, new tabs use
+  `focus:false`, and page-side focus emulation supports trusted input
 - Base Sol: `--model gpt-5.6-sol`
 - Base Sol maximum reasoning: `--browser-thinking-time extra-high` (Extra High)
 - Explicit Pro effort on GPT-5.6 Sol: `--browser-thinking-time pro` (fails closed if Pro cannot be confirmed)
@@ -91,7 +95,9 @@ and a live browser run records strict GPT-5.6 selection evidence.
 ## Golden path
 
 1. Pick the smallest file set that still contains the truth.
-2. Preview the bundle with `--dry-run` and `--files-report`.
+2. Run the browser consultation directly. Normal consults must not run
+   dry-runs, smoke tests, live tests, doctor, or preflight validation unless a
+   concrete bundle/runtime uncertainty makes that diagnostic material.
 3. Use browser mode for GPT-5.6; use API only when explicitly intended.
 4. If a run detaches or times out, reattach to the stored session instead of
    starting a duplicate.
@@ -101,7 +107,7 @@ and a live browser run records strict GPT-5.6 selection evidence.
 - Show help:
   - `npx -y @steipete/oracle --help --verbose`
 
-- Preview without calling a model:
+- Optional bundle diagnostics (large or uncertain file sets only):
   - `npx -y @steipete/oracle --dry-run summary -p "<task>" --file "src/**" --file "!**/*.test.*"`
   - `npx -y @steipete/oracle --dry-run full -p "<task>" --file "src/**"`
 

@@ -356,7 +356,7 @@ export function buildConsultBrowserConfig({
     cookieSync: !manualLogin,
     headless: configuredBrowser.headless ?? false,
     hideWindow: configuredBrowser.hideWindow ?? false,
-    keepBrowser: browserKeepBrowser ?? configuredBrowser.keepBrowser ?? false,
+    keepBrowser: browserKeepBrowser ?? configuredBrowser.keepBrowser ?? manualLogin,
     manualLogin,
     manualLoginProfileDir: manualLogin
       ? ((envProfileDir || configuredBrowser.manualLoginProfileDir) ?? null)

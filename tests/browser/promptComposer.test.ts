@@ -113,6 +113,59 @@ describe("promptComposer", () => {
     }
   });
 
+  test("does not accept a committed user turn with stray appended input", async () => {
+    vi.useFakeTimers();
+    try {
+      const content = { innerText: "hello x", textContent: "hello x" };
+      const userTurn = {
+        innerText: "hello x",
+        dataset: { turn: "user" },
+        getAttribute: (name: string) => (name === "data-message-author-role" ? "user" : null),
+        querySelector: (selector: string) => (selector === ".whitespace-pre-wrap" ? content : null),
+      };
+      const document = {
+        querySelector: (selector: string) =>
+          selector === '[data-testid="stop-button"]' ? {} : null,
+        querySelectorAll: (selector: string) =>
+          selector === CONVERSATION_TURN_CONTAINER_SELECTOR ? [userTurn] : [],
+      };
+      class FakeTextArea {}
+      const runtime = {
+        evaluate: vi.fn(async ({ expression }: { expression: string }) => ({
+          result: {
+            value: Function(
+              "document",
+              "HTMLTextAreaElement",
+              "location",
+              `return ${expression};`,
+            )(document, FakeTextArea, { href: "https://chatgpt.com/c/mutated" }),
+          },
+        })),
+      };
+
+      const promise = promptComposer.verifyPromptCommitted(
+        runtime as never,
+        "hello",
+        150,
+        undefined,
+        0,
+      );
+      const assertion = expect(promise).rejects.toMatchObject({
+        details: expect.objectContaining({
+          code: "prompt-commit-timeout",
+          commitProbe: expect.objectContaining({
+            lastMatched: false,
+            lastUserTurnAvailable: true,
+          }),
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(250);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("commit timeout throws a structured error with probe diagnostics", async () => {
     vi.useFakeTimers();
     try {
@@ -175,36 +228,88 @@ describe("promptComposer", () => {
     }
   });
 
-  test("allows prompt match even if baseline turn count cannot be read", async () => {
-    const runtime = {
-      evaluate: vi
-        .fn()
-        // Baseline read fails
-        .mockRejectedValueOnce(new Error("turn read failed"))
-        // First poll shows prompt match (baseline unknown)
-        .mockResolvedValueOnce({
+  test("rejects a matching historical turn when baseline turn count cannot be read", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = {
+        evaluate: vi
+          .fn()
+          // Baseline read fails
+          .mockRejectedValueOnce(new Error("turn read failed"))
+          // Polls show only a historical prompt match (baseline unknown)
+          .mockResolvedValue({
+            result: {
+              value: {
+                baseline: -1,
+                turnsCount: 1,
+                userMatched: true,
+                prefixMatched: false,
+                lastMatched: true,
+                hasNewTurn: false,
+                stopVisible: false,
+                assistantVisible: false,
+                composerCleared: false,
+                inConversation: true,
+              },
+            },
+          }),
+      } as unknown as {
+        evaluate: (args: { expression: string; returnByValue?: boolean }) => Promise<unknown>;
+      };
+
+      const promise = promptComposer.verifyPromptCommitted(runtime as never, "hello", 150);
+      const assertion = expect(promise).rejects.toThrow(/prompt did not appear/i);
+      await vi.advanceTimersByTimeAsync(250);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("does not infer a commit when no semantic user turn is available", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = {
+        evaluate: vi.fn().mockResolvedValue({
           result: {
             value: {
-              baseline: -1,
+              baseline: 0,
               turnsCount: 1,
-              userMatched: true,
-              prefixMatched: false,
-              lastMatched: true,
-              hasNewTurn: false,
-              stopVisible: false,
-              assistantVisible: false,
-              composerCleared: false,
+              userMatched: false,
+              lastMatched: false,
+              lastUserTurnAvailable: false,
+              hasNewTurn: true,
+              stopVisible: true,
+              assistantVisible: true,
+              composerCleared: true,
               inConversation: true,
             },
           },
         }),
-    } as unknown as {
-      evaluate: (args: { expression: string; returnByValue?: boolean }) => Promise<unknown>;
-    };
+      };
 
-    await expect(
-      promptComposer.verifyPromptCommitted(runtime as never, "hello", 150),
-    ).resolves.toBe(1);
+      const promise = promptComposer.verifyPromptCommitted(
+        runtime as never,
+        "hello",
+        150,
+        undefined,
+        0,
+      );
+      const assertion = expect(promise).rejects.toMatchObject({
+        details: expect.objectContaining({
+          code: "prompt-commit-timeout",
+          commitProbe: expect.objectContaining({
+            lastMatched: false,
+            lastUserTurnAvailable: false,
+            hasNewTurn: true,
+          }),
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(250);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("reports a retained composer draft as an uncommitted submission", async () => {
@@ -345,7 +450,7 @@ describe("promptComposer", () => {
     expect(callbacks).toEqual(["dispatched", "committed"]);
   });
 
-  test("brings the ChatGPT page forward before the trusted send click", async () => {
+  test("sends without activating the ChatGPT page", async () => {
     const actions: string[] = [];
     const runtime = {
       evaluate: vi.fn(async ({ expression }: { expression: string }) => {
@@ -382,18 +487,12 @@ describe("promptComposer", () => {
         };
       }),
     };
-    const page = {
-      bringToFront: vi.fn(async () => {
-        actions.push("bring-to-front");
-      }),
-    };
     const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
     const logger = Object.assign(vi.fn(), { verbose: false });
 
     await submitPrompt(
       {
         runtime: runtime as never,
-        page: page as never,
         input: input as never,
         baselineTurns: 0,
       },
@@ -401,8 +500,104 @@ describe("promptComposer", () => {
       logger as never,
     );
 
-    expect(page.bringToFront).toHaveBeenCalledTimes(1);
-    expect(actions).toEqual(["bring-to-front", "send-click"]);
+    expect(actions).toEqual(["send-click"]);
+  });
+
+  test("refuses to send when external input mutates the composer", async () => {
+    let composerRead = 0;
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("document.readyState")) {
+          return { result: { value: { ready: true, composer: true, fileInput: false } } };
+        }
+        if (expression.includes("focused: true")) {
+          return { result: { value: { focused: true } } };
+        }
+        if (expression.includes("editorText")) {
+          composerRead += 1;
+          const value = composerRead === 1 ? "hello" : "hellox";
+          return {
+            result: { value: { editorText: value, fallbackValue: "", activeValue: value } },
+          };
+        }
+        throw new Error("send must not be attempted after composer mutation");
+      }),
+    };
+    const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
+    const logger = Object.assign(vi.fn(), { verbose: false });
+
+    await expect(
+      submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          baselineTurns: 0,
+        },
+        "hello",
+        logger as never,
+      ),
+    ).rejects.toMatchObject({
+      message: "Prompt composer changed after Oracle populated it; refusing to send.",
+      details: {
+        code: "composer-mutated-before-send",
+        submissionCommitted: false,
+        draftRetained: true,
+        expectedLength: 5,
+        observedLength: 6,
+      },
+    });
+    expect(runtime.evaluate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ expression: expect.stringContaining("button.scrollIntoView") }),
+    );
+  });
+
+  test("refuses a mutation that arrives while the send button is settling", async () => {
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("document.readyState")) {
+          return { result: { value: { ready: true, composer: true, fileInput: false } } };
+        }
+        if (expression.includes("focused: true")) {
+          return { result: { value: { focused: true } } };
+        }
+        if (expression.includes("editorText")) {
+          return {
+            result: { value: { editorText: "hello", fallbackValue: "", activeValue: "hello" } },
+          };
+        }
+        if (expression.includes("button.scrollIntoView")) {
+          return { result: { value: { status: "mutated", observedLength: 6 } } };
+        }
+        return { result: { value: true } };
+      }),
+    };
+    const input = {
+      insertText: vi.fn(),
+      dispatchKeyEvent: vi.fn(),
+      dispatchMouseEvent: vi.fn(),
+    };
+    const logger = Object.assign(vi.fn(), { verbose: false });
+
+    await expect(
+      submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          baselineTurns: 0,
+        },
+        "hello",
+        logger as never,
+      ),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "composer-mutated-before-send",
+        submissionCommitted: false,
+        expectedLength: 5,
+        observedLength: 6,
+      }),
+    });
+    expect(input.dispatchMouseEvent).not.toHaveBeenCalled();
+    expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
   });
 
   test("keeps a gated send attempt uncommitted", async () => {

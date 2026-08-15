@@ -35,7 +35,6 @@ export async function submitPrompt(
   deps: {
     runtime: ChromeClient["Runtime"];
     input: ChromeClient["Input"];
-    page?: Pick<ChromeClient["Page"], "bringToFront">;
     attachmentNames?: AttachmentReadyInput[];
     baselineTurns?: number | null;
     inputTimeoutMs?: number | null;
@@ -197,6 +196,7 @@ export async function submitPrompt(
   const observedEditor = postVerification.result?.value?.editorText ?? "";
   const observedFallback = postVerification.result?.value?.fallbackValue ?? "";
   const observedActive = postVerification.result?.value?.activeValue ?? "";
+  const observedComposer = observedActive || observedEditor || observedFallback;
   const observedLength = Math.max(
     observedEditor.length,
     observedFallback.length,
@@ -216,21 +216,21 @@ export async function submitPrompt(
     );
   }
 
-  // Uploads, picker interaction, and attachment readiness can take long enough
-  // for macOS to background or occlude the Chrome target after the connection's
-  // initial focus emulation. A trusted CDP mouse event can then complete at the
-  // protocol layer without ChatGPT receiving the click, leaving the full draft
-  // in the composer. Activate this exact page immediately before the one allowed
-  // send attempt; commit verification still owns the submitted/not-submitted
-  // decision and we never issue an automatic second click.
-  if (deps.page?.bringToFront) {
-    try {
-      await deps.page.bringToFront();
-      logger("Brought ChatGPT page to foreground before send");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger(`Unable to foreground ChatGPT page before send: ${message}`);
-    }
+  // The dedicated browser is deliberately visible but must never claim the
+  // operator's keyboard focus. Re-read the visible composer immediately before
+  // Send and fail closed if anything changed after Oracle populated it.
+  if (normalizeComposerText(observedComposer) !== normalizeComposerText(prompt)) {
+    throw new BrowserAutomationError(
+      "Prompt composer changed after Oracle populated it; refusing to send.",
+      {
+        stage: "submit-prompt",
+        code: "composer-mutated-before-send",
+        submissionCommitted: false,
+        draftRetained: observedLength > 0,
+        expectedLength: prompt.length,
+        observedLength,
+      },
+    );
   }
 
   const clicked = await attemptSendButton(
@@ -239,8 +239,10 @@ export async function submitPrompt(
     logger,
     deps?.attachmentNames,
     deps?.attachmentTimeoutMs,
+    prompt,
   );
   if (!clicked) {
+    await assertComposerUnchanged(runtime, prompt);
     await input.dispatchKeyEvent({
       type: "keyDown",
       ...ENTER_KEY_EVENT,
@@ -674,11 +676,23 @@ async function attemptSendButton(
   _logger?: BrowserLogger,
   attachmentNames?: AttachmentReadyInput[],
   attachmentTimeoutMs?: number | null,
+  expectedPrompt?: string,
 ): Promise<boolean> {
   const needAttachment = Array.isArray(attachmentNames) && attachmentNames.length > 0;
+  const expectedPromptLiteral = JSON.stringify(expectedPrompt ?? null);
   const script = `(() => {
     ${buildClickDispatcher()}
     const selectors = ${JSON.stringify(SEND_BUTTON_SELECTORS)};
+    const expectedPrompt = ${expectedPromptLiteral};
+    const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
+    const readValue = (node) => {
+      if (!node) return '';
+      if (node instanceof HTMLTextAreaElement) return node.value ?? '';
+      return node.innerText ?? '';
+    };
+    const normalizeComposer = (value) => String(value ?? '')
+      .replace(/\\r\\n?/g, '\\n')
+      .replace(/\\u00a0/g, ' ');
     const isVisible = (node) => {
       if (!(node instanceof HTMLElement)) return false;
       const rect = node.getBoundingClientRect();
@@ -698,6 +712,16 @@ async function attemptSendButton(
         style.display === 'none'
       );
     };
+    if (expectedPrompt !== null) {
+      const inputs = inputSelectors
+        .map((selector) => document.querySelector(selector))
+        .filter((node) => Boolean(node));
+      const active = inputs.find((node) => isVisible(node)) || inputs[0] || null;
+      const observed = readValue(active);
+      if (normalizeComposer(observed) !== normalizeComposer(expectedPrompt)) {
+        return { status: 'mutated', observedLength: observed.length };
+      }
+    }
     const candidates = [];
     for (const selector of selectors) {
       candidates.push(...Array.from(document.querySelectorAll(selector)));
@@ -732,10 +756,23 @@ async function attemptSendButton(
     }
     const { result } = await Runtime.evaluate({ expression: script, returnByValue: true });
     const value = result.value as
-      | { status?: "clicked" | "missing" | "point"; x?: number; y?: number }
+      | {
+          status?: "clicked" | "missing" | "mutated" | "point";
+          x?: number;
+          y?: number;
+          observedLength?: number;
+        }
       | string
       | undefined;
     const status = typeof value === "string" ? value : value?.status;
+    if (status === "mutated") {
+      throwComposerMutationError(
+        expectedPrompt ?? "",
+        typeof value === "object" && typeof value.observedLength === "number"
+          ? value.observedLength
+          : 0,
+      );
+    }
     if (
       status === "point" &&
       typeof value === "object" &&
@@ -767,6 +804,60 @@ async function attemptSendButton(
     );
   }
   return false;
+}
+
+async function assertComposerUnchanged(
+  Runtime: ChromeClient["Runtime"],
+  expectedPrompt: string,
+): Promise<void> {
+  const result = await Runtime.evaluate({
+    expression: `(() => {
+      const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
+      const isVisible = (node) => {
+        if (!node || typeof node.getBoundingClientRect !== 'function') return false;
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+      const readValue = (node) => {
+        if (!node) return '';
+        if (node instanceof HTMLTextAreaElement) return node.value ?? '';
+        return node.innerText ?? '';
+      };
+      const normalizeComposer = (value) => String(value ?? '')
+        .replace(/\\r\\n?/g, '\\n')
+        .replace(/\\u00a0/g, ' ');
+      const inputs = inputSelectors
+        .map((selector) => document.querySelector(selector))
+        .filter((node) => Boolean(node));
+      const active = inputs.find((node) => isVisible(node)) || inputs[0] || null;
+      const observed = readValue(active);
+      return {
+        unchanged: normalizeComposer(observed) === normalizeComposer(${JSON.stringify(expectedPrompt)}),
+        observedLength: observed.length,
+      };
+    })()`,
+    returnByValue: true,
+  });
+  const value = result.result?.value as
+    | { unchanged?: boolean; observedLength?: number }
+    | undefined;
+  if (!value?.unchanged) {
+    throwComposerMutationError(expectedPrompt, value?.observedLength ?? 0);
+  }
+}
+
+function throwComposerMutationError(expectedPrompt: string, observedLength: number): never {
+  throw new BrowserAutomationError(
+    "Prompt composer changed after Oracle populated it; refusing to send.",
+    {
+      stage: "submit-prompt",
+      code: "composer-mutated-before-send",
+      submissionCommitted: false,
+      draftRetained: observedLength > 0,
+      expectedLength: expectedPrompt.length,
+      observedLength,
+    },
+  );
 }
 
 async function clickTrustedPoint(
@@ -838,7 +929,9 @@ async function verifyPromptCommitted(
     }
   }
   const baselineLiteral = baseline ?? -1;
-  // Learned: ChatGPT can echo/format text; normalize markdown and use prefix matches to detect the sent prompt.
+  // Read the semantic user-message node so attachment labels and turn controls
+  // do not contaminate the prompt identity check. Exact identity prevents a
+  // prompt plus stray operator keystrokes from being accepted as committed.
   const script = `(() => {
 		    const editor = document.querySelector(${primarySelectorLiteral});
 		    const fallback = document.querySelector(${fallbackSelectorLiteral});
@@ -850,11 +943,33 @@ async function verifyPromptCommitted(
 	      text = text.replace(/\`\`\`/g, ' ');
 	      text = text.replace(/\`([^\`]*)\`/g, '$1');
 	      return text.replace(/\\s+/g, ' ').trim();
-	    };
-	    const normalizedPrompt = normalize(${encodedPrompt});
-	    const normalizedPromptPrefix = normalizedPrompt.slice(0, 120);
-	    const articles = ${buildConversationTurnListExpression()};
-	    const normalizedTurns = articles.map((node) => normalize(node?.innerText));
+		    };
+		    const normalizedPrompt = normalize(${encodedPrompt});
+		    const articles = ${buildConversationTurnListExpression()};
+		    const normalizedTurns = articles.map((node) => normalize(node?.innerText));
+		    const userTurnTexts = articles.filter((node) => {
+		      const role = String(
+		        node?.getAttribute?.('data-message-author-role') ||
+		        node?.getAttribute?.('data-turn') ||
+		        node?.dataset?.turn ||
+		        '',
+		      ).toLowerCase();
+		      return role === 'user' || Boolean(
+		        node?.querySelector?.('[data-message-author-role="user"], [data-turn="user"]'),
+		      );
+		    }).map((node) => {
+		      const role = String(
+		        node?.getAttribute?.('data-message-author-role') ||
+		        node?.getAttribute?.('data-turn') ||
+		        node?.dataset?.turn ||
+		        '',
+		      ).toLowerCase();
+		      const roleNode = role === 'user'
+		        ? node
+		        : node?.querySelector?.('[data-message-author-role="user"], [data-turn="user"]');
+		      const messageNode = roleNode?.querySelector?.('.whitespace-pre-wrap') || roleNode;
+		      return normalize(messageNode?.innerText || messageNode?.textContent || '');
+		    }).filter(Boolean);
 	    const readValue = (node) => {
 	      if (!node) return '';
 	      if (node instanceof HTMLTextAreaElement) return node.value ?? '';
@@ -870,16 +985,11 @@ async function verifyPromptCommitted(
 	      .filter((node) => Boolean(node));
 	    const visibleInputs = inputs.filter((node) => isVisible(node));
 	    const activeInputs = visibleInputs.length > 0 ? visibleInputs : inputs;
-	    const userMatched =
-	      normalizedPrompt.length > 0 && normalizedTurns.some((text) => text.includes(normalizedPrompt));
-	    const prefixMatched =
-	      normalizedPromptPrefix.length > 30 &&
-	      normalizedTurns.some((text) => text.includes(normalizedPromptPrefix));
-		    const lastTurn = normalizedTurns[normalizedTurns.length - 1] ?? '';
-		    const lastMatched =
-		      normalizedPrompt.length > 0 &&
-		      (lastTurn.includes(normalizedPrompt) ||
-		        (normalizedPromptPrefix.length > 30 && lastTurn.includes(normalizedPromptPrefix)));
+		    const userMatched =
+		      normalizedPrompt.length > 0 && userTurnTexts.some((text) => text === normalizedPrompt);
+			    const lastTurn = userTurnTexts[userTurnTexts.length - 1] ?? '';
+			    const lastMatched =
+			      normalizedPrompt.length > 0 && lastTurn === normalizedPrompt;
 		    const baseline = ${baselineLiteral};
 		    const hasNewTurn = baseline < 0 ? false : normalizedTurns.length > baseline;
 		    const stopVisible = Boolean(document.querySelector(${stopSelectorLiteral}));
@@ -898,8 +1008,8 @@ async function verifyPromptCommitted(
 		    return {
         baseline,
 	      userMatched,
-	      prefixMatched,
 	      lastMatched,
+	      lastUserTurnAvailable: userTurnTexts.length > 0,
 	      hasNewTurn,
 	      stopVisible,
       assistantVisible,
@@ -922,17 +1032,8 @@ async function verifyPromptCommitted(
       lastProbe = info;
     }
     const turnsCount = (result.value as { turnsCount?: number } | undefined)?.turnsCount;
-    const matchesPrompt = Boolean(info?.lastMatched || info?.userMatched || info?.prefixMatched);
-    const baselineUnknown =
-      typeof info?.baseline === "number" ? info.baseline < 0 : baselineLiteral < 0;
-    if (matchesPrompt && (baselineUnknown || info?.hasNewTurn)) {
-      return typeof turnsCount === "number" && Number.isFinite(turnsCount) ? turnsCount : null;
-    }
-    const fallbackCommit =
-      info?.composerCleared &&
-      Boolean(info?.hasNewTurn) &&
-      ((info?.stopVisible ?? false) || info?.assistantVisible || info?.inConversation);
-    if (fallbackCommit) {
+    const matchesPrompt = Boolean(info?.lastMatched);
+    if (matchesPrompt && info?.hasNewTurn) {
       return typeof turnsCount === "number" && Number.isFinite(turnsCount) ? turnsCount : null;
     }
     if (onCommitPending && Date.now() >= nextPendingCheckAt) {
@@ -948,7 +1049,9 @@ async function verifyPromptCommitted(
   const probe = finalProbe && typeof finalProbe === "object" ? finalProbe : lastProbe;
   if (logger) {
     logger(
-      `Prompt commit check failed; latest state: ${probe ? JSON.stringify(probe) : "unavailable"}`,
+      `Prompt commit check failed; latest state: ${
+        probe ? JSON.stringify(summarizeCommitProbe(probe)) : "unavailable"
+      }`,
     );
     await logDomFailure(Runtime, logger, "prompt-commit");
   }
@@ -992,8 +1095,8 @@ async function verifyPromptCommitted(
 interface CommitProbeState {
   baseline?: number;
   userMatched?: boolean;
-  prefixMatched?: boolean;
   lastMatched?: boolean;
+  lastUserTurnAvailable?: boolean;
   hasNewTurn?: boolean;
   stopVisible?: boolean;
   assistantVisible?: boolean;
@@ -1012,8 +1115,8 @@ function summarizeCommitProbe(probe: CommitProbeState): Record<string, unknown> 
     baseline: probe.baseline,
     turnsCount: probe.turnsCount,
     userMatched: probe.userMatched,
-    prefixMatched: probe.prefixMatched,
     lastMatched: probe.lastMatched,
+    lastUserTurnAvailable: probe.lastUserTurnAvailable,
     hasNewTurn: probe.hasNewTurn,
     stopVisible: probe.stopVisible,
     assistantVisible: probe.assistantVisible,
@@ -1022,6 +1125,10 @@ function summarizeCommitProbe(probe: CommitProbeState): Record<string, unknown> 
     editorLength: typeof probe.editorValue === "string" ? probe.editorValue.length : undefined,
     lastTurnLength: typeof probe.lastTurn === "string" ? probe.lastTurn.length : undefined,
   };
+}
+
+function normalizeComposerText(value: string): string {
+  return value.replace(/\r\n?/gu, "\n").replace(/\u00a0/gu, " ");
 }
 
 // biome-ignore lint/style/useNamingConvention: test-only export used in vitest suite

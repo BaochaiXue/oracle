@@ -37,6 +37,7 @@ describe("resolveBrowserConfig", () => {
     expect(resolved.headless).toBe(false);
     expect(resolved.useMockKeychain).toBe(false);
     expect(resolved.manualLogin).toBe(true);
+    expect(resolved.keepBrowser).toBe(true);
     expect(resolved.manualLoginProfileDir).toBe(
       path.join(os.homedir(), ".oracle", "browser-profile"),
     );
@@ -52,6 +53,14 @@ describe("resolveBrowserConfig", () => {
 
     expect(resolved.manualLogin).toBe(false);
     expect(resolved.manualLoginProfileDir).toBeNull();
+    expect(resolved.keepBrowser).toBe(false);
+  });
+
+  test("keeps only the dedicated profile persistent by default", () => {
+    expect(resolveBrowserConfig({ manualLogin: true }).keepBrowser).toBe(true);
+    expect(resolveBrowserConfig({ manualLogin: true, keepBrowser: false }).keepBrowser).toBe(false);
+    expect(resolveBrowserConfig({ manualLogin: false }).keepBrowser).toBe(false);
+    expect(resolveBrowserConfig({ manualLogin: false, keepBrowser: true }).keepBrowser).toBe(true);
   });
 
   test("preserves explicit archive policy overrides", () => {

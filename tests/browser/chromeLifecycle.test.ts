@@ -6,6 +6,7 @@ import path from "node:path";
 const cdpNewMock = vi.fn();
 const cdpCloseMock = vi.fn();
 const cdpListMock = vi.fn();
+const cdpVersionMock = vi.fn();
 const cdpMock = Object.assign(vi.fn(), {
   // biome-ignore lint/style/useNamingConvention: CDP API uses capitalized members.
   New: cdpNewMock,
@@ -13,6 +14,8 @@ const cdpMock = Object.assign(vi.fn(), {
   Close: cdpCloseMock,
   // biome-ignore lint/style/useNamingConvention: CDP API uses capitalized members.
   List: cdpListMock,
+  // biome-ignore lint/style/useNamingConvention: CDP API uses capitalized members.
+  Version: cdpVersionMock,
 });
 
 vi.mock("chrome-remote-interface", () => ({ default: cdpMock }));
@@ -124,6 +127,17 @@ describe("copied-profile launch flags", () => {
 });
 
 describe("persistent-profile launch flags", () => {
+  test("resolves the dedicated executable to its macOS app bundle", async () => {
+    const { __macLaunchTest__ } = await import("../../src/browser/chromeLifecycle.js");
+
+    expect(
+      __macLaunchTest__.resolveMacAppBundle(
+        "/tmp/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+      ),
+    ).toBe("/tmp/Google Chrome for Testing.app");
+    expect(__macLaunchTest__.resolveMacAppBundle("/usr/bin/chromium")).toBeNull();
+  });
+
   test("keeps Chrome resource safeguards and the real keychain enabled", async () => {
     const { buildChromeFlagsForTest, resolveChromeLaunchOptionsForTest } =
       await import("../../src/browser/chromeLifecycle.js");
@@ -216,7 +230,11 @@ describe("hidden-window launch flags", () => {
   test("restores a visible Oracle window to an on-screen macOS position", async () => {
     const { positionChromeWindowOnscreen } = await import("../../src/browser/chromeLifecycle.js");
     const browser = {
-      getWindowForTarget: vi.fn().mockResolvedValue({ windowId: 9 }),
+      getWindowForTarget: vi.fn().mockResolvedValue({
+        windowId: 9,
+        bounds: { left: -32_000, top: -32_000, width: 1280, height: 720 },
+      }),
+      getWindowBounds: vi.fn(),
       setWindowBounds: vi.fn().mockResolvedValue(undefined),
     };
     const logger = vi.fn();
@@ -232,6 +250,22 @@ describe("hidden-window launch flags", () => {
       expect(browser.setWindowBounds).not.toHaveBeenCalled();
     }
   });
+
+  test("preserves a user-positioned visible Oracle window", async () => {
+    const { positionChromeWindowOnscreen } = await import("../../src/browser/chromeLifecycle.js");
+    const browser = {
+      getWindowForTarget: vi.fn().mockResolvedValue({
+        windowId: 11,
+        bounds: { left: -1440, top: 120, width: 1280, height: 720 },
+      }),
+      getWindowBounds: vi.fn(),
+      setWindowBounds: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await positionChromeWindowOnscreen({ Browser: browser } as never, vi.fn() as never);
+
+    expect(browser.setWindowBounds).not.toHaveBeenCalled();
+  });
 });
 
 describe("connectWithNewTab", () => {
@@ -240,6 +274,7 @@ describe("connectWithNewTab", () => {
     cdpNewMock.mockReset();
     cdpCloseMock.mockReset();
     cdpListMock.mockReset();
+    cdpVersionMock.mockReset();
   });
 
   afterEach(() => {
@@ -308,6 +343,63 @@ describe("connectWithNewTab", () => {
     expect(cdpMock).toHaveBeenCalledWith({ host: "127.0.0.1", port: 9222, target: "target-2" });
   });
 
+  test("opens a visible dedicated tab without changing window focus", async () => {
+    const send = vi.fn(async (method: string) =>
+      method === "Target.createTarget" ? { targetId: "target-safe" } : {},
+    );
+    const browserClient = {
+      send,
+      Target: {
+        attachToTarget: vi.fn(async () => ({ sessionId: "session-safe" })),
+        detachFromTarget: vi.fn(async () => ({})),
+        closeTarget: vi.fn(async () => ({ success: true })),
+      },
+      Network: {},
+      Page: {},
+      Runtime: {},
+      Input: {},
+      DOM: {},
+      Emulation: {},
+      on: vi.fn(),
+      once: vi.fn(),
+      removeListener: vi.fn(),
+      close: vi.fn(async () => undefined),
+    };
+    cdpVersionMock.mockResolvedValue({
+      webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/browser/safe",
+    });
+    cdpMock.mockResolvedValue(browserClient);
+
+    const { connectWithNewTab } = await import("../../src/browser/chromeLifecycle.js");
+    const result = await connectWithNewTab(
+      9222,
+      vi.fn<(message: string) => void>(),
+      "about:blank",
+      "127.0.0.1",
+      {
+        fallbackToDefault: false,
+        preserveWindowFocus: true,
+      },
+    );
+
+    expect(cdpNewMock).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith("Target.createTarget", {
+      url: "about:blank",
+      background: false,
+      focus: false,
+    });
+    expect(browserClient.Target.attachToTarget).toHaveBeenCalledWith({
+      targetId: "target-safe",
+      flatten: true,
+    });
+    expect(result.targetId).toBe("target-safe");
+    await result.client.close();
+    expect(browserClient.Target.detachFromTarget).toHaveBeenCalledWith({
+      sessionId: "session-safe",
+    });
+    expect(browserClient.close).toHaveBeenCalledTimes(1);
+  });
+
   test("retries transient DevTools connection failures before falling back", async () => {
     vi.useFakeTimers();
     cdpNewMock
@@ -331,102 +423,25 @@ describe("connectWithNewTab", () => {
   });
 });
 
-describe("closeBlankChromeTabs", () => {
+describe("remote Chrome target connections", () => {
   beforeEach(() => {
     cdpMock.mockReset();
     cdpNewMock.mockReset();
     cdpCloseMock.mockReset();
     cdpListMock.mockReset();
+    cdpVersionMock.mockReset();
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  test("closes blank tabs while preserving active and conversation targets", async () => {
-    cdpListMock.mockResolvedValue([
-      { id: "blank-1", type: "page", url: "about:blank" },
-      { id: "chat-1", type: "page", url: "https://chatgpt.com/c/abc" },
-      { id: "active-blank", type: "page", url: "about:blank" },
-      { id: "newtab-1", type: "page", url: "chrome://newtab/" },
-      { id: "worker-1", type: "service_worker", url: "about:blank" },
-    ]);
-    cdpCloseMock.mockResolvedValue(undefined);
-
-    const { closeBlankChromeTabs } = await import("../../src/browser/chromeLifecycle.js");
-    const logger = vi.fn();
-
-    await closeBlankChromeTabs(9222, logger, "127.0.0.1", {
-      excludeTargetIds: ["active-blank"],
-    });
-
-    expect(cdpListMock).toHaveBeenCalledWith({ host: "127.0.0.1", port: 9222 });
-    expect(cdpCloseMock).toHaveBeenCalledTimes(2);
-    expect(cdpCloseMock).toHaveBeenNthCalledWith(1, {
-      host: "127.0.0.1",
-      port: 9222,
-      id: "blank-1",
-    });
-    expect(cdpCloseMock).toHaveBeenNthCalledWith(2, {
-      host: "127.0.0.1",
-      port: 9222,
-      id: "newtab-1",
-    });
-    expect(logger).toHaveBeenCalledWith("Closed 2 blank Chrome tabs.");
-  });
-
-  test("preserves the same blank target across concurrent cleanup", async () => {
-    cdpListMock.mockResolvedValue([
-      { id: "blank-a", type: "page", url: "about:blank" },
-      { id: "blank-b", type: "page", url: "about:blank" },
-    ]);
-    cdpCloseMock.mockResolvedValue(undefined);
-    const { closeBlankChromeTabs } = await import("../../src/browser/chromeLifecycle.js");
-
-    await Promise.all([
-      closeBlankChromeTabs(9222, vi.fn<(message: string) => void>(), "127.0.0.1", {
-        excludeTargetIds: ["blank-a"],
-        preserveOneBlank: true,
-      }),
-      closeBlankChromeTabs(9222, vi.fn<(message: string) => void>(), "127.0.0.1", {
-        excludeTargetIds: ["blank-b"],
-        preserveOneBlank: true,
-      }),
-    ]);
-
-    expect(cdpCloseMock).toHaveBeenCalledTimes(1);
-    expect(cdpCloseMock).toHaveBeenCalledWith({
-      host: "127.0.0.1",
-      port: 9222,
-      id: "blank-b",
-    });
-  });
-
-  test("collapses concurrent replacements when only the last run cleans up", async () => {
-    cdpListMock.mockResolvedValue([
-      { id: "blank-a", type: "page", url: "about:blank" },
-      { id: "blank-b", type: "page", url: "about:blank" },
-    ]);
-    cdpCloseMock.mockResolvedValue(undefined);
-    const { closeBlankChromeTabs } = await import("../../src/browser/chromeLifecycle.js");
-
-    await closeBlankChromeTabs(9222, vi.fn<(message: string) => void>(), "127.0.0.1", {
-      preserveOneBlank: true,
-    });
-
-    expect(cdpCloseMock).toHaveBeenCalledTimes(1);
-    expect(cdpCloseMock).toHaveBeenCalledWith({
-      host: "127.0.0.1",
-      port: 9222,
-      id: "blank-b",
-    });
-  });
-
   test("opens a dedicated tab through a browser websocket endpoint", async () => {
-    const send = vi.fn(async () => ({}));
+    const send = vi.fn(async (method: string) =>
+      method === "Target.createTarget" ? { targetId: "target-9" } : {},
+    );
     const browserClient = {
       Target: {
-        createTarget: vi.fn(async () => ({ targetId: "target-9" })),
         attachToTarget: vi.fn(async () => ({ sessionId: "session-9" })),
         detachFromTarget: vi.fn(async () => ({})),
         closeTarget: vi.fn(async () => ({ success: true })),
@@ -460,7 +475,11 @@ describe("closeBlankChromeTabs", () => {
       target: "ws://127.0.0.1:9222/devtools/browser/abc",
       local: true,
     });
-    expect(browserClient.Target.createTarget).toHaveBeenCalledWith({ url: "https://chatgpt.com/" });
+    expect(send).toHaveBeenCalledWith("Target.createTarget", {
+      url: "https://chatgpt.com/",
+      background: false,
+      focus: false,
+    });
     expect(browserClient.Target.attachToTarget).toHaveBeenCalledWith({
       targetId: "target-9",
       flatten: true,
@@ -481,9 +500,12 @@ describe("closeBlankChromeTabs", () => {
 
   test("waits on a single websocket connection attempt for Chrome approval", async () => {
     vi.useFakeTimers();
+    const send = vi.fn(async (method: string) =>
+      method === "Target.createTarget" ? { targetId: "target-10" } : {},
+    );
     const browserClient = {
+      send,
       Target: {
-        createTarget: vi.fn(async () => ({ targetId: "target-10" })),
         attachToTarget: vi.fn(async () => ({ sessionId: "session-10" })),
         detachFromTarget: vi.fn(async () => ({})),
         closeTarget: vi.fn(async () => ({ success: true })),
@@ -556,9 +578,12 @@ describe("closeBlankChromeTabs", () => {
 
   test("retries immediate 403 responses while waiting for remote debugging approval", async () => {
     vi.useFakeTimers();
+    const send = vi.fn(async (method: string) =>
+      method === "Target.createTarget" ? { targetId: "target-20" } : {},
+    );
     const browserClient = {
+      send,
       Target: {
-        createTarget: vi.fn(async () => ({ targetId: "target-20" })),
         attachToTarget: vi.fn(async () => ({ sessionId: "session-20" })),
       },
       close: vi.fn(async () => {}),
@@ -594,9 +619,26 @@ describe("closeBlankChromeTabs", () => {
 
 describe("ensureChromePageTargetAfterClose", () => {
   beforeEach(() => {
+    cdpMock.mockReset();
     cdpNewMock.mockReset();
     cdpListMock.mockReset();
+    cdpVersionMock.mockReset();
   });
+
+  function mockFocusSafeReplacement(targetId: string): {
+    send: ReturnType<typeof vi.fn>;
+    close: ReturnType<typeof vi.fn>;
+  } {
+    const send = vi.fn(async (method: string) =>
+      method === "Target.createTarget" ? { targetId } : {},
+    );
+    const close = vi.fn(async () => undefined);
+    cdpVersionMock.mockResolvedValue({
+      webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/browser/replacement",
+    });
+    cdpMock.mockResolvedValue({ send, close });
+    return { send, close };
+  }
 
   test("reuses another page instead of opening a replacement", async () => {
     cdpListMock.mockResolvedValue([
@@ -619,7 +661,7 @@ describe("ensureChromePageTargetAfterClose", () => {
 
   test("opens a replacement when the completed run owns the only page", async () => {
     cdpListMock.mockResolvedValue([{ id: "run-target", type: "page" }]);
-    cdpNewMock.mockResolvedValue({ id: "replacement-target" });
+    const browser = mockFocusSafeReplacement("replacement-target");
     const { ensureChromePageTargetAfterClose } =
       await import("../../src/browser/chromeLifecycle.js");
 
@@ -631,11 +673,13 @@ describe("ensureChromePageTargetAfterClose", () => {
         "127.0.0.1",
       ),
     ).resolves.toBe("replacement-target");
-    expect(cdpNewMock).toHaveBeenCalledWith({
-      host: "127.0.0.1",
-      port: 9222,
+    expect(cdpNewMock).not.toHaveBeenCalled();
+    expect(browser.send).toHaveBeenCalledWith("Target.createTarget", {
       url: "about:blank",
+      background: false,
+      focus: false,
     });
+    expect(browser.close).toHaveBeenCalledTimes(1);
   });
 
   test("reuses a replacement created by an earlier serialized cleanup", async () => {
@@ -643,7 +687,7 @@ describe("ensureChromePageTargetAfterClose", () => {
       { id: "run-b", type: "page" },
       { id: "replacement-a", type: "page" },
     ]);
-    cdpNewMock.mockResolvedValueOnce({ id: "replacement-a" });
+    const browser = mockFocusSafeReplacement("replacement-a");
     const { ensureChromePageTargetAfterClose } =
       await import("../../src/browser/chromeLifecycle.js");
 
@@ -663,12 +707,12 @@ describe("ensureChromePageTargetAfterClose", () => {
         "127.0.0.1",
       ),
     ).resolves.toBe("replacement-a");
-    expect(cdpNewMock).toHaveBeenCalledTimes(1);
+    expect(browser.send).toHaveBeenCalledTimes(1);
   });
 
   test("fails closed when a replacement cannot be opened", async () => {
     cdpListMock.mockResolvedValue([{ id: "run-target", type: "page" }]);
-    cdpNewMock.mockRejectedValue(new Error("cannot create"));
+    cdpVersionMock.mockRejectedValue(new Error("cannot create"));
     const { ensureChromePageTargetAfterClose } =
       await import("../../src/browser/chromeLifecycle.js");
 
