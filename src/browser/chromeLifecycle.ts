@@ -1,4 +1,4 @@
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import CDP from "chrome-remote-interface";
@@ -16,6 +16,15 @@ export async function launchChrome(
 ) {
   const { connectHost, debugBindAddress, usePatchedLauncher } = resolveWslChromeLaunchRoute();
   const debugPort = config.debugPort ?? parseDebugPortEnv();
+  const usingCopiedProfile = Boolean(config.copyProfileSource);
+  const launchedProfileDirectory =
+    usingCopiedProfile && config.chromeProfile ? config.chromeProfile : "Default";
+  await prepareChromeWindowStateForHiddenLaunch({
+    config,
+    userDataDir,
+    profileDirectory: launchedProfileDirectory,
+    logger,
+  });
   const chromeFlags = buildChromeFlags(
     config.headless ?? false,
     debugBindAddress,
@@ -25,7 +34,6 @@ export async function launchChrome(
   // Keychain-encrypted, so it must launch with the real Keychain (not mocked):
   // strip the keychain-mocking flags from both chrome-launcher's defaults and
   // Oracle's set, and ignore the defaults so they aren't re-added.
-  const usingCopiedProfile = Boolean(config.copyProfileSource);
   if (usingCopiedProfile && config.chromeProfile) {
     chromeFlags.push(`--profile-directory=${config.chromeProfile}`);
   }
@@ -69,14 +77,7 @@ export async function positionChromeWindowOffscreen(
     const { windowId } = await client.Browser.getWindowForTarget();
     if (!(await readSavedChromeWindowState(userDataDir))) {
       const { bounds } = await client.Browser.getWindowBounds({ windowId });
-      const previousBounds = (await isLegacyOracleOffscreenWindow(client, bounds))
-        ? defaultOnscreenBounds(bounds)
-        : bounds;
-      await writeFile(
-        chromeWindowStatePath(userDataDir),
-        `${JSON.stringify({ version: 1, bounds: previousBounds })}\n`,
-        "utf8",
-      );
+      await writeSavedChromeWindowState(userDataDir, bounds);
       savedState = true;
     }
     await client.Browser.setWindowBounds({
@@ -103,26 +104,17 @@ export async function positionChromeWindowOnscreen(
     return;
   }
   try {
-    const { windowId } = await client.Browser.getWindowForTarget();
     const savedState = await readSavedChromeWindowState(userDataDir);
-    if (savedState) {
-      await client.Browser.setWindowBounds({
-        windowId,
-        bounds: restoreWindowBounds(savedState.bounds),
-      });
-      await rm(chromeWindowStatePath(userDataDir), { force: true });
-      logger("Chrome window restored to its pre-hide bounds");
+    if (!savedState) {
       return;
     }
-    const { bounds } = await client.Browser.getWindowBounds({ windowId });
-    if (!(await isLegacyOracleOffscreenWindow(client, bounds))) {
-      return;
-    }
+    const { windowId } = await client.Browser.getWindowForTarget();
     await client.Browser.setWindowBounds({
       windowId,
-      bounds: defaultOnscreenBounds(bounds),
+      bounds: restoreWindowBounds(savedState.bounds),
     });
-    logger("Chrome window restored from legacy off-screen bounds");
+    await rm(chromeWindowStatePath(userDataDir), { force: true });
+    logger("Chrome window restored to its pre-hide bounds");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger(`Failed to position Chrome window on-screen: ${message}`);
@@ -136,12 +128,21 @@ interface SavedChromeWindowState {
   bounds: Protocol.Browser.Bounds;
 }
 
-interface BrowserScreenBounds {
-  availLeft: number;
-  availTop: number;
-  availWidth: number;
-  availHeight: number;
+interface PersistedChromeWindowPlacement {
+  left?: unknown;
+  top?: unknown;
+  right?: unknown;
+  bottom?: unknown;
+  maximized?: unknown;
 }
+
+const DEFAULT_VISIBLE_WINDOW_BOUNDS: Protocol.Browser.Bounds = {
+  left: 80,
+  top: 80,
+  width: 1280,
+  height: 720,
+  windowState: "normal",
+};
 
 function chromeWindowStatePath(userDataDir: string): string {
   return path.join(userDataDir, CHROME_WINDOW_STATE_FILENAME);
@@ -154,13 +155,125 @@ async function readSavedChromeWindowState(
     const parsed = JSON.parse(
       await readFile(chromeWindowStatePath(userDataDir), "utf8"),
     ) as Partial<SavedChromeWindowState>;
-    if (parsed.version !== 1 || !parsed.bounds || typeof parsed.bounds !== "object") {
+    const bounds = parseChromeWindowBounds(parsed.bounds);
+    if (parsed.version !== 1 || !bounds) {
       return null;
     }
-    return { version: 1, bounds: parsed.bounds };
+    return { version: 1, bounds };
   } catch {
     return null;
   }
+}
+
+async function writeSavedChromeWindowState(
+  userDataDir: string,
+  bounds: Protocol.Browser.Bounds,
+): Promise<void> {
+  await mkdir(userDataDir, { recursive: true });
+  await writeFile(
+    chromeWindowStatePath(userDataDir),
+    `${JSON.stringify({ version: 1, bounds })}\n`,
+    "utf8",
+  );
+}
+
+async function prepareChromeWindowStateForHiddenLaunch({
+  config,
+  userDataDir,
+  profileDirectory,
+  logger,
+}: {
+  config: ResolvedBrowserConfig;
+  userDataDir: string;
+  profileDirectory: string;
+  logger: BrowserLogger;
+}): Promise<void> {
+  if (
+    process.platform !== "darwin" ||
+    config.headless ||
+    !config.hideWindow ||
+    (await readSavedChromeWindowState(userDataDir))
+  ) {
+    return;
+  }
+  const bounds =
+    (await readPersistedChromeWindowBounds(userDataDir, profileDirectory)) ??
+    DEFAULT_VISIBLE_WINDOW_BOUNDS;
+  await writeSavedChromeWindowState(userDataDir, bounds);
+  logger("Recorded Chrome window placement before hidden launch");
+}
+
+async function readPersistedChromeWindowBounds(
+  userDataDir: string,
+  profileDirectory: string,
+): Promise<Protocol.Browser.Bounds | null> {
+  const root = path.resolve(userDataDir);
+  const profile = path.resolve(root, profileDirectory);
+  if (path.dirname(profile) !== root) {
+    return null;
+  }
+  try {
+    const preferences = JSON.parse(await readFile(path.join(profile, "Preferences"), "utf8")) as {
+      browser?: { window_placement?: PersistedChromeWindowPlacement };
+    };
+    return persistedPlacementToBounds(preferences.browser?.window_placement);
+  } catch {
+    return null;
+  }
+}
+
+function persistedPlacementToBounds(
+  placement: PersistedChromeWindowPlacement | undefined,
+): Protocol.Browser.Bounds | null {
+  if (!placement) {
+    return null;
+  }
+  if (placement.maximized === true) {
+    return { windowState: "maximized" };
+  }
+  const left = finiteNumber(placement.left);
+  const top = finiteNumber(placement.top);
+  const right = finiteNumber(placement.right);
+  const bottom = finiteNumber(placement.bottom);
+  if (left === null || top === null || right === null || bottom === null) {
+    return null;
+  }
+  const width = right - left;
+  const height = bottom - top;
+  if (width <= 0 || height <= 0) {
+    return null;
+  }
+  return { left, top, width, height, windowState: "normal" };
+}
+
+function parseChromeWindowBounds(value: unknown): Protocol.Browser.Bounds | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const bounds = value as Protocol.Browser.Bounds;
+  const windowState = bounds.windowState ?? "normal";
+  if (windowState !== "normal") {
+    return ["minimized", "maximized", "fullscreen"].includes(windowState) ? { windowState } : null;
+  }
+  const left = finiteNumber(bounds.left);
+  const top = finiteNumber(bounds.top);
+  const width = finiteNumber(bounds.width);
+  const height = finiteNumber(bounds.height);
+  if (
+    left === null ||
+    top === null ||
+    width === null ||
+    height === null ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    return null;
+  }
+  return { left, top, width, height, windowState: "normal" };
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function restoreWindowBounds(bounds: Protocol.Browser.Bounds): Protocol.Browser.Bounds {
@@ -175,56 +288,6 @@ function restoreWindowBounds(bounds: Protocol.Browser.Bounds): Protocol.Browser.
     height: bounds.height,
     windowState: "normal",
   };
-}
-
-function defaultOnscreenBounds(bounds: Protocol.Browser.Bounds): Protocol.Browser.Bounds {
-  return {
-    left: 80,
-    top: 80,
-    width: bounds.width,
-    height: bounds.height,
-    windowState: "normal",
-  };
-}
-
-async function isLegacyOracleOffscreenWindow(
-  client: ChromeClient,
-  bounds: Protocol.Browser.Bounds,
-): Promise<boolean> {
-  if (
-    bounds.windowState !== "normal" ||
-    bounds.left === undefined ||
-    bounds.top === undefined ||
-    bounds.width === undefined ||
-    bounds.height === undefined
-  ) {
-    return false;
-  }
-  if (bounds.left >= 0) {
-    return false;
-  }
-  const evaluation = await client.Runtime.evaluate({
-    expression:
-      "({ availLeft: window.screen.availLeft, availTop: window.screen.availTop, availWidth: window.screen.availWidth, availHeight: window.screen.availHeight })",
-    returnByValue: true,
-  });
-  const screen = evaluation.result.value as BrowserScreenBounds | undefined;
-  if (!screen) {
-    return false;
-  }
-  const screenRight = screen.availLeft + screen.availWidth;
-  const screenBottom = screen.availTop + screen.availHeight;
-  const windowRight = bounds.left + bounds.width;
-  const windowBottom = bounds.top + bounds.height;
-  const visibleWidth = Math.max(
-    0,
-    Math.min(windowRight, screenRight) - Math.max(bounds.left, screen.availLeft),
-  );
-  const visibleHeight = Math.max(
-    0,
-    Math.min(windowBottom, screenBottom) - Math.max(bounds.top, screen.availTop),
-  );
-  return bounds.left < screen.availLeft && visibleWidth <= 64 && visibleHeight > 64;
 }
 
 export function registerTerminationHooks(

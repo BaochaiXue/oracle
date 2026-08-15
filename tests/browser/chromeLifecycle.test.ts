@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 const cdpNewMock = vi.fn();
 const cdpCloseMock = vi.fn();
 const cdpListMock = vi.fn();
+const chromeLaunchMock = vi.fn();
 const cdpMock = Object.assign(vi.fn(), {
   // biome-ignore lint/style/useNamingConvention: CDP API uses capitalized members.
   New: cdpNewMock,
@@ -16,6 +17,11 @@ const cdpMock = Object.assign(vi.fn(), {
 });
 
 vi.mock("chrome-remote-interface", () => ({ default: cdpMock }));
+
+vi.mock("chrome-launcher", async (importOriginal) => {
+  const original = await importOriginal<typeof import("chrome-launcher")>();
+  return { ...original, launch: chromeLaunchMock };
+});
 
 vi.doMock("../../src/browser/profileState.js", async () => {
   const original = await vi.importActual<typeof import("../../src/browser/profileState.js")>(
@@ -124,6 +130,10 @@ describe("copied-profile launch flags", () => {
 });
 
 describe("hidden-window launch flags", () => {
+  beforeEach(() => {
+    chromeLaunchMock.mockReset();
+  });
+
   test("keeps macOS Chrome rendered in an off-screen window", async () => {
     const { buildChromeFlagsForTest } = await import("../../src/browser/chromeLifecycle.js");
     const flags = buildChromeFlagsForTest(false, undefined, true);
@@ -161,6 +171,67 @@ describe("hidden-window launch flags", () => {
       }
     }
   });
+
+  test.skipIf(process.platform !== "darwin")(
+    "records persisted profile bounds before a fresh hidden Chrome launch",
+    async () => {
+      const { launchChrome } = await import("../../src/browser/chromeLifecycle.js");
+      const { resolveBrowserConfig } = await import("../../src/browser/config.js");
+      const userDataDir = await mkdtemp(path.join(os.tmpdir(), "oracle-prelaunch-window-"));
+      const profileDir = path.join(userDataDir, "Default");
+      await mkdir(profileDir, { recursive: true });
+      await writeFile(
+        path.join(profileDir, "Preferences"),
+        JSON.stringify({
+          browser: {
+            window_placement: {
+              left: 240,
+              top: 120,
+              right: 1340,
+              bottom: 880,
+              maximized: false,
+            },
+          },
+        }),
+        "utf8",
+      );
+      let markerAtLaunch: unknown;
+      let launchFlags: string[] = [];
+      chromeLaunchMock.mockImplementation(async (options: { chromeFlags?: string[] }) => {
+        markerAtLaunch = JSON.parse(
+          await readFile(path.join(userDataDir, "oracle-window-state.json"), "utf8"),
+        );
+        launchFlags = options.chromeFlags ?? [];
+        return { pid: 1234, port: 9222, kill: vi.fn() };
+      });
+
+      try {
+        await launchChrome(
+          resolveBrowserConfig({
+            chromePath: "/tmp/Google Chrome for Testing",
+            headless: false,
+            hideWindow: true,
+          }),
+          userDataDir,
+          vi.fn() as never,
+        );
+
+        expect(markerAtLaunch).toEqual({
+          version: 1,
+          bounds: {
+            left: 240,
+            top: 120,
+            width: 1100,
+            height: 760,
+            windowState: "normal",
+          },
+        });
+        expect(launchFlags).toContain("--window-position=-32000,-32000");
+      } finally {
+        await rm(userDataDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   test("restores the exact pre-hide bounds for a persistent macOS window", async () => {
     const { positionChromeWindowOffscreen, positionChromeWindowOnscreen } =
@@ -204,32 +275,27 @@ describe("hidden-window launch flags", () => {
     }
   });
 
-  test("preserves an ordinary visible macOS window", async () => {
+  test("preserves an unmarked user-positioned macOS window with negative bounds", async () => {
     const { positionChromeWindowOnscreen } = await import("../../src/browser/chromeLifecycle.js");
     const userDataDir = await mkdtemp(path.join(os.tmpdir(), "oracle-visible-window-"));
     const browser = {
       getWindowForTarget: vi.fn().mockResolvedValue({ windowId: 9 }),
       getWindowBounds: vi.fn().mockResolvedValue({
-        bounds: { left: 320, top: 140, width: 1280, height: 720, windowState: "maximized" },
+        bounds: { left: -1440, top: 120, width: 1280, height: 720, windowState: "normal" },
       }),
       setWindowBounds: vi.fn().mockResolvedValue(undefined),
-    };
-    const runtime = {
-      evaluate: vi.fn().mockResolvedValue({
-        result: {
-          value: { availLeft: 0, availTop: 29, availWidth: 1728, availHeight: 1080 },
-        },
-      }),
     };
     const logger = vi.fn();
 
     try {
       await positionChromeWindowOnscreen(
-        { Browser: browser, Runtime: runtime } as never,
+        { Browser: browser } as never,
         userDataDir,
         logger as never,
       );
 
+      expect(browser.getWindowForTarget).not.toHaveBeenCalled();
+      expect(browser.getWindowBounds).not.toHaveBeenCalled();
       expect(browser.setWindowBounds).not.toHaveBeenCalled();
     } finally {
       await rm(userDataDir, { recursive: true, force: true });
@@ -263,45 +329,6 @@ describe("hidden-window launch flags", () => {
         expect(browser.setWindowBounds).toHaveBeenNthCalledWith(2, {
           windowId: 10,
           bounds: { windowState: "maximized" },
-        });
-      } else {
-        expect(browser.setWindowBounds).not.toHaveBeenCalled();
-      }
-    } finally {
-      await rm(userDataDir, { recursive: true, force: true });
-    }
-  });
-
-  test("recovers a legacy Oracle-offscreen macOS window without saved state", async () => {
-    const { positionChromeWindowOnscreen } = await import("../../src/browser/chromeLifecycle.js");
-    const userDataDir = await mkdtemp(path.join(os.tmpdir(), "oracle-legacy-window-"));
-    const browser = {
-      getWindowForTarget: vi.fn().mockResolvedValue({ windowId: 11 }),
-      getWindowBounds: vi.fn().mockResolvedValue({
-        bounds: { left: -1240, top: 29, width: 1280, height: 720, windowState: "normal" },
-      }),
-      setWindowBounds: vi.fn().mockResolvedValue(undefined),
-    };
-    const runtime = {
-      evaluate: vi.fn().mockResolvedValue({
-        result: {
-          value: { availLeft: 0, availTop: 29, availWidth: 1280, availHeight: 803 },
-        },
-      }),
-    };
-    const logger = vi.fn();
-
-    try {
-      await positionChromeWindowOnscreen(
-        { Browser: browser, Runtime: runtime } as never,
-        userDataDir,
-        logger as never,
-      );
-
-      if (process.platform === "darwin") {
-        expect(browser.setWindowBounds).toHaveBeenCalledWith({
-          windowId: 11,
-          bounds: { left: 80, top: 80, width: 1280, height: 720, windowState: "normal" },
         });
       } else {
         expect(browser.setWindowBounds).not.toHaveBeenCalled();
