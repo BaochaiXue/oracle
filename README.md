@@ -262,7 +262,18 @@ timing evidence survive. Very large runs that pass the guard but still finish
 unexpectedly quickly emit an additional warning.
 
 The workload-aware timing guard is transport-independent and applies to both
-direct CDP and OpenCLI.
+direct CDP and OpenCLI. In a direct-CDP multi-turn run, the initial prompt and
+every follow-up are admitted independently using that submitted turn's own
+dispatch, elapsed time, token estimate, and upload bytes; a later tiny turn
+cannot make an earlier rejected turn part of a trusted transcript. Missing
+attachment sizes are read from the file before dispatch, and missing or partial
+active-turn workload is never filled from the initial prompt. Direct-CDP
+recovery also requires a verified committed user turn whose normalized prompt
+digest matches the stored turn identity. During reattach, an older timing
+receipt without workload metadata keeps the previous fixed rule: below 60
+seconds remains rejected, while 60 seconds or more remains readable. Sessions
+with no timing receipt keep the older legacy-read policy; a timing marker whose
+elapsed value cannot be established fails closed.
 
 ## Window, concurrency, and recovery behavior
 

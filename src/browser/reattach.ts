@@ -75,6 +75,9 @@ export async function resumeBrowserSession(
   if (runtime.browserTransport === "opencli") {
     return resumeOpenCliBrowserSession(runtime, config, logger);
   }
+  if (runtime.proTurnCommitted === false) {
+    throwUncommittedProTurn(runtime);
+  }
   const recoverSession =
     deps.recoverSession ??
     (async (runtimeMeta, configMeta) =>
@@ -195,7 +198,9 @@ export async function resumeBrowserSession(
       requirePromptReady: false,
       expectedConversationUrl: expectedConversationUrl ?? undefined,
     });
+    const verifiedProTurnIndex = await verifyCommittedProTurnIdentity(Runtime, liveRuntime);
     const minTurnIndex =
+      verifiedProTurnIndex ??
       (await readPromptPreviewTurnIndex(Runtime, deps.promptPreview)) ??
       (deps.promptPreview ? null : await readConversationTurnIndex(Runtime, logger));
     if (config?.researchMode === "deep") {
@@ -417,7 +422,15 @@ async function resumeBrowserSessionViaNewChrome(
       }
     }
   };
+  let verifiedProTurnIndex: number | null;
+  try {
+    verifiedProTurnIndex = await verifyCommittedProTurnIdentity(Runtime, runtime);
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
   const minTurnIndex =
+    verifiedProTurnIndex ??
     (await readPromptPreviewTurnIndex(Runtime, deps.promptPreview)) ??
     (deps.promptPreview ? null : await readConversationTurnIndex(Runtime, logger));
   if (resolved.researchMode === "deep") {
@@ -483,6 +496,96 @@ function isResponseTimingError(error: unknown): boolean {
   return error instanceof BrowserAutomationError && error.details?.stage === "response-timing";
 }
 
+async function verifyCommittedProTurnIdentity(
+  Runtime: ChromeClient["Runtime"],
+  runtime: BrowserRuntimeMetadata,
+): Promise<number | null> {
+  if (runtime.proTurnCommitted === undefined) {
+    return null;
+  }
+  if (runtime.proTurnCommitted !== true) {
+    throwUncommittedProTurn(runtime);
+  }
+
+  const committedTurnIndex = runtime.proCommittedTurnIndex;
+  const expectedSha256 = runtime.proPromptSha256;
+  if (
+    !Number.isSafeInteger(committedTurnIndex) ||
+    (committedTurnIndex as number) < 0 ||
+    typeof expectedSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(expectedSha256)
+  ) {
+    throw new BrowserAutomationError(
+      "Oracle refused to reattach because the committed Pro turn identity is incomplete.",
+      {
+        stage: "response-timing",
+        code: "pro-turn-identity-missing",
+        runtime,
+      },
+    );
+  }
+
+  const { result } = await Runtime.evaluate({
+    expression: `(async () => {
+      const turnIndex = ${committedTurnIndex};
+      const expectedSha256 = ${JSON.stringify(expectedSha256)};
+      const normalize = (value) => {
+        let text = String(value || '').toLowerCase();
+        text = text.replace(/\`\`\`[^\\n]*\\n([\\s\\S]*?)\`\`\`/g, ' $1 ');
+        text = text.replace(/\`\`\`/g, ' ');
+        text = text.replace(/\`([^\`]*)\`/g, '$1');
+        return text.replace(/\\s+/g, ' ').trim();
+      };
+      const turns = ${buildConversationTurnListExpression()};
+      const node = turns[turnIndex];
+      if (!node) return false;
+      const role = String(
+        node.getAttribute?.('data-message-author-role') ||
+        node.getAttribute?.('data-turn') ||
+        node.dataset?.turn ||
+        '',
+      ).toLowerCase();
+      const roleNode = role === 'user'
+        ? node
+        : node.querySelector?.('[data-message-author-role="user"], [data-turn="user"]');
+      if (!roleNode) return false;
+      const messageNode = roleNode.querySelector?.('.whitespace-pre-wrap') || roleNode;
+      const normalized = normalize(messageNode.innerText || messageNode.textContent || '');
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
+      const actualSha256 = Array.from(new Uint8Array(digest))
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('');
+      return actualSha256 === expectedSha256;
+    })()`,
+    returnByValue: true,
+    awaitPromise: true,
+  });
+  if (result?.value !== true) {
+    throw new BrowserAutomationError(
+      "Oracle refused to reattach because the stored Pro prompt identity did not match the committed browser turn.",
+      {
+        stage: "response-timing",
+        code: "pro-turn-identity-mismatch",
+        runtime,
+        committedTurnIndex,
+        promptSha256: expectedSha256,
+      },
+    );
+  }
+  return committedTurnIndex as number;
+}
+
+function throwUncommittedProTurn(runtime: BrowserRuntimeMetadata): never {
+  throw new BrowserAutomationError(
+    "Oracle refused to reattach because the active Pro prompt was not verified as committed.",
+    {
+      stage: "response-timing",
+      code: "pro-turn-not-committed",
+      runtime,
+    },
+  );
+}
+
 async function readPromptPreviewTurnIndex(
   Runtime: ChromeClient["Runtime"],
   promptPreview?: string | null,
@@ -521,4 +624,5 @@ export const __test__ = {
   buildConversationUrl,
   openConversationFromSidebar,
   readPromptPreviewTurnIndex,
+  verifyCommittedProTurnIdentity,
 };

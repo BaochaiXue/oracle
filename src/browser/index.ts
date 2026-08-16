@@ -56,7 +56,7 @@ import {
 } from "./actions/deepResearch.js";
 import { estimateTokenCount, withRetries, delay } from "./utils.js";
 import { formatElapsed } from "../oracle/format.js";
-import type { BrowserModelSelectionEvidence } from "../sessionStore.js";
+import type { BrowserModelSelectionEvidence, BrowserRuntimeMetadata } from "../sessionStore.js";
 import { CHATGPT_URL, DEFAULT_MODEL_STRATEGY } from "./constants.js";
 import type { LaunchedChrome } from "chrome-launcher";
 import { BrowserAutomationError } from "../oracle/errors.js";
@@ -122,7 +122,14 @@ import {
   extractStableConversationIdFromUrl as extractConversationIdFromUrl,
   isStableConversationUrl as isConversationUrl,
 } from "./conversationUrl.js";
-import { recordProResponseTiming, requiresProResponseTiming } from "./proResponseTiming.js";
+import {
+  beginProResponseTimingTurn,
+  completeProResponseTimingTurn,
+  markProPromptCommitted,
+  markProPromptDispatched,
+  resolveProAttachmentBytes,
+  requiresProResponseTiming,
+} from "./proResponseTiming.js";
 
 export type { BrowserAutomationConfig, BrowserRunOptions, BrowserRunResult } from "./types.js";
 export { CHATGPT_URL, DEFAULT_MODEL_STRATEGY, DEFAULT_MODEL_TARGET } from "./constants.js";
@@ -149,6 +156,20 @@ export function redactBrowserConfigForDebugLogForTest(
   config: Record<string, unknown>,
 ): Record<string, unknown> {
   return redactBrowserConfigForDebugLog(config);
+}
+
+function pickProTimingRuntime(runtime: BrowserRuntimeMetadata): BrowserRuntimeMetadata {
+  return {
+    proDispatchAt: runtime.proDispatchAt,
+    proResponseElapsedMs: runtime.proResponseElapsedMs,
+    proInputTokens: runtime.proInputTokens,
+    proAttachmentBytes: runtime.proAttachmentBytes,
+    proTurnIndex: runtime.proTurnIndex,
+    proTurnCommitted: runtime.proTurnCommitted,
+    proPromptSha256: runtime.proPromptSha256,
+    proCommittedTurnIndex: runtime.proCommittedTurnIndex,
+    proResponseTimingReceipts: runtime.proResponseTimingReceipts,
+  };
 }
 
 function isCloudflareChallengeError(error: unknown): error is BrowserAutomationError {
@@ -958,8 +979,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
   let lastUrl: string | undefined;
   let promptSubmitted = false;
   const proTimingRequired = requiresProResponseTiming(config);
-  let proDispatchAt: string | undefined;
-  let proResponseElapsedMs: number | undefined;
+  let proTimingRuntime: BrowserRuntimeMetadata = {};
   let modelSelectionEvidence: BrowserModelSelectionEvidence | undefined;
   let tabLease: BrowserTabLease | null = null;
   let conversationUrlMonitor: ConversationUrlMonitor | null = null;
@@ -979,8 +999,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       promptSubmitted,
       userDataDir,
       controllerPid: process.pid,
-      proDispatchAt,
-      proResponseElapsedMs,
+      ...proTimingRuntime,
     };
     try {
       await runtimeHintCb?.(hint, modelSelectionEvidence);
@@ -996,12 +1015,18 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     }
   };
   const markPromptDispatched = async (): Promise<void> => {
-    if (proTimingRequired && !proDispatchAt) {
-      proDispatchAt = new Date().toISOString();
+    if (proTimingRequired) {
+      proTimingRuntime = markProPromptDispatched(proTimingRuntime);
     }
     await emitRuntimeHint();
   };
-  const markPromptCommitted = async (): Promise<void> => {
+  const markPromptCommitted = async (
+    _committedTurns: number | null,
+    committedUserTurnIndex: number | null,
+  ): Promise<void> => {
+    if (proTimingRequired) {
+      proTimingRuntime = markProPromptCommitted(proTimingRuntime, committedUserTurnIndex);
+    }
     const firstPrompt = !promptSubmitted;
     promptSubmitted = true;
     await emitRuntimeHint();
@@ -1129,10 +1154,11 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
   }
   const { chrome, reusedChrome } = acquiredChrome;
   const chromeHost = (chrome as unknown as { host?: string }).host ?? "127.0.0.1";
-  const recordResponseTiming = (capturedAt = new Date()): void => {
+  const recordResponseTiming = (answer: string, capturedAt = new Date()): void => {
     if (!proTimingRequired) return;
-    const timedRuntime = recordProResponseTiming(
-      {
+    const timedRuntime = completeProResponseTimingTurn({
+      answer,
+      runtime: {
         browserTransport: "cdp",
         chromePid: chrome.pid,
         chromePort: chrome.port,
@@ -1143,13 +1169,11 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
         promptSubmitted,
         controllerPid: process.pid,
-        proDispatchAt,
-        proResponseElapsedMs,
+        ...proTimingRuntime,
       },
       capturedAt,
-      { requireTimestamp: true },
-    );
-    proResponseElapsedMs = timedRuntime.proResponseElapsedMs;
+    });
+    proTimingRuntime = pickProTimingRuntime(timedRuntime);
   };
   if (tabLease) {
     await tabLease.update({
@@ -1269,8 +1293,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
                     : undefined,
                 promptSubmitted,
                 controllerPid: process.pid,
-                proDispatchAt,
-                proResponseElapsedMs,
+                ...proTimingRuntime,
               },
             }),
           );
@@ -1584,8 +1607,11 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     };
     const submitOnce = async (prompt: string, submissionAttachments: BrowserAttachment[]) => {
       if (proTimingRequired) {
-        proDispatchAt = undefined;
-        proResponseElapsedMs = undefined;
+        proTimingRuntime = beginProResponseTimingTurn(proTimingRuntime, {
+          inputTokens: estimateTokenCount(prompt),
+          attachmentBytes: await resolveProAttachmentBytes(submissionAttachments),
+          prompt,
+        });
       }
       const baselineSnapshot = await readAssistantSnapshot(Runtime).catch(() => null);
       const baselineAssistantText =
@@ -1677,8 +1703,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
               conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
               promptSubmitted,
               controllerPid: process.pid,
-              proDispatchAt,
-              proResponseElapsedMs,
+              ...proTimingRuntime,
             },
             stage: "submit-prompt",
             waitTarget: "prompt commit",
@@ -1704,8 +1729,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
           promptSubmitted,
           controllerPid: process.pid,
-          proDispatchAt,
-          proResponseElapsedMs,
+          ...proTimingRuntime,
         },
         stage: "submit-prompt",
         waitTarget: "prompt dispatch",
@@ -1805,7 +1829,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           },
         ),
       );
-      recordResponseTiming();
+      recordResponseTiming(researchResult.text);
+      await emitRuntimeHint();
       await updateConversationHint("post-deep-research", 15_000).catch(() => false);
       runStatus = "complete";
       const durationMs = Date.now() - startedAt;
@@ -1861,8 +1886,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
         promptSubmitted,
         controllerPid: process.pid,
-        proDispatchAt,
-        proResponseElapsedMs,
+        ...proTimingRuntime,
       };
     }
     // Helper to normalize text for echo detection (collapse whitespace, lowercase)
@@ -1965,8 +1989,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
               conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
               promptSubmitted,
               controllerPid: process.pid,
-              proDispatchAt,
-              proResponseElapsedMs,
+              ...proTimingRuntime,
             },
           },
         );
@@ -2057,8 +2080,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
               conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
               promptSubmitted,
               controllerPid: process.pid,
-              proDispatchAt,
-              proResponseElapsedMs,
+              ...proTimingRuntime,
             };
             throw await createAssistantTimeoutError({
               Runtime,
@@ -2239,7 +2261,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
 
     const turns: BrowserConversationTurn[] = [];
     const initialTurn = await captureAssistantTurn(promptText, "Initial response");
-    recordResponseTiming();
+    recordResponseTiming(initialTurn.answerMarkdown || initialTurn.answerText);
+    await emitRuntimeHint();
     turns.push(initialTurn);
     answerText = initialTurn.answerText;
     answerMarkdown = initialTurn.answerMarkdown;
@@ -2270,7 +2293,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         await releaseProfileLockIfHeld();
       }
       const turn = await captureAssistantTurn(followUpPrompt, `Follow-up ${index + 1}`);
-      recordResponseTiming();
+      recordResponseTiming(turn.answerMarkdown || turn.answerText);
+      await emitRuntimeHint();
       turns.push({ ...turn, prompt: followUpPrompt });
       answerText = turn.answerText;
       answerMarkdown = turn.answerMarkdown;
@@ -2317,8 +2341,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
             conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
             promptSubmitted,
             controllerPid: process.pid,
-            proDispatchAt,
-            proResponseElapsedMs,
+            ...proTimingRuntime,
           },
         }),
     });
@@ -2391,8 +2414,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
       promptSubmitted,
       controllerPid: process.pid,
-      proDispatchAt,
-      proResponseElapsedMs,
+      ...proTimingRuntime,
     };
   } catch (error) {
     const normalizedError = error instanceof Error ? error : new Error(String(error));
@@ -2421,8 +2443,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         tabUrl: lastUrl,
         promptSubmitted,
         controllerPid: process.pid,
-        proDispatchAt,
-        proResponseElapsedMs,
+        ...proTimingRuntime,
       };
       const reuseProfileHint =
         `oracle --engine browser --browser-manual-login ` +
@@ -2500,8 +2521,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
               : undefined,
           promptSubmitted,
           controllerPid: process.pid,
-          proDispatchAt,
-          proResponseElapsedMs,
+          ...proTimingRuntime,
         },
       },
       normalizedError,
@@ -3002,8 +3022,7 @@ async function runRemoteBrowserMode(
   let lastUrl: string | undefined;
   let promptSubmitted = false;
   const proTimingRequired = requiresProResponseTiming(config);
-  let proDispatchAt: string | undefined;
-  let proResponseElapsedMs: number | undefined;
+  let proTimingRuntime: BrowserRuntimeMetadata = {};
   let modelSelectionEvidence: BrowserModelSelectionEvidence | undefined;
   let attachedExistingTab = false;
   let ownsTarget = true;
@@ -3024,8 +3043,7 @@ async function runRemoteBrowserMode(
           conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
           promptSubmitted,
           controllerPid: process.pid,
-          proDispatchAt,
-          proResponseElapsedMs,
+          ...proTimingRuntime,
         },
         modelSelectionEvidence,
       );
@@ -3041,12 +3059,18 @@ async function runRemoteBrowserMode(
     }
   };
   const markPromptDispatched = async (): Promise<void> => {
-    if (proTimingRequired && !proDispatchAt) {
-      proDispatchAt = new Date().toISOString();
+    if (proTimingRequired) {
+      proTimingRuntime = markProPromptDispatched(proTimingRuntime);
     }
     await emitRuntimeHint();
   };
-  const markPromptCommitted = async (): Promise<void> => {
+  const markPromptCommitted = async (
+    _committedTurns: number | null,
+    committedUserTurnIndex: number | null,
+  ): Promise<void> => {
+    if (proTimingRequired) {
+      proTimingRuntime = markProPromptCommitted(proTimingRuntime, committedUserTurnIndex);
+    }
     const firstPrompt = !promptSubmitted;
     promptSubmitted = true;
     await emitRuntimeHint();
@@ -3065,10 +3089,11 @@ async function runRemoteBrowserMode(
   let connection: Awaited<ReturnType<typeof connectToRemoteChrome>> | null = null;
   const browserWSEndpoint = config.remoteChromeBrowserWSEndpoint ?? undefined;
   const chromeProfileRoot = config.remoteChromeProfileRoot ?? undefined;
-  const recordResponseTiming = (capturedAt = new Date()): void => {
+  const recordResponseTiming = (answer: string, capturedAt = new Date()): void => {
     if (!proTimingRequired) return;
-    const timedRuntime = recordProResponseTiming(
-      {
+    const timedRuntime = completeProResponseTimingTurn({
+      answer,
+      runtime: {
         browserTransport: "cdp",
         chromePort: port,
         chromeHost: host,
@@ -3079,13 +3104,11 @@ async function runRemoteBrowserMode(
         conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
         promptSubmitted,
         controllerPid: process.pid,
-        proDispatchAt,
-        proResponseElapsedMs,
+        ...proTimingRuntime,
       },
       capturedAt,
-      { requireTimestamp: true },
-    );
-    proResponseElapsedMs = timedRuntime.proResponseElapsedMs;
+    });
+    proTimingRuntime = pickProTimingRuntime(timedRuntime);
   };
 
   try {
@@ -3275,8 +3298,11 @@ async function runRemoteBrowserMode(
     }
     const submitOnce = async (prompt: string, submissionAttachments: BrowserAttachment[]) => {
       if (proTimingRequired) {
-        proDispatchAt = undefined;
-        proResponseElapsedMs = undefined;
+        proTimingRuntime = beginProResponseTimingTurn(proTimingRuntime, {
+          inputTokens: estimateTokenCount(prompt),
+          attachmentBytes: await resolveProAttachmentBytes(submissionAttachments),
+          prompt,
+        });
       }
       const baselineSnapshot = await readAssistantSnapshot(Runtime).catch(() => null);
       const baselineAssistantText =
@@ -3352,8 +3378,7 @@ async function runRemoteBrowserMode(
               conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
               promptSubmitted,
               controllerPid: process.pid,
-              proDispatchAt,
-              proResponseElapsedMs,
+              ...proTimingRuntime,
             },
             stage: "submit-prompt",
             waitTarget: "prompt commit",
@@ -3379,8 +3404,7 @@ async function runRemoteBrowserMode(
           conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
           promptSubmitted,
           controllerPid: process.pid,
-          proDispatchAt,
-          proResponseElapsedMs,
+          ...proTimingRuntime,
         },
         stage: "submit-prompt",
         waitTarget: "prompt dispatch",
@@ -3446,7 +3470,8 @@ async function runRemoteBrowserMode(
           targetBaselineCaptured: deepResearchTargetBaselineCaptured,
         },
       );
-      recordResponseTiming();
+      recordResponseTiming(researchResult.text);
+      await emitRuntimeHint();
       await activeConversationUrlMonitor.update("post-deep-research", 15_000).catch(() => false);
       const durationMs = Date.now() - startedAt;
       const tokens = estimateTokenCount(researchResult.text);
@@ -3500,8 +3525,7 @@ async function runRemoteBrowserMode(
         conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
         promptSubmitted,
         controllerPid: process.pid,
-        proDispatchAt,
-        proResponseElapsedMs,
+        ...proTimingRuntime,
       };
     }
     // Helper to normalize text for echo detection (collapse whitespace, lowercase)
@@ -3601,8 +3625,7 @@ async function runRemoteBrowserMode(
               conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
               promptSubmitted,
               controllerPid: process.pid,
-              proDispatchAt,
-              proResponseElapsedMs,
+              ...proTimingRuntime,
             },
           },
         );
@@ -3691,8 +3714,7 @@ async function runRemoteBrowserMode(
               conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
               promptSubmitted,
               controllerPid: process.pid,
-              proDispatchAt,
-              proResponseElapsedMs,
+              ...proTimingRuntime,
             };
             throw await createAssistantTimeoutError({
               Runtime,
@@ -3838,7 +3860,8 @@ async function runRemoteBrowserMode(
     const followUpPrompts = normalizeBrowserFollowUpPrompts(options.followUpPrompts);
     const turns: BrowserConversationTurn[] = [];
     const initialTurn = await captureAssistantTurn(promptText, "Initial response");
-    recordResponseTiming();
+    recordResponseTiming(initialTurn.answerMarkdown || initialTurn.answerText);
+    await emitRuntimeHint();
     turns.push(initialTurn);
     answerText = initialTurn.answerText;
     answerMarkdown = initialTurn.answerMarkdown;
@@ -3863,7 +3886,8 @@ async function runRemoteBrowserMode(
       baselineTurns = submission.baselineTurns;
       baselineAssistantText = submission.baselineAssistantText;
       const turn = await captureAssistantTurn(followUpPrompt, `Follow-up ${index + 1}`);
-      recordResponseTiming();
+      recordResponseTiming(turn.answerMarkdown || turn.answerText);
+      await emitRuntimeHint();
       turns.push({ ...turn, prompt: followUpPrompt });
       answerText = turn.answerText;
       answerMarkdown = turn.answerMarkdown;
@@ -3907,8 +3931,7 @@ async function runRemoteBrowserMode(
             conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
             promptSubmitted,
             controllerPid: process.pid,
-            proDispatchAt,
-            proResponseElapsedMs,
+            ...proTimingRuntime,
           },
         }),
     });
@@ -3976,8 +3999,7 @@ async function runRemoteBrowserMode(
       tabUrl: lastUrl,
       conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
       promptSubmitted,
-      proDispatchAt,
-      proResponseElapsedMs,
+      ...proTimingRuntime,
       artifacts: savedArtifacts,
       generatedImages: imageArtifacts.generatedImages,
       savedImages: imageArtifacts.savedImages,
@@ -4025,8 +4047,7 @@ async function runRemoteBrowserMode(
             : undefined,
         promptSubmitted,
         controllerPid: process.pid,
-        proDispatchAt,
-        proResponseElapsedMs,
+        ...proTimingRuntime,
       },
     });
   } finally {

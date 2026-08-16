@@ -93,6 +93,21 @@ from duration admission. Substantive workloads captured below 60 seconds fail
 closed with only digest/timing evidence retained. Very large runs that pass the
 guard but still complete unexpectedly quickly add a warning for operator review.
 
+Direct-CDP follow-ups use one receipt per submitted turn. The active turn's
+scalar runtime fields identify the turn recoverable by reattach, while completed
+turn receipts retain that turn's dispatch timestamp, first stable-answer
+elapsed time, input estimate, and uploaded bytes. Oracle admits each turn before
+adding it to a multi-turn transcript. OpenCLI remains single-turn in this
+surface and keeps its existing scalar receipt compatibility.
+
+The active direct-CDP receipt also stores commit state, the exact committed
+user-turn index, and a SHA-256 digest of normalized prompt text. Reattach must
+match that digest at that index before waiting for its assistant successor; an
+uncommitted or mismatched turn is terminal instead of falling back to an older
+answer. Missing attachment sizes are established from the local file before
+dispatch. Partial active workload and timing markers with no valid elapsed
+value remain unknown and fail closed rather than borrowing initial-turn data.
+
 Direct CDP distinguishes a Send attempt from a committed user turn. A visible
 request-frequency warning before commit produces a terminal, retry-safe receipt
 with `promptSubmitted:false`; Oracle does not automatically retry or wait for a

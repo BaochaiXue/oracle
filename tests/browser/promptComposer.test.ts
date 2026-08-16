@@ -525,8 +525,9 @@ describe("promptComposer", () => {
           result: {
             value: {
               baseline: 0,
-              turnsCount: 1,
+              turnsCount: 2,
               userMatched: true,
+              matchedUserTurnIndex: 0,
               prefixMatched: false,
               lastMatched: true,
               hasNewTurn: true,
@@ -556,6 +557,7 @@ describe("promptComposer", () => {
 
     expect(onPromptDispatched).toHaveBeenCalledTimes(1);
     expect(onPromptCommitted).toHaveBeenCalledTimes(1);
+    expect(onPromptCommitted).toHaveBeenCalledWith(2, 0);
     expect(callbacks).toEqual(["dispatched", "committed"]);
   });
 

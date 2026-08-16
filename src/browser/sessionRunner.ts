@@ -25,7 +25,10 @@ import {
   formatBrowserModelTarget,
   resolveBrowserModelDisplayName,
 } from "./modelDisplay.js";
-import { assertProResponseWorkloadTiming } from "./proResponseTiming.js";
+import {
+  assertProResponseTimingAdmission,
+  resolveProAttachmentBytes,
+} from "./proResponseTiming.js";
 
 export interface BrowserExecutionResult {
   usage: {
@@ -61,6 +64,58 @@ export interface BrowserSessionRunnerDeps {
 
 const LARGE_PRO_FAST_INPUT_TOKEN_THRESHOLD = 25_000;
 const LARGE_PRO_FAST_ELAPSED_MS_THRESHOLD = 120_000;
+
+function isValidWorkloadValue(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function resolveActiveProWorkload(
+  runtime: BrowserRuntimeMetadata,
+  initial: { inputTokens: number; attachmentBytes: number },
+): BrowserRuntimeMetadata {
+  if (
+    isValidWorkloadValue(runtime.proInputTokens) &&
+    isValidWorkloadValue(runtime.proAttachmentBytes)
+  ) {
+    return runtime;
+  }
+
+  if (runtime.proTurnIndex !== undefined) {
+    const receipt = runtime.proResponseTimingReceipts?.find(
+      (entry) => entry.turnIndex === runtime.proTurnIndex,
+    );
+    if (
+      receipt &&
+      isValidWorkloadValue(receipt.inputTokens) &&
+      isValidWorkloadValue(receipt.attachmentBytes)
+    ) {
+      return {
+        ...runtime,
+        proInputTokens: receipt.inputTokens,
+        proAttachmentBytes: receipt.attachmentBytes,
+      };
+    }
+    // An active direct-CDP turn owns its workload. Missing or partial active
+    // metadata must remain unknown rather than borrowing the initial turn.
+    return runtime;
+  }
+
+  if ((runtime.proResponseTimingReceipts?.length ?? 0) > 0) {
+    return runtime;
+  }
+
+  // Compatibility for OpenCLI and old single-turn runs that predate active
+  // turn metadata. These paths have no evidence of a different current turn.
+  return {
+    ...runtime,
+    proInputTokens: isValidWorkloadValue(runtime.proInputTokens)
+      ? runtime.proInputTokens
+      : initial.inputTokens,
+    proAttachmentBytes: isValidWorkloadValue(runtime.proAttachmentBytes)
+      ? runtime.proAttachmentBytes
+      : initial.attachmentBytes,
+  };
+}
 
 function buildUnavailableModelSelectionEvidence(
   browserConfig: BrowserSessionConfig,
@@ -139,10 +194,8 @@ export async function runBrowserSessionExecution(
   const assemblePrompt = deps.assemblePrompt ?? assembleBrowserPrompt;
   const promptArtifacts = await assemblePrompt(runOptions, { cwd });
   const proInputTokens = promptArtifacts.estimatedInputTokens;
-  const proAttachmentBytes = promptArtifacts.attachments.reduce(
-    (total, attachment) => total + (attachment.sizeBytes ?? 0),
-    0,
-  );
+  const proAttachmentBytes = await resolveProAttachmentBytes(promptArtifacts.attachments);
+  const initialProWorkload = { inputTokens: proInputTokens, attachmentBytes: proAttachmentBytes };
   if (runOptions.verbose) {
     log(
       chalk.dim(
@@ -230,12 +283,13 @@ export async function runBrowserSessionExecution(
       outputPath: runOptions.outputPath,
       followUpPrompts: runOptions.browserFollowUps,
       runtimeHintCb: async (runtime, modelSelection) => {
-        const runtimeWithController = {
-          ...runtime,
-          controllerPid: runtime.controllerPid ?? process.pid,
-          proInputTokens,
-          proAttachmentBytes,
-        };
+        const runtimeWithController = resolveActiveProWorkload(
+          {
+            ...runtime,
+            controllerPid: runtime.controllerPid ?? process.pid,
+          },
+          initialProWorkload,
+        );
         if (modelSelection) {
           await persistRuntimeHint(runtimeWithController, modelSelection);
         } else {
@@ -247,15 +301,15 @@ export async function runBrowserSessionExecution(
     if (error instanceof BrowserAutomationError) {
       const errorRuntime = error.details?.runtime;
       if (errorRuntime && typeof errorRuntime === "object") {
+        const resolvedErrorRuntime = resolveActiveProWorkload(
+          errorRuntime as BrowserRuntimeMetadata,
+          initialProWorkload,
+        );
         throw new BrowserAutomationError(
           error.message,
           {
             ...error.details,
-            runtime: {
-              ...(errorRuntime as BrowserRuntimeMetadata),
-              proInputTokens,
-              proAttachmentBytes,
-            },
+            runtime: resolvedErrorRuntime,
           },
           error,
         );
@@ -272,38 +326,46 @@ export async function runBrowserSessionExecution(
       `[browser] Model selection evidence: ${formatBrowserModelSelectionEvidence(modelSelection, runOptions.model)}`,
     );
   }
-  const browserRuntime: BrowserRuntimeMetadata = {
-    browserTransport: browserResult.browserTransport,
-    chromePid: browserResult.chromePid,
-    chromePort: browserResult.chromePort,
-    chromeHost: browserResult.chromeHost,
-    chromeBrowserWSEndpoint: browserResult.chromeBrowserWSEndpoint,
-    chromeProfileRoot: browserResult.chromeProfileRoot,
-    userDataDir: browserResult.userDataDir,
-    chromeTargetId: browserResult.chromeTargetId,
-    tabUrl: browserResult.tabUrl,
-    conversationId: browserResult.conversationId,
-    promptSubmitted: browserResult.promptSubmitted,
-    controllerPid: browserResult.controllerPid ?? process.pid,
-    proDispatchAt: browserResult.proDispatchAt,
-    proResponseElapsedMs: browserResult.proResponseElapsedMs,
-    proInputTokens,
-    proAttachmentBytes,
-    opencliOperationRef: browserResult.opencliOperationRef,
-    opencliVersion: browserResult.opencliVersion,
-    opencliPayloadSha256: browserResult.opencliPayloadSha256,
-    opencliWindowMode: browserResult.opencliWindowMode,
-    opencliDispatchAt: browserResult.opencliDispatchAt,
-    opencliResponseElapsedMs: browserResult.opencliResponseElapsedMs,
-    opencliBaselineAssistantIndex: browserResult.opencliBaselineAssistantIndex,
-    opencliBaselineAssistantSha256: browserResult.opencliBaselineAssistantSha256,
-  };
+  const browserRuntime: BrowserRuntimeMetadata = resolveActiveProWorkload(
+    {
+      browserTransport: browserResult.browserTransport,
+      chromePid: browserResult.chromePid,
+      chromePort: browserResult.chromePort,
+      chromeHost: browserResult.chromeHost,
+      chromeBrowserWSEndpoint: browserResult.chromeBrowserWSEndpoint,
+      chromeProfileRoot: browserResult.chromeProfileRoot,
+      userDataDir: browserResult.userDataDir,
+      chromeTargetId: browserResult.chromeTargetId,
+      tabUrl: browserResult.tabUrl,
+      conversationId: browserResult.conversationId,
+      promptSubmitted: browserResult.promptSubmitted,
+      controllerPid: browserResult.controllerPid ?? process.pid,
+      proDispatchAt: browserResult.proDispatchAt,
+      proResponseElapsedMs: browserResult.proResponseElapsedMs,
+      proInputTokens: browserResult.proInputTokens,
+      proAttachmentBytes: browserResult.proAttachmentBytes,
+      proTurnIndex: browserResult.proTurnIndex,
+      proTurnCommitted: browserResult.proTurnCommitted,
+      proPromptSha256: browserResult.proPromptSha256,
+      proCommittedTurnIndex: browserResult.proCommittedTurnIndex,
+      proResponseTimingReceipts: browserResult.proResponseTimingReceipts,
+      opencliOperationRef: browserResult.opencliOperationRef,
+      opencliVersion: browserResult.opencliVersion,
+      opencliPayloadSha256: browserResult.opencliPayloadSha256,
+      opencliWindowMode: browserResult.opencliWindowMode,
+      opencliDispatchAt: browserResult.opencliDispatchAt,
+      opencliResponseElapsedMs: browserResult.opencliResponseElapsedMs,
+      opencliBaselineAssistantIndex: browserResult.opencliBaselineAssistantIndex,
+      opencliBaselineAssistantSha256: browserResult.opencliBaselineAssistantSha256,
+    },
+    initialProWorkload,
+  );
   if (isRequestedProBrowserRun(runOptions, browserConfig, modelSelection)) {
-    assertProResponseWorkloadTiming({
+    assertProResponseTimingAdmission({
       answer: browserResult.answerMarkdown || browserResult.answerText || "",
       runtime: browserRuntime,
-      inputTokens: proInputTokens,
-      attachmentBytes: proAttachmentBytes,
+      inputTokens: browserRuntime.proInputTokens,
+      attachmentBytes: browserRuntime.proAttachmentBytes,
     });
   }
   const warnings = buildBrowserRunWarnings({

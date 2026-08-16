@@ -31,6 +31,19 @@ import { getOracleHomeDir } from "./oracleHome.js";
 
 export type SessionMode = "api" | "browser";
 
+export interface ProResponseTimingReceipt {
+  /** Zero-based submitted turn index within one direct-CDP browser invocation. */
+  turnIndex: number;
+  /** Durable timestamp captured when this turn's send was attempted. */
+  dispatchAt: string;
+  /** First observed elapsed time from this turn's dispatch to its stable answer. */
+  responseElapsedMs: number;
+  /** Estimated tokens in this submitted turn, excluding conversation history. */
+  inputTokens: number;
+  /** Bytes uploaded with this submitted turn. */
+  attachmentBytes: number;
+}
+
 export interface BrowserSessionConfig {
   transport?: BrowserTransport;
   opencliPath?: string | null;
@@ -115,6 +128,16 @@ export interface BrowserRuntimeMetadata {
   proInputTokens?: number;
   /** Uploaded payload bytes used by the workload-aware Pro timing guard. */
   proAttachmentBytes?: number;
+  /** Active/latest direct-CDP turn represented by the scalar Pro timing fields. */
+  proTurnIndex?: number;
+  /** Whether the active direct-CDP turn was verified as a committed user turn. */
+  proTurnCommitted?: boolean;
+  /** SHA-256 of the normalized prompt identity for the active direct-CDP turn. */
+  proPromptSha256?: string;
+  /** Zero-based DOM turn index of the verified committed user turn. */
+  proCommittedTurnIndex?: number;
+  /** Accepted direct-CDP turns, each bound to its own timing and workload receipt. */
+  proResponseTimingReceipts?: ProResponseTimingReceipt[];
   /** Oracle-owned operation reference for this OpenCLI dispatch attempt. */
   opencliOperationRef?: string;
   /** OpenCLI version verified before dispatch. */

@@ -325,8 +325,31 @@ The first observed elapsed time is durable runtime metadata. An 83-token fixed
 reply captured in 19 seconds is valid; a 4,096-token engineering review captured
 in 19 seconds is not. Runs at or above 25,000 input tokens that pass the
 60-second guard but finish before 120 seconds emit an additional warning. Old
-sessions created before the timing receipt existed remain readable; new Pro
-submissions fail closed if their dispatch timestamp is missing.
+sessions created before the timing receipt existed remain readable. A migration
+case with timing metadata but no workload metadata is never inferred to be
+tiny: below 60 seconds stays rejected under the old fixed rule, while 60 seconds
+or more remains readable. New Pro submissions fail closed if their dispatch
+timestamp or workload receipt is missing.
+
+For a direct-CDP multi-turn invocation, `proTurnIndex` plus the scalar
+`proDispatchAt`, `proResponseElapsedMs`, `proInputTokens`,
+`proAttachmentBytes`, `proTurnCommitted`, `proPromptSha256`, and
+`proCommittedTurnIndex` describe the active or latest turn. Each accepted turn
+is also appended to `proResponseTimingReceipts` with its own turn index,
+dispatch, elapsed time, input estimate, and uploaded bytes. The initial answer
+and every follow-up pass timing admission before transcript formatting, so
+neither a tiny first prompt nor a tiny final prompt can launder another turn's
+rejected answer. Reattach verifies the normalized prompt digest at the exact
+committed user-turn index before accepting a following assistant answer; it
+does not reuse a previous turn's workload or identity.
+
+Attachment bytes are established before each primary or fallback dispatch,
+using the supplied size only when it is a valid non-negative safe integer and
+otherwise reading the local file metadata. A missing or partial active-turn
+workload is not completed from the initial prompt. Invalid elapsed markers and
+timing markers that cannot establish elapsed time fail closed as
+`pro-response-timing-indeterminate`; a valid elapsed-only legacy scalar and a
+session with no timing marker keep their documented migration behavior.
 
 The same workload-aware timing module is used by direct CDP and the optional
 OpenCLI transport.
@@ -416,6 +439,13 @@ The automated suite covers:
 - dispatch receipt persistence through session results and reconnect errors;
 - acceptance of fast tiny workloads and fail-closed rejection of fast
   substantive workloads;
+- independent timing/workload receipts and admission for direct-CDP follow-up
+  turns;
+- committed prompt digest/index matching across direct-CDP timeout and reattach;
+- attachment-size normalization before primary, fallback, local, or remote
+  dispatch;
+- fail-closed handling for partial active workload and indeterminate timing;
+- fail-closed migration of legacy timing receipts whose workload is unknown;
 - preservation of the first observed elapsed time across reattach;
 - direct-CDP versus explicit OpenCLI configuration boundaries.
 

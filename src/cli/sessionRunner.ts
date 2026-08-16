@@ -52,6 +52,7 @@ import { estimateTokenCount } from "../browser/utils.js";
 import type { BrowserLogger } from "../browser/types.js";
 import { formatElapsed } from "../oracle/format.js";
 import { formatBrowserReattachGuidance } from "./reattachGuidance.js";
+import { isTerminalProResponseTimingCode } from "../browser/proResponseTiming.js";
 
 const isTty = process.stdout.isTTY;
 const dim = (text: string): string => (isTty ? kleur.dim(text) : text);
@@ -522,9 +523,9 @@ export async function performSessionRun({
     const cloudflareChallenge =
       userError?.category === "browser-automation" &&
       (userError.details as { stage?: string } | undefined)?.stage === "cloudflare-challenge";
-    const missingDispatchReceipt =
+    const terminalResponseTimingFailure =
       userError?.category === "browser-automation" &&
-      (userError.details as { code?: string } | undefined)?.code === "dispatch-timestamp-missing";
+      isTerminalProResponseTimingCode((userError.details as { code?: string } | undefined)?.code);
     const submissionGate =
       userError?.category === "browser-automation" &&
       (userError.details as { code?: string } | undefined)?.code === "chatgpt-submission-gate";
@@ -757,7 +758,12 @@ export async function performSessionRun({
       mode === "browser" && browserCanReattach
         ? (userError?.details as { runtime?: BrowserRuntimeMetadata } | undefined)?.runtime
         : undefined;
-    if (!cloudflareChallenge && !missingDispatchReceipt && !submissionGate && browserCanReattach) {
+    if (
+      !cloudflareChallenge &&
+      !terminalResponseTimingFailure &&
+      !submissionGate &&
+      browserCanReattach
+    ) {
       logBrowserReattachGuidance(browserRuntime ?? currentBrowser?.runtime);
     }
     const completedAt = new Date().toISOString();
@@ -1311,8 +1317,9 @@ async function autoReattachUntilComplete({
       const timingError = asOracleUserError(error);
       const terminalTimingRejection =
         timingError?.category === "browser-automation" &&
-        (timingError.details as { code?: string } | undefined)?.code ===
-          "pro-fast-substantive-response-untrusted";
+        isTerminalProResponseTimingCode(
+          (timingError.details as { code?: string } | undefined)?.code,
+        );
       if (terminalTimingRejection) {
         const errorRuntime = (
           timingError.details as { runtime?: BrowserRuntimeMetadata } | undefined

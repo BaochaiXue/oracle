@@ -15,7 +15,10 @@ interface ChatgptDomProviderState {
   attachmentNames?: AttachmentReadyExpectation[];
   committedTurns?: number | null;
   onPromptDispatched?: () => Promise<void> | void;
-  onPromptCommitted?: () => Promise<void> | void;
+  onPromptCommitted?: (
+    committedTurns: number | null,
+    committedUserTurnIndex: number | null,
+  ) => Promise<void> | void;
   onPromptCommitPending?: () => Promise<void> | void;
 }
 

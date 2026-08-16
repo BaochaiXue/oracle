@@ -445,6 +445,170 @@ describe("runBrowserSessionExecution", () => {
     );
   });
 
+  test("uses the active follow-up workload receipt instead of the initial workload", async () => {
+    const log = vi.fn();
+    const persistRuntimeHint = vi.fn();
+
+    await expect(
+      runBrowserSessionExecution(
+        {
+          runOptions: {
+            ...baseRunOptions,
+            model: "gpt-5-pro",
+            browserFollowUps: ["substantive follow-up"],
+          },
+          browserConfig: { desiredModel: "GPT-5.6 Pro", thinkingTime: "pro" },
+          cwd: "/repo",
+          log,
+        },
+        {
+          assemblePrompt: async () => ({
+            markdown: "hi",
+            composerText: "hi",
+            estimatedInputTokens: 2,
+            attachments: [],
+            inlineFileCount: 0,
+            tokenEstimateIncludesInlineFiles: false,
+            attachmentsPolicy: "auto",
+            attachmentMode: "inline",
+            fallback: null,
+          }),
+          executeBrowser: vi.fn(async (options) => {
+            await options.runtimeHintCb?.({
+              promptSubmitted: true,
+              proTurnIndex: 1,
+              proDispatchAt: "2026-08-15T00:01:00.000Z",
+              proResponseElapsedMs: 20_000,
+              proInputTokens: 5_000,
+              proAttachmentBytes: 0,
+              proResponseTimingReceipts: [
+                {
+                  turnIndex: 0,
+                  dispatchAt: "2026-08-15T00:00:00.000Z",
+                  responseElapsedMs: 10_000,
+                  inputTokens: 2,
+                  attachmentBytes: 0,
+                },
+              ],
+            });
+            return {
+              answerText: "private multi-turn transcript",
+              answerMarkdown: "private multi-turn transcript",
+              tookMs: 30_000,
+              answerTokens: 4,
+              answerChars: 29,
+              promptSubmitted: true,
+              proTurnIndex: 1,
+              proDispatchAt: "2026-08-15T00:01:00.000Z",
+              proResponseElapsedMs: 20_000,
+              proInputTokens: 5_000,
+              proAttachmentBytes: 0,
+            };
+          }),
+          persistRuntimeHint,
+        },
+      ),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "pro-fast-substantive-response-untrusted",
+        inputTokens: 5_000,
+        responseElapsedMs: 20_000,
+      }),
+    });
+
+    expect(persistRuntimeHint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        proTurnIndex: 1,
+        proInputTokens: 5_000,
+        proAttachmentBytes: 0,
+      }),
+    );
+    expect(log.mock.calls.map((call) => String(call[0])).join("\n")).not.toContain(
+      "private multi-turn transcript",
+    );
+  });
+
+  test.each([
+    { label: "both active workload fields missing", activeWorkload: {} },
+    { label: "active attachment bytes missing", activeWorkload: { proInputTokens: 5_000 } },
+    { label: "active token estimate missing", activeWorkload: { proAttachmentBytes: 0 } },
+  ])(
+    "does not launder a follow-up through the tiny initial workload when $label",
+    async ({ activeWorkload }) => {
+      const log = vi.fn();
+      const persistRuntimeHint = vi.fn();
+      const activeRuntime = {
+        promptSubmitted: true,
+        proTurnIndex: 1,
+        proDispatchAt: "2026-08-15T00:01:00.000Z",
+        proResponseElapsedMs: 20_000,
+        proResponseTimingReceipts: [
+          {
+            turnIndex: 0,
+            dispatchAt: "2026-08-15T00:00:00.000Z",
+            responseElapsedMs: 10_000,
+            inputTokens: 2,
+            attachmentBytes: 0,
+          },
+        ],
+        ...activeWorkload,
+      };
+
+      await expect(
+        runBrowserSessionExecution(
+          {
+            runOptions: {
+              ...baseRunOptions,
+              model: "gpt-5-pro",
+              browserFollowUps: ["substantive follow-up"],
+            },
+            browserConfig: { desiredModel: "GPT-5.6 Pro", thinkingTime: "pro" },
+            cwd: "/repo",
+            log,
+          },
+          {
+            assemblePrompt: async () => ({
+              markdown: "hi",
+              composerText: "hi",
+              estimatedInputTokens: 2,
+              attachments: [],
+              inlineFileCount: 0,
+              tokenEstimateIncludesInlineFiles: false,
+              attachmentsPolicy: "auto",
+              attachmentMode: "inline",
+              fallback: null,
+            }),
+            executeBrowser: vi.fn(async (options) => {
+              await options.runtimeHintCb?.(activeRuntime);
+              return {
+                answerText: "private partially-receipted follow-up",
+                answerMarkdown: "private partially-receipted follow-up",
+                tookMs: 30_000,
+                answerTokens: 4,
+                answerChars: 37,
+                ...activeRuntime,
+              };
+            }),
+            persistRuntimeHint,
+          },
+        ),
+      ).rejects.toMatchObject({
+        details: expect.objectContaining({
+          code: "pro-fast-substantive-response-untrusted",
+          workloadMetadata: "unknown",
+          responseElapsedMs: 20_000,
+        }),
+      });
+
+      const persistedRuntime = persistRuntimeHint.mock.calls[0]?.[0];
+      expect(persistedRuntime?.proInputTokens).toBe(activeWorkload.proInputTokens);
+      expect(persistedRuntime?.proAttachmentBytes).toBe(activeWorkload.proAttachmentBytes);
+      expect(log.mock.calls.map((call) => String(call[0])).join("\n")).not.toContain(
+        "private partially-receipted follow-up",
+      );
+    },
+  );
+
   test("persists attach-mode runtime metadata from the browser runner", async () => {
     const log = vi.fn();
     const persistRuntimeHint = vi.fn();

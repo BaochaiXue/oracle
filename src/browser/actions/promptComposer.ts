@@ -70,7 +70,10 @@ export async function submitPrompt(
     inputTimeoutMs?: number | null;
     attachmentTimeoutMs?: number | null;
     onPromptDispatched?: () => Promise<void> | void;
-    onPromptCommitted?: () => Promise<void> | void;
+    onPromptCommitted?: (
+      committedTurns: number | null,
+      committedUserTurnIndex: number | null,
+    ) => Promise<void> | void;
     onPromptCommitPending?: () => Promise<void> | void;
   },
   prompt: string,
@@ -283,7 +286,7 @@ export async function submitPrompt(
 
   const commitTimeoutMs = Math.max(60_000, deps.inputTimeoutMs ?? 0);
   // Learned: the send button can succeed but the turn doesn't appear immediately; verify commit via turns/stop button.
-  const committedTurns = await verifyPromptCommitted(
+  const committed = await verifyPromptCommitted(
     runtime,
     prompt,
     commitTimeoutMs,
@@ -291,8 +294,8 @@ export async function submitPrompt(
     deps.baselineTurns ?? undefined,
     deps.onPromptCommitPending,
   );
-  await deps.onPromptCommitted?.();
-  return committedTurns;
+  await deps.onPromptCommitted?.(committed.turnsCount, committed.userTurnIndex);
+  return committed.turnsCount;
 }
 
 export async function clearPromptComposer(Runtime: ChromeClient["Runtime"], logger: BrowserLogger) {
@@ -916,7 +919,7 @@ async function verifyPromptCommitted(
   logger?: BrowserLogger,
   baselineTurns?: number,
   onCommitPending?: () => Promise<void> | void,
-): Promise<number | null> {
+): Promise<{ turnsCount: number | null; userTurnIndex: number | null }> {
   const deadline = Date.now() + timeoutMs;
   const encodedPrompt = JSON.stringify(prompt.trim());
   const primarySelectorLiteral = JSON.stringify(PROMPT_PRIMARY_SELECTOR);
@@ -961,29 +964,27 @@ async function verifyPromptCommitted(
 		    const normalizedPrompt = normalize(${encodedPrompt});
 		    const articles = ${buildConversationTurnListExpression()};
 		    const normalizedTurns = articles.map((node) => normalize(node?.innerText));
-		    const userTurnTexts = articles.filter((node) => {
+		    const userTurns = articles.map((node, index) => {
 		      const role = String(
 		        node?.getAttribute?.('data-message-author-role') ||
 		        node?.getAttribute?.('data-turn') ||
 		        node?.dataset?.turn ||
 		        '',
 		      ).toLowerCase();
-		      return role === 'user' || Boolean(
+		      const isUser = role === 'user' || Boolean(
 		        node?.querySelector?.('[data-message-author-role="user"], [data-turn="user"]'),
 		      );
-		    }).map((node) => {
-		      const role = String(
-		        node?.getAttribute?.('data-message-author-role') ||
-		        node?.getAttribute?.('data-turn') ||
-		        node?.dataset?.turn ||
-		        '',
-		      ).toLowerCase();
+		      if (!isUser) return null;
 		      const roleNode = role === 'user'
 		        ? node
 		        : node?.querySelector?.('[data-message-author-role="user"], [data-turn="user"]');
 		      const messageNode = roleNode?.querySelector?.('.whitespace-pre-wrap') || roleNode;
-		      return normalize(messageNode?.innerText || messageNode?.textContent || '');
-		    }).filter(Boolean);
+		      return {
+		        index,
+		        text: normalize(messageNode?.innerText || messageNode?.textContent || ''),
+		      };
+		    }).filter((entry) => entry && entry.text);
+		    const userTurnTexts = userTurns.map((entry) => entry.text);
 	    const readValue = (node) => {
 	      if (!node) return '';
 	      if (node instanceof HTMLTextAreaElement) return node.value ?? '';
@@ -1001,6 +1002,9 @@ async function verifyPromptCommitted(
 	    const activeInputs = visibleInputs.length > 0 ? visibleInputs : inputs;
 		    const userMatched =
 		      normalizedPrompt.length > 0 && userTurnTexts.some((text) => text === normalizedPrompt);
+		    const matchedUserTurn = [...userTurns]
+		      .reverse()
+		      .find((entry) => entry.text === normalizedPrompt) || null;
 			    const lastTurn = userTurnTexts[userTurnTexts.length - 1] ?? '';
 			    const lastMatched =
 			      normalizedPrompt.length > 0 && lastTurn === normalizedPrompt;
@@ -1022,6 +1026,7 @@ async function verifyPromptCommitted(
 		    return {
         baseline,
 	      userMatched,
+	      matchedUserTurnIndex: matchedUserTurn?.index ?? null,
 	      lastMatched,
 	      lastUserTurnAvailable: userTurnTexts.length > 0,
 	      hasNewTurn,
@@ -1048,7 +1053,15 @@ async function verifyPromptCommitted(
     const turnsCount = (result.value as { turnsCount?: number } | undefined)?.turnsCount;
     const matchesPrompt = Boolean(info?.lastMatched);
     if (matchesPrompt && info?.hasNewTurn) {
-      return typeof turnsCount === "number" && Number.isFinite(turnsCount) ? turnsCount : null;
+      const userTurnIndex = info?.matchedUserTurnIndex;
+      return {
+        turnsCount:
+          typeof turnsCount === "number" && Number.isFinite(turnsCount) ? turnsCount : null,
+        userTurnIndex:
+          typeof userTurnIndex === "number" && Number.isSafeInteger(userTurnIndex)
+            ? userTurnIndex
+            : null,
+      };
     }
     if (onCommitPending && Date.now() >= nextPendingCheckAt) {
       nextPendingCheckAt = Date.now() + 500;
@@ -1109,6 +1122,7 @@ async function verifyPromptCommitted(
 interface CommitProbeState {
   baseline?: number;
   userMatched?: boolean;
+  matchedUserTurnIndex?: number | null;
   lastMatched?: boolean;
   lastUserTurnAvailable?: boolean;
   hasNewTurn?: boolean;
@@ -1129,6 +1143,7 @@ function summarizeCommitProbe(probe: CommitProbeState): Record<string, unknown> 
     baseline: probe.baseline,
     turnsCount: probe.turnsCount,
     userMatched: probe.userMatched,
+    matchedUserTurnIndex: probe.matchedUserTurnIndex,
     lastMatched: probe.lastMatched,
     lastUserTurnAvailable: probe.lastUserTurnAvailable,
     hasNewTurn: probe.hasNewTurn,

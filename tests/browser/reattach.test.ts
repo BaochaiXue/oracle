@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { resumeBrowserSession, __test__ } from "../../src/browser/reattach.js";
 import type { BrowserLogger, ChromeClient } from "../../src/browser/types.js";
+import { hashProPromptIdentity } from "../../src/browser/proResponseTiming.js";
 
 type FakeTarget = { id?: string; targetId?: string; type?: string; url?: string };
 type FakeClient = {
@@ -98,6 +99,11 @@ describe("resumeBrowserSession", () => {
       proDispatchAt: "2026-08-13T00:00:00.000Z",
       proResponseElapsedMs: 12_000,
       proInputTokens: 83,
+      proAttachmentBytes: 0,
+      proTurnIndex: 0,
+      proTurnCommitted: true,
+      proPromptSha256: hashProPromptIdentity("tiny committed prompt"),
+      proCommittedTurnIndex: 0,
     };
     const listTargets = vi.fn(
       async () =>
@@ -106,6 +112,7 @@ describe("resumeBrowserSession", () => {
     const evaluate = vi.fn(async ({ expression }: { expression: string }) => {
       if (expression === "location.href") return { result: { value: runtime.tabUrl } };
       if (expression === "1+1") return { result: { value: 2 } };
+      if (expression.includes("expectedSha256")) return { result: { value: true } };
       return { result: { value: null } };
     });
     const close = vi.fn(async () => {});
@@ -121,6 +128,11 @@ describe("resumeBrowserSession", () => {
       answerText: "must not recover",
       answerMarkdown: "must not recover",
     }));
+    const waitForAssistantResponse = vi.fn(async () => ({
+      text: "fast answer",
+      html: "",
+      meta: { messageId: "m1", turnId: "conversation-turn-1" },
+    }));
     const logger = vi.fn() as BrowserLogger;
 
     await expect(
@@ -132,11 +144,7 @@ describe("resumeBrowserSession", () => {
           listTargets,
           connect,
           recoverSession,
-          waitForAssistantResponse: vi.fn(async () => ({
-            text: "fast answer",
-            html: "",
-            meta: { messageId: "m1", turnId: "conversation-turn-1" },
-          })),
+          waitForAssistantResponse,
           captureAssistantMarkdown: vi.fn(async () => "fast answer"),
           waitForConversationHydration: vi.fn(async () => 2),
         },
@@ -144,13 +152,117 @@ describe("resumeBrowserSession", () => {
     ).resolves.toMatchObject({
       answerText: "fast answer",
       answerMarkdown: "fast answer",
-      runtime: expect.objectContaining({ proResponseElapsedMs: 12_000, proInputTokens: 83 }),
+      runtime: expect.objectContaining({
+        proResponseElapsedMs: 12_000,
+        proInputTokens: 83,
+        proResponseTimingReceipts: [
+          expect.objectContaining({
+            turnIndex: 0,
+            responseElapsedMs: 12_000,
+            inputTokens: 83,
+            attachmentBytes: 0,
+          }),
+        ],
+      }),
     });
     expect(close).toHaveBeenCalledOnce();
     expect(recoverSession).not.toHaveBeenCalled();
+    expect(waitForAssistantResponse).toHaveBeenCalledWith(expect.anything(), 2_000, logger, 0);
   });
 
-  test("keeps a persisted fast substantive Pro response rejected on reattach", async () => {
+  test("refuses an uncommitted follow-up instead of harvesting the prior answer", async () => {
+    const runtime = {
+      chromePort: 51559,
+      chromeHost: "127.0.0.1",
+      chromeTargetId: "target-1",
+      tabUrl: "https://chatgpt.com/c/uncommitted-follow-up",
+      proDispatchAt: "2026-08-13T00:01:00.000Z",
+      proInputTokens: 4_096,
+      proAttachmentBytes: 0,
+      proTurnIndex: 1,
+      proTurnCommitted: false,
+      proPromptSha256: hashProPromptIdentity("follow-up that never committed"),
+      proResponseTimingReceipts: [
+        {
+          turnIndex: 0,
+          dispatchAt: "2026-08-13T00:00:00.000Z",
+          responseElapsedMs: 90_000,
+          inputTokens: 8,
+          attachmentBytes: 0,
+        },
+      ],
+    };
+    const close = vi.fn(async () => {});
+    const waitForAssistantResponse = vi.fn(async () => ({
+      text: "prior answer",
+      html: "",
+      meta: { messageId: "m0", turnId: "conversation-turn-0" },
+    }));
+    const recoverSession = vi.fn(async () => ({
+      answerText: "must not recover",
+      answerMarkdown: "must not recover",
+    }));
+    const logger = vi.fn() as BrowserLogger;
+
+    await expect(
+      resumeBrowserSession(runtime, { timeoutMs: 2_000 }, logger, {
+        listTargets: async () => [{ targetId: "target-1", type: "page", url: runtime.tabUrl }],
+        connect: async () =>
+          ({
+            Runtime: {
+              enable: vi.fn(),
+              evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+                if (expression === "location.href") return { result: { value: runtime.tabUrl } };
+                if (expression === "1+1") return { result: { value: 2 } };
+                return { result: { value: null } };
+              }),
+            },
+            DOM: { enable: vi.fn() },
+            close,
+          }) as unknown as ChromeClient,
+        recoverSession,
+        waitForAssistantResponse,
+        captureAssistantMarkdown: vi.fn(async () => "prior answer"),
+        waitForConversationHydration: vi.fn(async () => 2),
+      }),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({ code: "pro-turn-not-committed" }),
+    });
+    expect(waitForAssistantResponse).not.toHaveBeenCalled();
+    expect(recoverSession).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  test("rejects recovery when the committed browser turn no longer matches the prompt digest", async () => {
+    const runtime = {
+      proTurnCommitted: true,
+      proCommittedTurnIndex: 4,
+      proPromptSha256: hashProPromptIdentity("expected follow-up"),
+    };
+    const Runtime = {
+      evaluate: vi.fn(async () => ({ result: { value: false } })),
+    } as unknown as ChromeClient["Runtime"];
+
+    await expect(__test__.verifyCommittedProTurnIdentity(Runtime, runtime)).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "pro-turn-identity-mismatch",
+        committedTurnIndex: 4,
+      }),
+    });
+  });
+
+  test.each([
+    {
+      label: "persisted substantive workload",
+      workload: { proInputTokens: 4_096, proAttachmentBytes: 0 },
+      expectedDetails: { inputTokens: 4_096 },
+    },
+    {
+      label: "legacy workload-unknown receipt",
+      workload: {},
+      expectedDetails: { workloadMetadata: "unknown" },
+    },
+  ])("keeps a fast $label rejected on reattach", async ({ workload, expectedDetails }) => {
     const runtime = {
       chromePort: 51559,
       chromeHost: "127.0.0.1",
@@ -158,8 +270,7 @@ describe("resumeBrowserSession", () => {
       tabUrl: "https://chatgpt.com/c/fast-substantive-pro",
       proDispatchAt: "2026-08-13T00:00:00.000Z",
       proResponseElapsedMs: 19_000,
-      proInputTokens: 4_096,
-      proAttachmentBytes: 0,
+      ...workload,
     };
     const close = vi.fn(async () => {});
     const recoverSession = vi.fn(async () => ({
@@ -203,8 +314,8 @@ describe("resumeBrowserSession", () => {
     ).rejects.toMatchObject({
       details: expect.objectContaining({
         code: "pro-fast-substantive-response-untrusted",
-        inputTokens: 4_096,
         responseElapsedMs: 19_000,
+        ...expectedDetails,
       }),
     });
     expect(close).toHaveBeenCalledOnce();

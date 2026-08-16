@@ -36,6 +36,7 @@ import {
   formatSessionBrowserModelWithRequestedKey,
   resolveSessionBrowserModelDisplayName,
 } from "../browser/modelDisplay.js";
+import { isTerminalProResponseTimingCode } from "../browser/proResponseTiming.js";
 
 const isTty = (): boolean => Boolean(process.stdout.isTTY);
 const dim = (text: string): string => (isTty() ? kleur.dim(text) : text);
@@ -389,8 +390,9 @@ export async function attachSession(
       const timingError = asOracleUserError(error);
       const terminalTimingRejection =
         timingError?.category === "browser-automation" &&
-        (timingError.details as { code?: string } | undefined)?.code ===
-          "pro-fast-substantive-response-untrusted";
+        isTerminalProResponseTimingCode(
+          (timingError.details as { code?: string } | undefined)?.code,
+        );
       if (terminalTimingRejection) {
         const errorRuntime = (
           timingError.details as { runtime?: NonNullable<typeof runtime> } | undefined

@@ -191,6 +191,16 @@ derives the HTTP timeout unless `--http-timeout` is supplied.
 - Use `--slug "<3-5 words>"` for readable session IDs.
 - If a run times out, reattach; do not re-run it. Use `--force` only when a
   genuinely new identical run is intended.
+- For direct-CDP Pro runs, trust is turn-scoped. The active turn must have its
+  own dispatch/elapsed/workload receipt, a verified commit, and a normalized
+  prompt digest bound to the exact committed user-turn index. Reattach accepts
+  only the assistant successor of that matched turn. Treat
+  `pro-turn-not-committed`, `pro-turn-identity-mismatch`,
+  `pro-response-timing-indeterminate`, and partial active workload as terminal;
+  never start a duplicate to work around them.
+- Attachment bytes are established before each Pro dispatch, including
+  fallback submissions. A missing size is read from the local file; it is never
+  counted as zero.
 - ChatGPT conversations remain visible by default for inspection and manual
   follow-up. Use `--browser-archive auto` to opt into archiving successful
   ordinary one-shots, or `--browser-archive always` for explicit

@@ -362,7 +362,7 @@ describe("OpenCliBrowserTransport", () => {
     expect(calls.some((args) => args[0] === "chatgpt" && args[1] === "detail")).toBe(false);
   });
 
-  it("accepts a previously captured sub-minute answer on later reattach", async () => {
+  it("accepts a previously captured tiny sub-minute answer on later reattach", async () => {
     const calls: string[][] = [];
     const events: string[] = [];
     const runtime: BrowserRuntimeMetadata = {
@@ -373,6 +373,8 @@ describe("OpenCliBrowserTransport", () => {
       opencliVersion: "1.8.6",
       opencliDispatchAt: "2026-08-13T01:00:00.000Z",
       opencliResponseElapsedMs: 42_000,
+      proInputTokens: 83,
+      proAttachmentBytes: 0,
     };
 
     await expect(
@@ -389,6 +391,41 @@ describe("OpenCliBrowserTransport", () => {
       answerText: "Pro answer",
       answerMarkdown: "Pro answer",
       runtime: expect.objectContaining({ opencliResponseElapsedMs: 42_000 }),
+    });
+
+    expect(events).toContain("oracle-wait");
+    expect(events).not.toContain("dispatch");
+  });
+
+  it("keeps a fast legacy workload-unknown receipt rejected on later reattach", async () => {
+    const calls: string[][] = [];
+    const events: string[] = [];
+    const runtime: BrowserRuntimeMetadata = {
+      browserTransport: "opencli",
+      tabUrl: "https://chatgpt.com/c/fast-legacy-answer",
+      conversationId: "fast-legacy-answer",
+      promptSubmitted: true,
+      opencliVersion: "1.8.6",
+      opencliDispatchAt: "2026-08-13T01:00:00.000Z",
+      opencliResponseElapsedMs: 42_000,
+    };
+
+    await expect(
+      resumeOpenCliBrowserSession(
+        runtime,
+        { transport: "opencli", timeoutMs: 5_000 },
+        (() => {}) as never,
+        {
+          runCommand: successRunner(calls, events),
+          now: () => new Date("2026-08-13T01:10:00.000Z"),
+        },
+      ),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "pro-fast-substantive-response-untrusted",
+        workloadMetadata: "unknown",
+        responseElapsedMs: 42_000,
+      }),
     });
 
     expect(events).toContain("oracle-wait");

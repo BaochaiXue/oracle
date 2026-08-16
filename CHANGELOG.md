@@ -16,6 +16,13 @@
   60-second fail-closed route-anomaly guard for substantive prompts and uploads,
   persist dispatch-to-answer timing, and keep the additional warning for very
   large runs that finish unexpectedly quickly.
+- Browser: keep workload-aware Pro timing turn-scoped across direct-CDP
+  follow-ups. Each submitted turn now carries its own dispatch, first-answer
+  elapsed time, input estimate, verified upload bytes, commit state, and
+  privacy-safe prompt identity and must pass admission before Oracle can format
+  a multi-turn transcript. Reattach matches the stored prompt digest to the
+  exact committed user turn. Partial active workload and indeterminate timing
+  fail closed, while old timing receipts keep their explicit migration policy.
 - Direct CDP submission: background-open the dedicated Chrome through macOS
   LaunchServices, create each new tab with `focus:false`, and use page-side
   focus emulation for trusted input. Oracle now verifies exact composer identity
