@@ -25,7 +25,8 @@ import {
   resolveBrowserModelDisplayName,
 } from "./modelDisplay.js";
 import {
-  assertProResponseTimingAdmission,
+  assertCompleteProResponseTimingReceipt,
+  hasProResponseTimingMarker,
   requiresProResponseTiming,
 } from "./proResponseTiming.js";
 
@@ -269,13 +270,8 @@ export async function runBrowserSessionExecution(
     controllerPid: browserResult.controllerPid ?? process.pid,
   };
   const answerText = browserResult.answerMarkdown || browserResult.answerText || "";
-  if (requiresProResponseTiming(executionBrowserConfig)) {
-    assertProResponseTimingAdmission({
-      answer: answerText,
-      runtime,
-      inputTokens: runtime.proInputTokens,
-      attachmentBytes: runtime.proAttachmentBytes,
-    });
+  if (requiresProResponseTiming(executionBrowserConfig) || hasProResponseTimingMarker(runtime)) {
+    assertCompleteProResponseTimingReceipt(runtime);
   }
   if (modelSelection) {
     log(

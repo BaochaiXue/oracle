@@ -1741,7 +1741,6 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       );
       if (proTimingRequired) {
         proTimingRuntime = completeProResponseTimingTurn({
-          answer: researchResult.text,
           runtime: proTimingRuntime,
         });
         await emitRuntimeHint();
@@ -2165,7 +2164,6 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       }
       if (proTimingRequired) {
         proTimingRuntime = completeProResponseTimingTurn({
-          answer: turnAnswerText,
           runtime: proTimingRuntime,
         });
         await emitRuntimeHint();
@@ -3322,7 +3320,6 @@ async function runRemoteBrowserMode(
       );
       if (proTimingRequired) {
         proTimingRuntime = completeProResponseTimingTurn({
-          answer: researchResult.text,
           runtime: proTimingRuntime,
         });
         await emitRuntimeHint();
@@ -3703,7 +3700,6 @@ async function runRemoteBrowserMode(
       }
       if (proTimingRequired) {
         proTimingRuntime = completeProResponseTimingTurn({
-          answer: turnAnswerText,
           runtime: proTimingRuntime,
         });
         await emitRuntimeHint();

@@ -375,6 +375,20 @@ describe("resumeBrowserSession", () => {
     expect(recoverSession).not.toHaveBeenCalled();
   });
 
+  test("rejects partial new-format markers when the commit flag is absent", async () => {
+    const evaluate = vi.fn(async () => ({ result: { value: null } }));
+
+    await expect(
+      __test__.verifyCommittedProTurnIdentity({ evaluate } as unknown as ChromeClient["Runtime"], {
+        proDispatchAt: "2026-08-16T00:00:00.000Z",
+        proInputTokens: 500,
+        proAttachmentBytes: 0,
+        proTurnIndex: 0,
+      }),
+    ).rejects.toMatchObject({ details: { code: "pro-turn-not-committed" } });
+    expect(evaluate).not.toHaveBeenCalled();
+  });
+
   test("uses the committed Pro user-turn index after verifying its prompt digest", async () => {
     const prompt = "Review this exact change";
     const runtime = {
@@ -385,6 +399,11 @@ describe("resumeBrowserSession", () => {
       proTurnCommitted: true,
       proCommittedTurnIndex: 7,
       proPromptSha256: hashProPromptIdentity(prompt),
+      proDispatchAt: new Date(Date.now() - 5_000).toISOString(),
+      proResponseElapsedMs: 5_000,
+      proInputTokens: 500,
+      proAttachmentBytes: 0,
+      proTurnIndex: 0,
     };
     const evaluate = vi.fn(async ({ expression }: { expression: string }) => {
       if (expression === "location.href") return { result: { value: runtime.tabUrl } };

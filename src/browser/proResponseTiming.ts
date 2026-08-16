@@ -7,15 +7,10 @@ import type { BrowserAttachment, BrowserAutomationConfig } from "./types.js";
 
 type ProResponseTimingConfig = Pick<BrowserAutomationConfig, "modelStrategy" | "thinkingTime">;
 
-export const MAX_TINY_PRO_INPUT_TOKENS = 256;
-export const MAX_TINY_PRO_ATTACHMENT_BYTES = 16 * 1024;
-export const MIN_SUBSTANTIVE_PRO_RESPONSE_MS = 60_000;
-
 const TERMINAL_CODES = new Set([
   "dispatch-timestamp-missing",
   "pro-attachment-size-invalid",
   "pro-attachment-size-unavailable",
-  "pro-fast-substantive-response-untrusted",
   "pro-response-timing-indeterminate",
   "pro-turn-identity-mismatch",
   "pro-turn-identity-missing",
@@ -170,8 +165,18 @@ export function markProPromptCommitted(
   return { ...runtime, proTurnCommitted: true, proCommittedTurnIndex: index };
 }
 
-function hasTimingMarker(runtime: BrowserRuntimeMetadata): boolean {
-  return runtime.proDispatchAt !== undefined || runtime.proResponseElapsedMs !== undefined;
+export function hasProResponseTimingMarker(runtime: BrowserRuntimeMetadata): boolean {
+  return (
+    runtime.proDispatchAt !== undefined ||
+    runtime.proResponseElapsedMs !== undefined ||
+    runtime.proInputTokens !== undefined ||
+    runtime.proAttachmentBytes !== undefined ||
+    runtime.proTurnIndex !== undefined ||
+    runtime.proTurnCommitted !== undefined ||
+    runtime.proPromptSha256 !== undefined ||
+    runtime.proCommittedTurnIndex !== undefined ||
+    runtime.proResponseTimingReceipts !== undefined
+  );
 }
 
 function throwIndeterminate(runtime: BrowserRuntimeMetadata): never {
@@ -181,58 +186,40 @@ function throwIndeterminate(runtime: BrowserRuntimeMetadata): never {
   );
 }
 
-function throwFast(args: {
-  answer: string;
-  runtime: BrowserRuntimeMetadata;
-  responseElapsedMs: number;
-  inputTokens?: number;
-  attachmentBytes?: number;
-  workloadMetadata: "complete" | "unknown";
-}): never {
-  throw new BrowserAutomationError(
-    `Oracle rejected a ${args.workloadMetadata === "complete" ? "substantive" : "workload-unknown"} Pro reply captured ${Math.round(args.responseElapsedMs / 1000)}s after dispatch.`,
-    {
-      stage: "response-timing",
-      code: "pro-fast-substantive-response-untrusted",
-      runtime: args.runtime,
-      responseElapsedMs: args.responseElapsedMs,
-      thresholdMs: MIN_SUBSTANTIVE_PRO_RESPONSE_MS,
-      inputTokens: args.inputTokens,
-      attachmentBytes: args.attachmentBytes,
-      workloadMetadata: args.workloadMetadata,
-      assistantSha256: createHash("sha256").update(args.answer).digest("hex"),
-    },
-  );
-}
-
-export function assertProResponseTimingAdmission(args: {
-  answer: string;
-  runtime: BrowserRuntimeMetadata;
-  inputTokens?: number;
-  attachmentBytes?: number;
-}): void {
-  const elapsed = args.runtime.proResponseElapsedMs;
-  if (!isValidElapsed(elapsed)) {
-    if (hasTimingMarker(args.runtime)) throwIndeterminate(args.runtime);
-    return;
-  }
-  const inputTokens = args.inputTokens;
-  const attachmentBytes = args.attachmentBytes;
-  if (!isValidWorkload(inputTokens) || !isValidWorkload(attachmentBytes)) {
-    if (elapsed < MIN_SUBSTANTIVE_PRO_RESPONSE_MS) {
-      throwFast({ ...args, responseElapsedMs: elapsed, workloadMetadata: "unknown" });
-    }
-    return;
+export function assertCompleteProResponseTimingReceipt(runtime: BrowserRuntimeMetadata): void {
+  if (!hasProResponseTimingMarker(runtime)) return;
+  if (runtime.proTurnCommitted !== true) {
+    throw new BrowserAutomationError(
+      "Oracle found Pro response metadata without a verified committed user turn.",
+      { stage: "response-timing", code: "pro-turn-not-committed", runtime },
+    );
   }
   if (
-    inputTokens <= MAX_TINY_PRO_INPUT_TOKENS &&
-    attachmentBytes <= MAX_TINY_PRO_ATTACHMENT_BYTES
+    !isValidWorkload(runtime.proTurnIndex) ||
+    !/^[a-f0-9]{64}$/u.test(runtime.proPromptSha256 ?? "") ||
+    !isValidWorkload(runtime.proCommittedTurnIndex)
   ) {
-    return;
+    throw new BrowserAutomationError(
+      "Oracle found Pro response metadata without the committed turn identity required for recovery.",
+      { stage: "response-timing", code: "pro-turn-identity-missing", runtime },
+    );
   }
-  if (elapsed < MIN_SUBSTANTIVE_PRO_RESPONSE_MS) {
-    throwFast({ ...args, responseElapsedMs: elapsed, workloadMetadata: "complete" });
+  if (!isValidWorkload(runtime.proInputTokens) || !isValidWorkload(runtime.proAttachmentBytes)) {
+    throw new BrowserAutomationError(
+      "Oracle found Pro response metadata without a complete workload receipt.",
+      { stage: "response-timing", code: "pro-workload-receipt-missing", runtime },
+    );
   }
+  if (
+    typeof runtime.proDispatchAt !== "string" ||
+    !Number.isFinite(Date.parse(runtime.proDispatchAt))
+  ) {
+    throw new BrowserAutomationError(
+      "Oracle found Pro response metadata without a valid dispatch timestamp.",
+      { stage: "response-timing", code: "dispatch-timestamp-missing", runtime },
+    );
+  }
+  if (!isValidElapsed(runtime.proResponseElapsedMs)) throwIndeterminate(runtime);
 }
 
 function appendReceipt(runtime: BrowserRuntimeMetadata): BrowserRuntimeMetadata {
@@ -255,58 +242,24 @@ function appendReceipt(runtime: BrowserRuntimeMetadata): BrowserRuntimeMetadata 
 }
 
 export function completeProResponseTimingTurn(args: {
-  answer: string;
   runtime: BrowserRuntimeMetadata;
   capturedAt?: Date;
 }): BrowserRuntimeMetadata {
   const runtime = recordProResponseTiming(args.runtime, args.capturedAt ?? new Date(), {
     requireTimestamp: true,
   });
-  if (runtime.proTurnCommitted !== true) {
-    throw new BrowserAutomationError(
-      "Browser captured a Pro answer before the prompt was verified as committed.",
-      { stage: "response-timing", code: "pro-turn-not-committed", runtime },
-    );
-  }
-  if (!runtime.proPromptSha256 || runtime.proCommittedTurnIndex === undefined) {
-    throw new BrowserAutomationError(
-      "Browser captured a Pro answer without the committed turn identity required for recovery.",
-      { stage: "response-timing", code: "pro-turn-identity-missing", runtime },
-    );
-  }
-  if (!isValidWorkload(runtime.proInputTokens) || !isValidWorkload(runtime.proAttachmentBytes)) {
-    throw new BrowserAutomationError(
-      "Browser captured a Pro answer without the workload receipt required for timing verification.",
-      { stage: "response-timing", code: "pro-workload-receipt-missing", runtime },
-    );
-  }
-  assertProResponseTimingAdmission({
-    answer: args.answer,
-    runtime,
-    inputTokens: runtime.proInputTokens,
-    attachmentBytes: runtime.proAttachmentBytes,
-  });
+  assertCompleteProResponseTimingReceipt(runtime);
   return appendReceipt(runtime);
 }
 
 export function verifyStoredProResponseWorkloadTiming(args: {
-  answer: string;
   runtime: BrowserRuntimeMetadata;
   capturedAt: Date;
 }): BrowserRuntimeMetadata {
-  if (!hasTimingMarker(args.runtime)) return args.runtime;
-  const runtime = recordProResponseTiming(args.runtime, args.capturedAt);
-  if (!isValidElapsed(runtime.proResponseElapsedMs)) throwIndeterminate(runtime);
-  assertProResponseTimingAdmission({
-    answer: args.answer,
-    runtime,
-    inputTokens: runtime.proInputTokens,
-    attachmentBytes: runtime.proAttachmentBytes,
+  if (!hasProResponseTimingMarker(args.runtime)) return args.runtime;
+  const runtime = recordProResponseTiming(args.runtime, args.capturedAt, {
+    requireTimestamp: true,
   });
-  const complete =
-    runtime.proTurnIndex !== undefined &&
-    runtime.proDispatchAt !== undefined &&
-    isValidWorkload(runtime.proInputTokens) &&
-    isValidWorkload(runtime.proAttachmentBytes);
-  return complete ? appendReceipt(runtime) : runtime;
+  assertCompleteProResponseTimingReceipt(runtime);
+  return appendReceipt(runtime);
 }

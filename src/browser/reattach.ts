@@ -45,6 +45,7 @@ import { CHROME_COOKIE_SYNC_WARNING, shouldSyncBrowserCookies } from "./policies
 import { BrowserAutomationError } from "../oracle/errors.js";
 import {
   hashProPromptIdentity,
+  hasProResponseTimingMarker,
   isTerminalProResponseTimingCode,
   verifyStoredProResponseWorkloadTiming,
 } from "./proResponseTiming.js";
@@ -82,7 +83,7 @@ async function verifyCommittedProTurnIdentity(
   Runtime: ChromeClient["Runtime"],
   runtime: BrowserRuntimeMetadata,
 ): Promise<number | null> {
-  if (runtime.proTurnCommitted === undefined) return null;
+  if (!hasProResponseTimingMarker(runtime)) return null;
   if (runtime.proTurnCommitted !== true) {
     throw new BrowserAutomationError(
       "Oracle cannot recover this Pro response because the prompt was never verified as committed.",
@@ -281,7 +282,6 @@ export async function resumeBrowserSession(
         "Reattach Deep Research response timed out",
       );
       const recoveredRuntime = verifyStoredProResponseWorkloadTiming({
-        answer: researchResult.text,
         runtime,
         capturedAt: new Date(),
       });
@@ -315,7 +315,6 @@ export async function resumeBrowserSession(
     const aligned = alignPromptEchoMarkdown(recovered.text, markdown, promptEcho, logger);
 
     const recoveredRuntime = verifyStoredProResponseWorkloadTiming({
-      answer: aligned.answerText,
       runtime,
       capturedAt: new Date(),
     });
@@ -526,7 +525,6 @@ async function resumeBrowserSessionViaNewChrome(
       },
     );
     const recoveredRuntime = verifyStoredProResponseWorkloadTiming({
-      answer: researchResult.text,
       runtime,
       capturedAt: new Date(),
     });
@@ -551,7 +549,6 @@ async function resumeBrowserSessionViaNewChrome(
   const aligned = alignPromptEchoMarkdown(recovered.text, markdown, promptEcho, logger);
 
   const recoveredRuntime = verifyStoredProResponseWorkloadTiming({
-    answer: aligned.answerText,
     runtime,
     capturedAt: new Date(),
   });

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { BrowserAutomationError } from "../../src/oracle/errors.js";
 import type { BrowserRuntimeMetadata } from "../../src/sessionStore.js";
 import {
-  assertProResponseTimingAdmission,
+  assertCompleteProResponseTimingReceipt,
   beginProResponseTimingTurn,
   completeProResponseTimingTurn,
   elapsedSinceDispatch,
@@ -121,56 +121,40 @@ describe("Pro response timing", () => {
 
   test("allows tiny Pro prompts to complete quickly", () => {
     expect(() =>
-      assertProResponseTimingAdmission({
-        answer: "ok",
-        runtime: { proResponseElapsedMs: 3_000 },
-        inputTokens: 50,
-        attachmentBytes: 0,
-      }),
+      assertCompleteProResponseTimingReceipt(
+        activeTurn({ proResponseElapsedMs: 3_000, proInputTokens: 50 }),
+      ),
     ).not.toThrow();
   });
 
-  test("rejects substantive Pro prompts completed in under 60 seconds", () => {
+  test("preserves legitimate fast substantive Pro responses", () => {
     expect(() =>
-      assertProResponseTimingAdmission({
-        answer: "implausibly quick",
-        runtime: { proResponseElapsedMs: 59_999 },
-        inputTokens: 500,
-        attachmentBytes: 0,
-      }),
-    ).toThrowError(
-      expect.objectContaining({
-        details: expect.objectContaining({ code: "pro-fast-substantive-response-untrusted" }),
-      }),
-    );
+      assertCompleteProResponseTimingReceipt(activeTurn({ proResponseElapsedMs: 5_000 })),
+    ).not.toThrow();
   });
 
-  test("does not treat missing active workload as a tiny prompt", () => {
+  test("rejects a timing marker without committed-turn proof", () => {
     expect(() =>
-      assertProResponseTimingAdmission({
-        answer: "unknown workload",
-        runtime: { proResponseElapsedMs: 10_000 },
-      }),
+      assertCompleteProResponseTimingReceipt({ proResponseElapsedMs: 10_000 }),
     ).toThrowError(
       expect.objectContaining({
-        details: expect.objectContaining({ workloadMetadata: "unknown" }),
+        details: expect.objectContaining({ code: "pro-turn-not-committed" }),
       }),
     );
   });
 
   test("preserves legacy sessions without timing markers", () => {
-    expect(() => assertProResponseTimingAdmission({ answer: "legacy", runtime: {} })).not.toThrow();
+    expect(() => assertCompleteProResponseTimingReceipt({})).not.toThrow();
   });
 
-  test("fails closed when a timing marker is invalid", () => {
+  test("fails closed when a dispatch marker is invalid", () => {
     expect(() =>
-      assertProResponseTimingAdmission({
-        answer: "indeterminate",
-        runtime: { proDispatchAt: "invalid" },
-      }),
+      assertCompleteProResponseTimingReceipt(
+        activeTurn({ proDispatchAt: "invalid", proResponseElapsedMs: 1_000 }),
+      ),
     ).toThrowError(
       expect.objectContaining({
-        details: expect.objectContaining({ code: "pro-response-timing-indeterminate" }),
+        details: expect.objectContaining({ code: "dispatch-timestamp-missing" }),
       }),
     );
   });
@@ -178,7 +162,6 @@ describe("Pro response timing", () => {
   test("requires a dispatch timestamp for a current direct turn", () => {
     expect(() =>
       completeProResponseTimingTurn({
-        answer: "answer",
         runtime: activeTurn({ proDispatchAt: undefined }),
         capturedAt: new Date("2026-08-16T00:01:01Z"),
       }),
@@ -192,7 +175,6 @@ describe("Pro response timing", () => {
   test("requires durable commit evidence", () => {
     expect(() =>
       completeProResponseTimingTurn({
-        answer: "answer",
         runtime: activeTurn({ proTurnCommitted: false }),
         capturedAt: new Date("2026-08-16T00:01:01Z"),
       }),
@@ -206,7 +188,6 @@ describe("Pro response timing", () => {
   test("requires committed prompt identity", () => {
     expect(() =>
       completeProResponseTimingTurn({
-        answer: "answer",
         runtime: activeTurn({ proPromptSha256: undefined }),
         capturedAt: new Date("2026-08-16T00:01:01Z"),
       }),
@@ -220,7 +201,6 @@ describe("Pro response timing", () => {
   test("requires workload receipt fields", () => {
     expect(() =>
       completeProResponseTimingTurn({
-        answer: "answer",
         runtime: activeTurn({ proInputTokens: undefined }),
         capturedAt: new Date("2026-08-16T00:01:01Z"),
       }),
@@ -233,7 +213,6 @@ describe("Pro response timing", () => {
 
   test("appends one accepted receipt per completed turn", () => {
     const first = completeProResponseTimingTurn({
-      answer: "first answer",
       runtime: activeTurn(),
       capturedAt: new Date("2026-08-16T00:01:01Z"),
     });
@@ -243,7 +222,6 @@ describe("Pro response timing", () => {
       prompt: "short follow-up",
     });
     const second = completeProResponseTimingTurn({
-      answer: "second answer",
       runtime: markProPromptCommitted(
         markProPromptDispatched(secondBegun, new Date("2026-08-16T00:02:00Z")),
         4,
@@ -258,15 +236,14 @@ describe("Pro response timing", () => {
     });
   });
 
-  test("recovery rejects fast workload-unknown timing instead of borrowing another turn", () => {
+  test("recovery rejects partial new-format metadata even when timing and workload are valid", () => {
     expect(() =>
       verifyStoredProResponseWorkloadTiming({
-        answer: "recovered",
         runtime: {
           proDispatchAt: "2026-08-16T00:00:00Z",
           proTurnIndex: 1,
-          proInputTokens: undefined,
-          proAttachmentBytes: undefined,
+          proInputTokens: 500,
+          proAttachmentBytes: 0,
           proResponseTimingReceipts: [
             {
               turnIndex: 0,
@@ -277,22 +254,36 @@ describe("Pro response timing", () => {
             },
           ],
         },
-        capturedAt: new Date("2026-08-16T00:00:10Z"),
+        capturedAt: new Date("2026-08-16T00:02:00Z"),
       }),
     ).toThrowError(
       expect.objectContaining({
-        details: expect.objectContaining({ workloadMetadata: "unknown" }),
+        details: expect.objectContaining({ code: "pro-turn-not-committed" }),
       }),
     );
   });
 
-  test("recovery preserves valid slow elapsed-only legacy markers", () => {
+  test("recovery rejects an elapsed-only partial marker", () => {
+    expect(() =>
+      verifyStoredProResponseWorkloadTiming({
+        runtime: { proResponseElapsedMs: 61_000 },
+        capturedAt: new Date("2026-08-16T00:10:00Z"),
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        details: expect.objectContaining({ code: "dispatch-timestamp-missing" }),
+      }),
+    );
+  });
+
+  test("recovery accepts a structurally complete fast Pro receipt", () => {
     const runtime = verifyStoredProResponseWorkloadTiming({
-      answer: "recovered",
-      runtime: { proResponseElapsedMs: 61_000 },
-      capturedAt: new Date("2026-08-16T00:10:00Z"),
+      runtime: activeTurn(),
+      capturedAt: new Date("2026-08-16T00:00:05Z"),
     });
-    expect(runtime.proResponseElapsedMs).toBe(61_000);
-    expect(runtime.proResponseTimingReceipts).toBeUndefined();
+    expect(runtime.proResponseElapsedMs).toBe(5_000);
+    expect(runtime.proResponseTimingReceipts).toEqual([
+      expect.objectContaining({ turnIndex: 0, inputTokens: 500, responseElapsedMs: 5_000 }),
+    ]);
   });
 });

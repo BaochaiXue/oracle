@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Browser: bind each ChatGPT Pro response to its own dispatch timestamp, workload receipt, and verified committed user turn. Substantive replies captured implausibly quickly now fail closed, and reattach refuses to recover from an uncommitted or different turn.
+- Browser: bind each ChatGPT Pro response to its own dispatch timestamp, workload receipt, and verified committed user turn. Reattach now rejects every partial new-format receipt and refuses to recover from an uncommitted or different turn, while elapsed time remains durable evidence rather than a default answer-rejection threshold.
 
 ## 0.18.0 — 2026-08-14
 
