@@ -241,8 +241,60 @@ function hasProTimingMarker(runtime: BrowserRuntimeMetadata): boolean {
     runtime.proDispatchAt !== undefined ||
     runtime.proResponseElapsedMs !== undefined ||
     runtime.opencliDispatchAt !== undefined ||
-    runtime.opencliResponseElapsedMs !== undefined
+    runtime.opencliResponseElapsedMs !== undefined ||
+    hasProResponseTimingReceiptMarker(runtime)
   );
+}
+
+export function hasProResponseTimingReceiptMarker(runtime: BrowserRuntimeMetadata): boolean {
+  return (
+    runtime.proTurnIndex !== undefined ||
+    runtime.proTurnCommitted !== undefined ||
+    runtime.proPromptSha256 !== undefined ||
+    runtime.proCommittedTurnIndex !== undefined ||
+    runtime.proResponseTimingReceipts !== undefined
+  );
+}
+
+export function assertCompleteProResponseTimingReceipt(runtime: BrowserRuntimeMetadata): void {
+  if (!hasProResponseTimingReceiptMarker(runtime)) return;
+  if (runtime.proTurnCommitted !== true) {
+    throw new BrowserAutomationError(
+      "Oracle found a Pro turn receipt without a verified committed user turn.",
+      { stage: "response-timing", code: "pro-turn-not-committed", runtime },
+    );
+  }
+  if (
+    !isValidWorkloadValue(runtime.proTurnIndex) ||
+    !/^[a-f0-9]{64}$/u.test(runtime.proPromptSha256 ?? "") ||
+    !isValidWorkloadValue(runtime.proCommittedTurnIndex)
+  ) {
+    throw new BrowserAutomationError(
+      "Oracle found a Pro turn receipt without the committed turn identity required for recovery.",
+      { stage: "response-timing", code: "pro-turn-identity-missing", runtime },
+    );
+  }
+  if (
+    !isValidWorkloadValue(runtime.proInputTokens) ||
+    !isValidWorkloadValue(runtime.proAttachmentBytes)
+  ) {
+    throw new BrowserAutomationError(
+      "Oracle found a Pro turn receipt without complete workload metadata.",
+      { stage: "response-timing", code: "pro-workload-receipt-missing", runtime },
+    );
+  }
+  if (
+    typeof runtime.proDispatchAt !== "string" ||
+    !Number.isFinite(Date.parse(runtime.proDispatchAt))
+  ) {
+    throw new BrowserAutomationError(
+      "Oracle found a Pro turn receipt without a valid dispatch timestamp.",
+      { stage: "response-timing", code: "dispatch-timestamp-missing", runtime },
+    );
+  }
+  if (!isValidNonNegativeNumber(runtime.proResponseElapsedMs)) {
+    throwIndeterminateProTiming(runtime);
+  }
 }
 
 export function assertProResponseTimingAdmission(args: {
@@ -327,46 +379,12 @@ export function completeProResponseTimingTurn(args: {
   const timedRuntime = recordProResponseTiming(args.runtime, args.capturedAt ?? new Date(), {
     requireTimestamp: true,
   });
-  if (timedRuntime.proTurnIndex !== undefined && timedRuntime.proTurnCommitted !== true) {
-    throw new BrowserAutomationError(
-      "Browser transport captured a Pro answer before the active prompt was verified as committed.",
-      {
-        stage: "response-timing",
-        code: "pro-turn-not-committed",
-        runtime: timedRuntime,
-      },
-    );
-  }
-  if (
-    timedRuntime.proTurnIndex !== undefined &&
-    (!timedRuntime.proPromptSha256 || timedRuntime.proCommittedTurnIndex === undefined)
-  ) {
-    throw new BrowserAutomationError(
-      "Browser transport captured a Pro answer without the committed turn identity required for recovery.",
-      {
-        stage: "response-timing",
-        code: "pro-turn-identity-missing",
-        runtime: timedRuntime,
-      },
-    );
-  }
-  const inputTokens = timedRuntime.proInputTokens;
-  const attachmentBytes = timedRuntime.proAttachmentBytes;
-  if (!isValidWorkloadValue(inputTokens) || !isValidWorkloadValue(attachmentBytes)) {
-    throw new BrowserAutomationError(
-      "Browser transport captured a Pro answer without the turn workload receipt required for timing verification.",
-      {
-        stage: "response-timing",
-        code: "pro-workload-receipt-missing",
-        runtime: timedRuntime,
-      },
-    );
-  }
+  assertCompleteProResponseTimingReceipt(timedRuntime);
   assertProResponseTimingAdmission({
     answer: args.answer,
     runtime: timedRuntime,
-    inputTokens,
-    attachmentBytes,
+    inputTokens: timedRuntime.proInputTokens,
+    attachmentBytes: timedRuntime.proAttachmentBytes,
   });
   return appendProResponseTimingReceipt(timedRuntime);
 }
@@ -382,17 +400,14 @@ export function verifyStoredProResponseWorkloadTiming(args: {
   if (!isValidNonNegativeNumber(timedRuntime.proResponseElapsedMs)) {
     throwIndeterminateProTiming(timedRuntime);
   }
+  assertCompleteProResponseTimingReceipt(timedRuntime);
   assertProResponseTimingAdmission({
     answer: args.answer,
     runtime: timedRuntime,
     inputTokens: timedRuntime.proInputTokens,
     attachmentBytes: timedRuntime.proAttachmentBytes,
   });
-  const hasCompleteDirectReceipt =
-    timedRuntime.proTurnIndex !== undefined &&
-    timedRuntime.proDispatchAt !== undefined &&
-    isValidNonNegativeNumber(timedRuntime.proResponseElapsedMs) &&
-    isValidWorkloadValue(timedRuntime.proInputTokens) &&
-    isValidWorkloadValue(timedRuntime.proAttachmentBytes);
-  return hasCompleteDirectReceipt ? appendProResponseTimingReceipt(timedRuntime) : timedRuntime;
+  return hasProResponseTimingReceiptMarker(timedRuntime)
+    ? appendProResponseTimingReceipt(timedRuntime)
+    : timedRuntime;
 }

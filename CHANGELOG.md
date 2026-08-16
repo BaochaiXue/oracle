@@ -21,8 +21,11 @@
   elapsed time, input estimate, verified upload bytes, commit state, and
   privacy-safe prompt identity and must pass admission before Oracle can format
   a multi-turn transcript. Reattach matches the stored prompt digest to the
-  exact committed user turn. Partial active workload and indeterminate timing
-  fail closed, while old timing receipts keep their explicit migration policy.
+  exact committed user turn. Once any new turn-receipt identity marker exists,
+  every commit, digest, index, workload, and timing field is required even when
+  resolved config is stale; partial active workload and indeterminate timing
+  fail closed, while older scalar and OpenCLI receipts keep their explicit
+  migration policy.
 - Direct CDP submission: background-open the dedicated Chrome through macOS
   LaunchServices, create each new tab with `focus:false`, and use page-side
   focus emulation for trusted input. Oracle now verifies exact composer identity

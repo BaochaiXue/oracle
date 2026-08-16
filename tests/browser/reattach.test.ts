@@ -233,6 +233,21 @@ describe("resumeBrowserSession", () => {
     expect(close).not.toHaveBeenCalled();
   });
 
+  test("rejects new-format turn markers when the commit flag is absent", async () => {
+    const evaluate = vi.fn(async () => ({ result: { value: null } }));
+
+    await expect(
+      __test__.verifyCommittedProTurnIdentity({ evaluate } as unknown as ChromeClient["Runtime"], {
+        proTurnIndex: 0,
+        proDispatchAt: "2026-08-13T00:00:00.000Z",
+        proResponseElapsedMs: 90_000,
+        proInputTokens: 4_096,
+        proAttachmentBytes: 0,
+      }),
+    ).rejects.toMatchObject({ details: { code: "pro-turn-not-committed" } });
+    expect(evaluate).not.toHaveBeenCalled();
+  });
+
   test("rejects recovery when the committed browser turn no longer matches the prompt digest", async () => {
     const runtime = {
       proTurnCommitted: true,

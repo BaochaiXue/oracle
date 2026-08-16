@@ -26,7 +26,9 @@ import {
   resolveBrowserModelDisplayName,
 } from "./modelDisplay.js";
 import {
+  assertCompleteProResponseTimingReceipt,
   assertProResponseTimingAdmission,
+  hasProResponseTimingReceiptMarker,
   resolveProAttachmentBytes,
 } from "./proResponseTiming.js";
 
@@ -360,7 +362,11 @@ export async function runBrowserSessionExecution(
     },
     initialProWorkload,
   );
-  if (isRequestedProBrowserRun(runOptions, browserConfig, modelSelection)) {
+  if (
+    isRequestedProBrowserRun(runOptions, browserConfig, modelSelection) ||
+    hasProResponseTimingReceiptMarker(browserRuntime)
+  ) {
+    assertCompleteProResponseTimingReceipt(browserRuntime);
     assertProResponseTimingAdmission({
       answer: browserResult.answerMarkdown || browserResult.answerText || "",
       runtime: browserRuntime,

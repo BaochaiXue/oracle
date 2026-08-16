@@ -163,6 +163,26 @@ describe("Pro response timing", () => {
     ).toMatchObject({ proResponseElapsedMs: 90_000 });
   });
 
+  test("rejects a partial new-format turn receipt without commit identity", () => {
+    expect(() =>
+      verifyStoredProResponseWorkloadTiming({
+        answer: "must not recover",
+        runtime: {
+          proDispatchAt: "2026-08-13T00:00:00.000Z",
+          proResponseElapsedMs: 90_000,
+          proInputTokens: 4_096,
+          proAttachmentBytes: 0,
+          proTurnIndex: 0,
+        },
+        capturedAt: new Date("2026-08-13T00:20:00.000Z"),
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        details: expect.objectContaining({ code: "pro-turn-not-committed" }),
+      }),
+    );
+  });
+
   test("applies the same workload-unknown migration rule to OpenCLI receipt fields", () => {
     expect(() =>
       verifyStoredProResponseWorkloadTiming({

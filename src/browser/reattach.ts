@@ -44,7 +44,10 @@ import { waitForDeepResearchCompletion } from "./actions/deepResearch.js";
 import { resumeOpenCliBrowserSession } from "./opencliTransport.js";
 import { ensureDedicatedBrowserProfileDirectory } from "./manualLoginProfile.js";
 import { BrowserAutomationError } from "../oracle/errors.js";
-import { verifyStoredProResponseWorkloadTiming } from "./proResponseTiming.js";
+import {
+  hasProResponseTimingReceiptMarker,
+  verifyStoredProResponseWorkloadTiming,
+} from "./proResponseTiming.js";
 
 export interface ReattachDeps {
   listTargets?: () => Promise<TargetInfoLite[]>;
@@ -500,7 +503,7 @@ async function verifyCommittedProTurnIdentity(
   Runtime: ChromeClient["Runtime"],
   runtime: BrowserRuntimeMetadata,
 ): Promise<number | null> {
-  if (runtime.proTurnCommitted === undefined) {
+  if (!hasProResponseTimingReceiptMarker(runtime)) {
     return null;
   }
   if (runtime.proTurnCommitted !== true) {

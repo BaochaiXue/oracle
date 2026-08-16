@@ -313,6 +313,47 @@ describe("runBrowserSessionExecution", () => {
     );
   });
 
+  test("rejects partial turn receipts even when the resolved config is not Pro", async () => {
+    const log = vi.fn();
+
+    await expect(
+      runBrowserSessionExecution(
+        {
+          runOptions: { ...baseRunOptions, model: "gpt-5.1" },
+          browserConfig: { thinkingTime: "standard" },
+          cwd: "/repo",
+          log,
+        },
+        {
+          assemblePrompt: async () => ({
+            markdown: "prompt",
+            composerText: "prompt",
+            estimatedInputTokens: 20,
+            attachments: [],
+            inlineFileCount: 0,
+            tokenEstimateIncludesInlineFiles: false,
+            attachmentsPolicy: "auto",
+            attachmentMode: "inline",
+            fallback: null,
+          }),
+          executeBrowser: vi.fn(async () => ({
+            answerText: "partial",
+            answerMarkdown: "partial",
+            tookMs: 90_000,
+            answerTokens: 1,
+            answerChars: 7,
+            proTurnIndex: 0,
+            proDispatchAt: "2026-08-15T00:00:00.000Z",
+            proResponseElapsedMs: 90_000,
+            proInputTokens: 20,
+            proAttachmentBytes: 0,
+          })),
+        },
+      ),
+    ).rejects.toMatchObject({ details: { code: "pro-turn-not-committed" } });
+    expect(log.mock.calls.map((call) => String(call[0])).join("\n")).not.toContain("partial");
+  });
+
   test("adds the Pro workload receipt to browser errors with recoverable runtime", async () => {
     await expect(
       runBrowserSessionExecution(
@@ -481,6 +522,9 @@ describe("runBrowserSessionExecution", () => {
               proResponseElapsedMs: 20_000,
               proInputTokens: 5_000,
               proAttachmentBytes: 0,
+              proTurnCommitted: true,
+              proPromptSha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              proCommittedTurnIndex: 2,
               proResponseTimingReceipts: [
                 {
                   turnIndex: 0,
@@ -503,6 +547,9 @@ describe("runBrowserSessionExecution", () => {
               proResponseElapsedMs: 20_000,
               proInputTokens: 5_000,
               proAttachmentBytes: 0,
+              proTurnCommitted: true,
+              proPromptSha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              proCommittedTurnIndex: 2,
             };
           }),
           persistRuntimeHint,
@@ -540,6 +587,9 @@ describe("runBrowserSessionExecution", () => {
       const activeRuntime = {
         promptSubmitted: true,
         proTurnIndex: 1,
+        proTurnCommitted: true,
+        proPromptSha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        proCommittedTurnIndex: 2,
         proDispatchAt: "2026-08-15T00:01:00.000Z",
         proResponseElapsedMs: 20_000,
         proResponseTimingReceipts: [
@@ -594,9 +644,7 @@ describe("runBrowserSessionExecution", () => {
         ),
       ).rejects.toMatchObject({
         details: expect.objectContaining({
-          code: "pro-fast-substantive-response-untrusted",
-          workloadMetadata: "unknown",
-          responseElapsedMs: 20_000,
+          code: "pro-workload-receipt-missing",
         }),
       });
 
