@@ -210,7 +210,7 @@ configuration records the full local policy:
     "cookieSync": false,
     "hideWindow": false,
     "useMockKeychain": true,
-    "keepBrowser": true,
+    "browserLifetime": "while-needed",
     "modelStrategy": "select",
     "thinkingTime": "pro",
     "profileLockTimeoutMs": 300000,
@@ -246,11 +246,12 @@ Important fields:
   avoids recurring Keychain approval dialogs for the isolated profile at the
   cost of deterministic, weaker at-rest cookie encryption. Do not enable it for
   an existing system-Keychain profile; create a fresh profile directory.
-- `keepBrowser:true` is the dedicated-profile default. A run owns its tab, not
-  the shared Chrome process, so manually opened and concurrently generating
-  tabs survive another run's completion. Ephemeral compatibility profiles
-  still close by default; explicit `keepBrowser:false` restores one-shot
-  process cleanup when deliberately configured.
+- `browserLifetime:"while-needed"` is the dedicated-profile default. A run owns
+  its exact tab; shared Chrome remains while another lease, an unexpired
+  recovery hold, or an unowned meaningful page exists, then drains after the
+  last ordinary run. Use `persistent` for an explicitly always-on browser or
+  `ephemeral` for one-shot process ownership. Legacy `keepBrowser:true|false`
+  maps to `persistent|ephemeral`.
 - `profileLockTimeoutMs` serializes the short profile/composer mutation window.
 - `maxConcurrentTabs` caps simultaneous ChatGPT targets in the shared profile.
 

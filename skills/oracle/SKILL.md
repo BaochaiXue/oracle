@@ -21,7 +21,9 @@ Recommended defaults:
 
 - Engine: browser (`--engine browser`)
 - Browser transport: direct CDP (`--browser-transport cdp`)
-- Window: visible, persistent, and never activated for submission; macOS cold
+- Window: visible while needed and never activated for submission; the isolated
+  profile persists, while Chrome drains after the last ordinary run unless
+  active/recoverable work or an unowned meaningful page remains. macOS cold
   starts use LaunchServices background-open semantics, new tabs use
   `focus:false`, and page-side focus emulation supports trusted input
 - Base Sol: `--model gpt-5.6-sol`
@@ -191,6 +193,9 @@ derives the HTTP timeout unless `--http-timeout` is supplied.
 - Use `--slug "<3-5 words>"` for readable session IDs.
 - If a run times out, reattach; do not re-run it. Use `--force` only when a
   genuinely new identical run is intended.
+- Direct CDP defaults to `browserLifetime:"while-needed"`. Successful owned
+  tabs close by exact receipt; recoverable tabs receive bounded holds; unknown
+  meaningful pages are preserved. `persistent` is an explicit always-on mode.
 - For direct-CDP Pro runs, trust is turn-scoped. The active turn must have its
   own dispatch/elapsed/workload receipt, a verified commit, and a normalized
   prompt digest bound to the exact committed user-turn index. Reattach accepts

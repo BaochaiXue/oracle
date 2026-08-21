@@ -208,6 +208,7 @@ const consultDryRunResolvedShape = z.object({
       attachments: z.string().optional(),
       bundleFiles: z.boolean().optional(),
       bundleFormat: z.enum(["auto", "text", "zip"]).optional(),
+      browserLifetime: z.enum(["ephemeral", "while-needed", "persistent"]).optional(),
       keepBrowser: z.boolean().optional(),
       manualLogin: z.boolean().optional(),
       profileDir: z.string().nullable().optional(),
@@ -356,7 +357,20 @@ export function buildConsultBrowserConfig({
     cookieSync: !manualLogin,
     headless: configuredBrowser.headless ?? false,
     hideWindow: configuredBrowser.hideWindow ?? false,
-    keepBrowser: browserKeepBrowser ?? configuredBrowser.keepBrowser ?? manualLogin,
+    browserLifetime:
+      browserKeepBrowser !== undefined
+        ? browserKeepBrowser
+          ? "persistent"
+          : "ephemeral"
+        : (configuredBrowser.browserLifetime ??
+          (configuredBrowser.keepBrowser !== undefined
+            ? configuredBrowser.keepBrowser
+              ? "persistent"
+              : "ephemeral"
+            : manualLogin
+              ? "while-needed"
+              : "ephemeral")),
+    keepBrowser: browserKeepBrowser ?? configuredBrowser.keepBrowser,
     manualLogin,
     manualLoginProfileDir: manualLogin
       ? ((envProfileDir || configuredBrowser.manualLoginProfileDir) ?? null)
@@ -442,6 +456,7 @@ export function buildConsultDryRunResolved({
             attachments: runOptions.browserAttachments,
             bundleFiles: runOptions.browserBundleFiles,
             bundleFormat: runOptions.browserBundleFormat,
+            browserLifetime: browserConfig?.browserLifetime,
             keepBrowser: browserConfig?.keepBrowser,
             manualLogin: browserConfig?.manualLogin,
             profileDir: browserConfig?.manualLoginProfileDir ?? null,
@@ -471,6 +486,7 @@ export function formatConsultDryRunResolved(details: ConsultDryRunResolved): str
     lines.push(`  browser attachments: ${details.browser.attachments ?? "auto"}`);
     lines.push(`  browser bundle files: ${details.browser.bundleFiles ? "yes" : "no"}`);
     lines.push(`  browser bundle format: ${details.browser.bundleFormat ?? "auto"}`);
+    lines.push(`  browser lifetime: ${details.browser.browserLifetime ?? "(default)"}`);
     lines.push(`  browser keep browser: ${details.browser.keepBrowser ? "yes" : "no"}`);
     lines.push(`  browser manual login: ${details.browser.manualLogin ? "yes" : "no"}`);
     if (details.browser.profileDir) {

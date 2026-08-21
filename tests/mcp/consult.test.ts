@@ -209,7 +209,8 @@ describe("summarizeModelRunsForConsult", () => {
 
     expect(config.manualLogin).toBe(true);
     expect(config.cookieSync).toBe(false);
-    expect(config.keepBrowser).toBe(true);
+    expect(config.browserLifetime).toBe("while-needed");
+    expect(config.keepBrowser).toBeUndefined();
   });
 
   test("lets explicit consult inputs override config defaults", () => {

@@ -7,7 +7,9 @@ import net from "node:net";
 import type {
   BrowserArchiveMode,
   BrowserArchiveResult,
+  BrowserDisposition,
   BrowserModelStrategy,
+  BrowserRecoveryKind,
   BrowserResearchMode,
   BrowserTransport,
   CookieParam,
@@ -81,6 +83,7 @@ export interface BrowserSessionConfig {
   inlineCookies?: CookieParam[] | null;
   inlineCookiesSource?: string | null;
   headless?: boolean;
+  browserLifetime?: import("./browser/types.js").BrowserLifetime;
   keepBrowser?: boolean;
   hideWindow?: boolean;
   /** Avoid macOS Keychain permission prompts for an isolated persistent profile. */
@@ -118,6 +121,14 @@ export interface BrowserRuntimeMetadata {
   conversationId?: string;
   /** True after Oracle has submitted the prompt to ChatGPT. */
   promptSubmitted?: boolean;
+  /** Current ownership/lifecycle state of Oracle's exact browser target. */
+  browserDisposition?: BrowserDisposition;
+  /** Why a recoverable target must remain available. */
+  recoveryKind?: BrowserRecoveryKind;
+  /** Recovery hold expiry; expired targets are eligible for reconciliation. */
+  recoveryExpiresAt?: string;
+  /** Cleanup could not be confirmed and should be retried on cold start. */
+  reconcileNeeded?: boolean;
   /** PID of the controller process that launched this browser run. Helps detect orphaned sessions. */
   controllerPid?: number;
   /** Dispatch timestamp used for transport-independent Pro response timing. */

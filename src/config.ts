@@ -5,6 +5,7 @@ import JSON5 from "json5";
 import { getOracleHomeDir } from "./oracleHome.js";
 import type {
   BrowserArchiveMode,
+  BrowserLifetime,
   BrowserModelStrategy,
   BrowserResearchMode,
   BrowserTransport,
@@ -65,6 +66,9 @@ export interface BrowserConfigDefaults {
    * profile on macOS. User-config only; ignored in project config.
    */
   useMockKeychain?: boolean;
+  /** Browser process lifetime for the direct-CDP lane. */
+  browserLifetime?: BrowserLifetime;
+  /** @deprecated Use browserLifetime. */
   keepBrowser?: boolean;
   modelStrategy?: BrowserModelStrategy;
   /** Thinking time intensity (ChatGPT Thinking/Pro models): 'light', 'standard', 'extended', 'heavy' */
@@ -303,6 +307,7 @@ function sanitizeProjectConfig(config: UserConfig): UserConfig {
       "cookieSyncWaitMs",
       "hideWindow",
       "keepBrowser",
+      "browserLifetime",
       "modelStrategy",
       "thinkingTime",
       "researchMode",

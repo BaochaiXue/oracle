@@ -71,6 +71,28 @@ describe("shouldPreserveBrowserOnErrorForTest", () => {
 
     expect(classifyPreservedBrowserErrorForTest(error, false)).toBe("cloudflare-challenge");
   });
+
+  test("preserves an uncommitted retained draft for manual recovery", () => {
+    const error = new BrowserAutomationError("Prompt remained in the composer.", {
+      stage: "submit-prompt",
+      code: "prompt-commit-timeout",
+      submissionCommitted: false,
+      draftRetained: true,
+    });
+
+    expect(classifyPreservedBrowserErrorForTest(error, false)).toBe("draft-retained");
+  });
+
+  test("does not retain a failed uncommitted send when no draft remains", () => {
+    const error = new BrowserAutomationError("Prompt did not commit.", {
+      stage: "submit-prompt",
+      code: "prompt-commit-timeout",
+      submissionCommitted: false,
+      draftRetained: false,
+    });
+
+    expect(classifyPreservedBrowserErrorForTest(error, false)).toBeNull();
+  });
 });
 
 describe("authenticated model-selection errors", () => {

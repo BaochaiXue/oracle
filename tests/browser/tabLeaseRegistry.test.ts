@@ -162,7 +162,7 @@ describe("tabLeaseRegistry", () => {
     }
   });
 
-  test("blocks a new lease until final-lease cleanup completes", async () => {
+  test("releases the registry lock before final-lease cleanup completes", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "oracle-tab-leases-"));
     try {
       const current = await acquireBrowserTabLease(dir, {
@@ -193,12 +193,37 @@ describe("tabLeaseRegistry", () => {
         return lease;
       });
       await new Promise((resolve) => setTimeout(resolve, 75));
-      expect(acquired).toBe(false);
+      expect(acquired).toBe(true);
 
       finishCleanup();
       const next = await nextPromise;
       expect(acquired).toBe(true);
       await next.release();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("surfaces final-lease cleanup failures after committing the release", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "oracle-tab-leases-"));
+    try {
+      const lease = await acquireBrowserTabLease(dir, {
+        maxConcurrentTabs: 1,
+        timeoutMs: 500,
+      });
+
+      await expect(
+        lease.release({
+          onRelease: async () => {
+            throw new Error("synthetic drain failure");
+          },
+        }),
+      ).rejects.toThrow("synthetic drain failure");
+
+      const registry = JSON.parse(
+        await readFile(path.join(dir, "oracle-tab-leases.json"), "utf8"),
+      ) as { leases: unknown[] };
+      expect(registry.leases).toEqual([]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

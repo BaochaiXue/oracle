@@ -15,6 +15,9 @@ export type BrowserModelStrategy = "select" | "current" | "ignore";
 export type BrowserTransport = "cdp" | "opencli";
 export type BrowserResearchMode = "off" | "deep";
 export type BrowserArchiveMode = "auto" | "always" | "never";
+export type BrowserLifetime = "ephemeral" | "while-needed" | "persistent";
+export type BrowserDisposition = "active" | "recoverable" | "completed" | "abandoned";
+export type BrowserRecoveryKind = "awaiting-response" | "draft-retained" | "manual-intervention";
 
 export type BrowserLogger = ((message: string) => void) & {
   verbose?: boolean;
@@ -102,6 +105,12 @@ export interface BrowserAutomationConfig {
   inlineCookies?: CookieParam[] | null;
   inlineCookiesSource?: string | null;
   headless?: boolean;
+  /**
+   * Browser process lifetime for direct CDP. `while-needed` keeps the shared
+   * dedicated Chrome only while active or recoverable Oracle work owns it.
+   */
+  browserLifetime?: BrowserLifetime;
+  /** @deprecated Use browserLifetime. true maps to persistent; false to ephemeral. */
   keepBrowser?: boolean;
   hideWindow?: boolean;
   /** Avoid macOS Keychain permission prompts for an isolated persistent profile. */
@@ -196,6 +205,10 @@ export interface BrowserRunResult {
   tabUrl?: string;
   conversationId?: string;
   promptSubmitted?: boolean;
+  browserDisposition?: BrowserDisposition;
+  recoveryKind?: BrowserRecoveryKind;
+  recoveryExpiresAt?: string;
+  reconcileNeeded?: boolean;
   controllerPid?: number;
   proDispatchAt?: string;
   proResponseElapsedMs?: number;

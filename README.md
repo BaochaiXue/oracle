@@ -179,7 +179,7 @@ deliberately explicit macOS configuration looks like this:
     "debugPort": 9333,
     "cookieSync": false,
     "hideWindow": false,
-    "keepBrowser": true,
+    "browserLifetime": "while-needed",
     "useMockKeychain": true,
     "modelStrategy": "select",
     "thinkingTime": "pro",
@@ -194,8 +194,11 @@ above is illustrative. `hideWindow:false` keeps normal macOS runs visible and
 human-observable, restoring only a previously hidden persistent window without
 overriding a later user-positioned window. A cold start uses macOS LaunchServices
 background-open semantics so the first visible window also leaves the active app
-alone. `keepBrowser:true` keeps the shared dedicated Chrome process alive between
-consultations while each run still owns and cleans up only its own tab. Oracle opens targets with CDP
+alone. `browserLifetime:"while-needed"` keeps the shared dedicated Chrome only
+while an active lease, unexpired recovery hold, or unowned meaningful page
+needs it. Completed Oracle tabs close by exact target/conversation receipts and
+the last ordinary run drains Chrome. `persistent` is the explicit always-on
+choice; legacy `keepBrowser:true|false` maps to `persistent|ephemeral`. Oracle opens targets with CDP
 `Target.createTarget({background:false, focus:false})` and uses page-side focus
 emulation, so it can operate the visible page without activating Chrome or
 taking the operator's keyboard focus.
@@ -287,9 +290,11 @@ The normal direct-CDP lifecycle is deterministic:
    calling coding model or opening duplicate sessions.
 5. A recoverable connection drop reattaches to the stored conversation. It does
    not silently submit the same turn again.
-6. A completed run closes its owned target; an incomplete run retains that
-   target for recovery. The shared Chrome process follows the recorded
-   `keepBrowser` policy, and unrelated tabs are never swept by URL.
+6. A completed run closes its owned target; an incomplete run retains only its
+   exact target under a bounded recovery hold. With `while-needed`, the last
+   lease drains Chrome only when no recovery or unowned meaningful page remains.
+   Cold-start reconciliation uses stored ownership receipts, never a first-tab
+   fallback or a URL-wide sweep.
 
 Up to three ChatGPT tabs may share the dedicated profile by default. Startup and
 composer mutation are separately locked so parallel agents do not race one

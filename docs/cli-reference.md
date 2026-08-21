@@ -106,7 +106,7 @@ Profile lifecycle commands:
 | `--browser-reuse-wait`                                                         | Wait for shared Chrome profile before launching.                                                                             |
 | `--browser-profile-lock-timeout`                                               | Wait for the dedicated-profile startup/composer lock.                                                                        |
 | `--browser-max-concurrent-tabs`                                                | Soft limit for shared-profile parallel runs (default 3).                                                                     |
-| `--browser-keep-browser`                                                       | Keep the browser open after the run.                                                                                         |
+| `--browser-keep-browser`                                                       | Compatibility flag for `browserLifetime:"persistent"`; the dedicated default is `while-needed`.                              |
 | `--browser-headless`, `--browser-hide-window`                                  | Visibility controls.                                                                                                         |
 | `--browser-attachments <auto\|never\|always>`                                  | Attach files inline vs upload.                                                                                               |
 | `--browser-bundle-files`, `--browser-bundle-format <auto\|text\|zip>`          | Bundle browser uploads as text or byte-preserving ZIP.                                                                       |

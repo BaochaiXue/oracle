@@ -11,6 +11,14 @@
 
 ### Fixed
 
+- Direct CDP lifecycle: separate persistent profile identity from browser
+  process lifetime. Dedicated Chrome now defaults to `while-needed`, releases
+  tab leases before final drain, rechecks under the profile lock, and closes
+  only exact completed/abandoned ownership receipts. Active work, bounded
+  recovery holds, and unowned meaningful pages are preserved. Failed close
+  confirmation records reconciliation work without spawning another blank tab;
+  cold start retries exact owned cleanup and never falls back to the first page.
+
 - Browser: accept valid fast Pro answers for tiny workloads instead of treating
   every sub-minute response as untrusted. Direct CDP and OpenCLI retain the
   60-second fail-closed route-anomaly guard for substantive prompts and uploads,
@@ -32,10 +40,10 @@
   at the final Send boundary, after all button and attachment waits, and accepts
   dispatch only when a known-new user turn exactly matches the submitted prompt.
   External keystrokes therefore fail closed instead of being submitted with the
-  prompt. The persistent dedicated profile keeps its shared Chrome process and
-  user-positioned window alive by default; completed runs close only their own
-  target, failed runs retain their recoverable target, and no URL-based blank-tab
-  sweep can remove manually opened or concurrently generating tabs.
+  prompt. The persistent dedicated profile uses a while-needed shared Chrome
+  process by default; completed runs close only their own target, failed runs
+  retain their recoverable target, and no URL-based blank-tab sweep can remove
+  manually opened or concurrently generating tabs.
 - macOS dedicated browser: add an explicit, user-config-only mock-keychain mode
   and apply it consistently to setup, two-cold-start smoke, normal runs, and
   reattach. This avoids recurring Chrome Safe Storage password dialogs for an

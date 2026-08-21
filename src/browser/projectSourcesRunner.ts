@@ -29,6 +29,7 @@ import {
   readChromePid,
   readDevToolsPort,
   shouldCleanupManualLoginProfileState,
+  terminateRecordedChromeForProfile,
   verifyDevToolsReachable,
   writeChromePid,
   writeDevToolsActivePort,
@@ -266,31 +267,55 @@ export async function runBrowserProjectSources(
     }
 
     let keepBrowserOpen = effectiveKeepBrowser;
-    let cleanupProfileLock: ProfileRunLock | null = null;
     let terminatedRecordedChrome = false;
-    if (!keepBrowserOpen && manualLogin && tabLease) {
-      const cleanupLockTimeoutMs = Math.max(0, config.profileLockTimeoutMs ?? 0);
-      if (cleanupLockTimeoutMs > 0) {
-        cleanupProfileLock = await acquireProfileRunLock(userDataDir, {
-          timeoutMs: cleanupLockTimeoutMs,
-          logger,
-          sessionId: "project-sources",
-        }).catch(() => null);
-      }
-      keepBrowserOpen = await hasOtherActiveBrowserTabLeases(userDataDir, tabLease.id).catch(
-        () => false,
-      );
-      if (keepBrowserOpen) {
-        logger("[browser] Other ChatGPT tab leases still active; leaving shared Chrome running.");
-      } else if (reusedChrome && !connectionClosedUnexpectedly) {
-        keepBrowserOpen = true;
-        logger("[browser] Reused shared Chrome; leaving browser process running.");
-      }
-    }
     if (tabLease) {
       const handle = tabLease;
       tabLease = null;
-      await handle.release().catch(() => undefined);
+      try {
+        await handle.release({
+          onRelease: async ({ isLastLease }) => {
+            if (keepBrowserOpen) return;
+            if (!isLastLease) {
+              keepBrowserOpen = true;
+              logger(
+                "[browser] Other ChatGPT tab leases still active; leaving shared Chrome running.",
+              );
+              return;
+            }
+            const cleanupLockTimeoutMs = Math.max(0, config.profileLockTimeoutMs ?? 0);
+            const cleanupProfileLock =
+              cleanupLockTimeoutMs > 0
+                ? await acquireProfileRunLock(userDataDir, {
+                    timeoutMs: cleanupLockTimeoutMs,
+                    logger,
+                    sessionId: "project-sources",
+                  }).catch(() => null)
+                : null;
+            if (cleanupLockTimeoutMs > 0 && !cleanupProfileLock) {
+              keepBrowserOpen = true;
+              return;
+            }
+            try {
+              const activeLeaseAppeared = await hasOtherActiveBrowserTabLeases(
+                userDataDir,
+                handle.id,
+              ).catch(() => true);
+              if (activeLeaseAppeared) {
+                keepBrowserOpen = true;
+              } else if (reusedChrome && !connectionClosedUnexpectedly) {
+                terminatedRecordedChrome = await terminateRecordedChromeForProfile(
+                  userDataDir,
+                  logger,
+                ).catch(() => false);
+              }
+            } finally {
+              await cleanupProfileLock?.release().catch(() => undefined);
+            }
+          },
+        });
+      } catch {
+        keepBrowserOpen = true;
+      }
     }
     if (!keepBrowserOpen && chrome) {
       if (!connectionClosedUnexpectedly) {
@@ -323,9 +348,6 @@ export async function runBrowserProjectSources(
         // best effort
       }
       logger(`Chrome left running on port ${chrome.port} with profile ${userDataDir}`);
-    }
-    if (cleanupProfileLock) {
-      await cleanupProfileLock.release().catch(() => undefined);
     }
   }
 }

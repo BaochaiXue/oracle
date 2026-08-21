@@ -5,6 +5,7 @@ import { normalizeThinkingTimeLevel } from "../oracle/thinkingTime.js";
 import type { ThinkingTimeLevel } from "../oracle/types.js";
 import type {
   BrowserArchiveMode,
+  BrowserLifetime,
   BrowserModelStrategy,
   BrowserResearchMode,
   BrowserTransport,
@@ -35,6 +36,7 @@ export interface BrowserDefaultsOptions {
   browserHeadless?: boolean;
   browserHideWindow?: boolean;
   browserUseMockKeychain?: boolean;
+  browserLifetime?: BrowserLifetime;
   browserKeepBrowser?: boolean;
   browserModelStrategy?: BrowserModelStrategy;
   browserThinkingTime?: ThinkingTimeLevel;
@@ -171,6 +173,21 @@ export function applyBrowserDefaultsFromConfig(
     browser.useMockKeychain !== undefined
   ) {
     options.browserUseMockKeychain = browser.useMockKeychain;
+  }
+  if (
+    !attachRunningRequested &&
+    !openCliRequested &&
+    isUnset("browserLifetime") &&
+    browser.browserLifetime !== undefined
+  ) {
+    options.browserLifetime = browser.browserLifetime;
+  } else if (
+    !attachRunningRequested &&
+    !openCliRequested &&
+    isUnset("browserLifetime") &&
+    browser.keepBrowser !== undefined
+  ) {
+    options.browserLifetime = browser.keepBrowser ? "persistent" : "ephemeral";
   }
   if (
     !attachRunningRequested &&

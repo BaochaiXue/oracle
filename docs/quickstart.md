@@ -90,7 +90,7 @@ Add an explicit policy to `~/.oracle/config.json`:
     "debugPort": 9333,
     "cookieSync": false,
     "hideWindow": false,
-    "keepBrowser": true,
+    "browserLifetime": "while-needed",
     "useMockKeychain": true,
     "modelStrategy": "select",
     "thinkingTime": "pro"
@@ -102,16 +102,17 @@ Use the real absolute profile path for your account. On macOS,
 `hideWindow:false` keeps ordinary runs visible and manually inspectable, while
 the cold launch is background-opened and focus-safe CDP target creation leaves
 the currently active macOS app alone.
-`keepBrowser:true` keeps the dedicated Chrome process alive so manually opened
-tabs and other active Oracle runs survive a consultation finishing. First-time
-setup is also visible. `hideWindow:true` is an explicit off-screen mode with
+`browserLifetime:"while-needed"` keeps dedicated Chrome alive for active runs,
+bounded recovery, and unowned meaningful pages, then closes it after the last
+ordinary consultation. Use `persistent` only when the shared browser is
+deliberately always-on. First-time setup is also visible. `hideWindow:true` is an explicit off-screen mode with
 reduced observability. On macOS, `useMockKeychain:true` prevents recurring Keychain password
 dialogs for this isolated profile, with weaker deterministic at-rest cookie
 protection. Keep the profile owner-only and use a fresh directory when changing
 between system and mock keychain modes.
 
-The fork defaults to `transport:"cdp"`, `manualLogin:true`, and
-`cookieSync:false` even when these fields are omitted. Writing them explicitly
+The fork defaults to `transport:"cdp"`, `manualLogin:true`, `cookieSync:false`,
+and `browserLifetime:"while-needed"` even when these fields are omitted. Writing them explicitly
 is useful for a shared setup because it makes the capability boundary visible.
 
 ## 5. Send a GPT-5.6 Pro consultation

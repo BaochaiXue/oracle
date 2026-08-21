@@ -9,7 +9,7 @@ import {
   DEFAULT_MAX_CONCURRENT_CHATGPT_TABS,
   normalizeMaxConcurrentTabs,
 } from "./tabLeaseRegistry.js";
-import type { BrowserAutomationConfig, ResolvedBrowserConfig } from "./types.js";
+import type { BrowserAutomationConfig, BrowserLifetime, ResolvedBrowserConfig } from "./types.js";
 import { normalizeChatgptUrl } from "./utils.js";
 import os from "node:os";
 import path from "node:path";
@@ -54,7 +54,8 @@ export const DEFAULT_BROWSER_CONFIG: ResolvedBrowserConfig = {
   inlineCookies: null,
   inlineCookiesSource: null,
   headless: false,
-  keepBrowser: true,
+  browserLifetime: "while-needed",
+  keepBrowser: false,
   hideWindow: false,
   useMockKeychain: false,
   desiredModel: DEFAULT_MODEL_TARGET,
@@ -111,6 +112,7 @@ export function resolveBrowserConfig(
     transport === "cdp"
       ? (config?.manualLogin ?? (explicitlyEphemeral ? false : DEFAULT_BROWSER_CONFIG.manualLogin))
       : false;
+  const browserLifetime = resolveBrowserLifetime(config, { manualLogin, transport });
   const cookieSyncDefault = isWindows ? false : DEFAULT_BROWSER_CONFIG.cookieSync;
   const resolvedProfileDir = resolveManualLoginProfileDir(
     config?.manualLoginProfileDir,
@@ -154,10 +156,10 @@ export function resolveBrowserConfig(
     inlineCookies: config?.inlineCookies ?? DEFAULT_BROWSER_CONFIG.inlineCookies,
     inlineCookiesSource: config?.inlineCookiesSource ?? DEFAULT_BROWSER_CONFIG.inlineCookiesSource,
     headless: config?.headless ?? DEFAULT_BROWSER_CONFIG.headless,
-    // The canonical dedicated profile is a shared browser-scope resource: a
-    // single consult owns its tab, never the whole Chrome process. Ephemeral
-    // compatibility profiles still close unless explicitly retained.
-    keepBrowser: config?.keepBrowser ?? manualLogin,
+    browserLifetime,
+    // Compatibility projection for callers that still distinguish only
+    // persistent versus closable browser processes.
+    keepBrowser: browserLifetime === "persistent",
     hideWindow: config?.hideWindow ?? DEFAULT_BROWSER_CONFIG.hideWindow,
     useMockKeychain: config?.useMockKeychain ?? DEFAULT_BROWSER_CONFIG.useMockKeychain,
     desiredModel,
@@ -184,6 +186,23 @@ export function resolveBrowserConfig(
     manualLoginCookieSync:
       config?.manualLoginCookieSync ?? DEFAULT_BROWSER_CONFIG.manualLoginCookieSync,
   };
+}
+
+function resolveBrowserLifetime(
+  config: BrowserAutomationConfig | undefined,
+  context: { manualLogin: boolean; transport: BrowserAutomationConfig["transport"] },
+): BrowserLifetime {
+  if (
+    config?.browserLifetime === "ephemeral" ||
+    config?.browserLifetime === "while-needed" ||
+    config?.browserLifetime === "persistent"
+  ) {
+    return config.browserLifetime;
+  }
+  if (config?.keepBrowser !== undefined) {
+    return config.keepBrowser ? "persistent" : "ephemeral";
+  }
+  return context.transport === "cdp" && context.manualLogin ? "while-needed" : "ephemeral";
 }
 
 function normalizeResearchMode(value: unknown): "off" | "deep" {

@@ -158,7 +158,7 @@ export async function releaseBrowserTabLease(
   logger?: BrowserLogger,
   options: { onRelease?: (context: { isLastLease: boolean }) => Promise<void> } = {},
 ): Promise<void> {
-  await withRegistryLock(profileDir, async () => {
+  const isLastLease = await withRegistryLock(profileDir, async () => {
     const registry = await readRegistry(profileDir);
     const active = pruneStaleLeases(registry.leases, {
       nowMs: Date.now(),
@@ -167,9 +167,10 @@ export async function releaseBrowserTabLease(
     });
     const leases = active.filter((lease) => lease.id !== leaseId);
     await writeRegistry(profileDir, { version: 1, leases });
-    await options.onRelease?.({ isLastLease: leases.length === 0 });
-  }).catch(() => undefined);
+    return leases.length === 0;
+  });
   logger?.(`[browser] Released ChatGPT browser slot ${leaseId.slice(0, 8)}.`);
+  await options.onRelease?.({ isLastLease });
 }
 
 export async function hasOtherActiveBrowserTabLeases(

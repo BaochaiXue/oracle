@@ -10,6 +10,7 @@ import { parseDuration } from "../duration.js";
 import { normalizeBrowserModelStrategy } from "../browser/modelStrategy.js";
 import type {
   BrowserArchiveMode,
+  BrowserLifetime,
   BrowserModelStrategy,
   BrowserResearchMode,
   BrowserTransport,
@@ -80,6 +81,7 @@ export interface BrowserFlagOptions {
   browserHeadless?: boolean;
   browserHideWindow?: boolean;
   browserUseMockKeychain?: boolean;
+  browserLifetime?: BrowserLifetime;
   browserKeepBrowser?: boolean;
   browserManualLogin?: boolean;
   browserManualLoginProfileDir?: string | null;
@@ -305,6 +307,8 @@ export async function buildBrowserConfig(
     inlineCookies: inline?.cookies,
     inlineCookiesSource: inline?.source ?? null,
     headless: undefined, // disable headless; Cloudflare blocks it
+    browserLifetime:
+      options.browserLifetime ?? (options.browserKeepBrowser ? "persistent" : undefined),
     keepBrowser: options.browserKeepBrowser ? true : undefined,
     manualLogin: options.browserManualLogin === undefined ? undefined : options.browserManualLogin,
     manualLoginProfileDir: options.browserManualLoginProfileDir ?? undefined,

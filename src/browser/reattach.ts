@@ -216,11 +216,16 @@ export async function resumeBrowserSession(
         timeoutMs + 5_000,
         "Reattach Deep Research response timed out",
       );
-      const responseRuntime = verifyStoredProResponseWorkloadTiming({
-        answer: researchResult.text,
-        runtime: liveRuntime,
-        capturedAt: new Date(),
-      });
+      const responseRuntime = {
+        ...verifyStoredProResponseWorkloadTiming({
+          answer: researchResult.text,
+          runtime: liveRuntime,
+          capturedAt: new Date(),
+        }),
+        browserDisposition: "completed" as const,
+        recoveryKind: undefined,
+        recoveryExpiresAt: undefined,
+      };
       await closeAttached();
       return {
         answerText: researchResult.text,
@@ -249,11 +254,16 @@ export async function resumeBrowserSession(
         "Reattach markdown capture timed out",
       )) ?? recovered.text;
     const aligned = alignPromptEchoMarkdown(recovered.text, markdown, promptEcho, logger);
-    const responseRuntime = verifyStoredProResponseWorkloadTiming({
-      answer: aligned.answerText,
-      runtime: liveRuntime,
-      capturedAt: new Date(),
-    });
+    const responseRuntime = {
+      ...verifyStoredProResponseWorkloadTiming({
+        answer: aligned.answerText,
+        runtime: liveRuntime,
+        capturedAt: new Date(),
+      }),
+      browserDisposition: "completed" as const,
+      recoveryKind: undefined,
+      recoveryExpiresAt: undefined,
+    };
     await closeAttached();
     return {
       answerText: aligned.answerText,
@@ -451,11 +461,16 @@ async function resumeBrowserSessionViaNewChrome(
     );
     let responseRuntime: BrowserRuntimeMetadata;
     try {
-      responseRuntime = verifyStoredProResponseWorkloadTiming({
-        answer: researchResult.text,
-        runtime,
-        capturedAt: new Date(),
-      });
+      responseRuntime = {
+        ...verifyStoredProResponseWorkloadTiming({
+          answer: researchResult.text,
+          runtime,
+          capturedAt: new Date(),
+        }),
+        browserDisposition: "completed",
+        recoveryKind: undefined,
+        recoveryExpiresAt: undefined,
+      };
     } finally {
       await cleanup();
     }
@@ -479,11 +494,16 @@ async function resumeBrowserSessionViaNewChrome(
   const aligned = alignPromptEchoMarkdown(recovered.text, markdown, promptEcho, logger);
   let responseRuntime: BrowserRuntimeMetadata;
   try {
-    responseRuntime = verifyStoredProResponseWorkloadTiming({
-      answer: aligned.answerText,
-      runtime,
-      capturedAt: new Date(),
-    });
+    responseRuntime = {
+      ...verifyStoredProResponseWorkloadTiming({
+        answer: aligned.answerText,
+        runtime,
+        capturedAt: new Date(),
+      }),
+      browserDisposition: "completed",
+      recoveryKind: undefined,
+      recoveryExpiresAt: undefined,
+    };
   } finally {
     await cleanup();
   }

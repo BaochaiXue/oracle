@@ -54,7 +54,7 @@ JSON5 parsing, so trailing commas and comments are allowed.
     headless: false,
     hideWindow: false, // macOS normal runs: visible, inspectable, background-opened
     useMockKeychain: true, // macOS isolated profile only; avoids recurring Keychain dialogs
-    keepBrowser: true, // dedicated profile default; ephemeral profiles still close
+    browserLifetime: "while-needed", // ephemeral | while-needed | persistent
     manualLoginCookieSync: false, // keep false to preserve the personal-profile boundary
   },
 

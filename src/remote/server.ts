@@ -270,7 +270,9 @@ export async function createRemoteServer(
 
       // Preserve an explicit request to leave the completed conversation tab
       // open before the service forces `keepBrowser` for process lifetime.
-      const clientRequestedKeepBrowser = payload.browserConfig?.keepBrowser === true;
+      const clientRequestedKeepBrowser =
+        payload.browserConfig?.browserLifetime === "persistent" ||
+        payload.browserConfig?.keepBrowser === true;
 
       // Remote runs always rely on the host's own Chrome profile; ignore any inline cookie transfer.
       if (payload.browserConfig) {
@@ -285,6 +287,7 @@ export async function createRemoteServer(
       if (options.manualLoginDefault) {
         payload.browserConfig.manualLogin = true;
         payload.browserConfig.manualLoginProfileDir = options.manualLoginProfileDir;
+        payload.browserConfig.browserLifetime = "persistent";
         payload.browserConfig.keepBrowser = true;
         if (verbose) {
           logger(
