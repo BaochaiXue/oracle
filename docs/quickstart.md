@@ -199,7 +199,7 @@ Query several API models in parallel:
 
 ```bash
 oracle --engine api \
-  --models gpt-5.5-pro,gemini-3.1-pro,claude-opus-4.6 \
+  --models gpt-5.5-pro,grok-4.1,claude-opus-4.6 \
   -p "Compare these two implementation strategies." \
   --file "docs/strategy-a.md" "docs/strategy-b.md"
 ```

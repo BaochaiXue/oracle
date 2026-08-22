@@ -38,8 +38,8 @@ Notes:
 Check provider readiness before an API run:
 
 ```bash
-oracle doctor --providers --models gpt-5.4,claude-4.6-sonnet,gemini-3-pro
-oracle --preflight --models gpt-5.4,gemini-3-pro
+oracle doctor --providers --models gpt-5.4,claude-4.6-sonnet,grok-4.1
+oracle --preflight --models gpt-5.4,grok-4.1
 oracle --route --model gpt-5.4
 ```
 

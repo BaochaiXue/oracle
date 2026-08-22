@@ -9,7 +9,6 @@ import {
   resolveApiModel,
   normalizeBaseUrl,
 } from "./options.js";
-import { resolveGeminiModelId } from "../oracle/gemini.js";
 import { resolveOverriddenApiModel } from "../oracle/modelResolver.js";
 import { PromptValidationError } from "../oracle/errors.js";
 import { normalizeChatGptModelForBrowser } from "./browserConfig.js";
@@ -77,12 +76,12 @@ export function resolveRunOptionsFromConfig({
       : [apiModel];
   const browserCompatibilityModels: ModelName[] =
     normalizedRequestedModels.length > 0 ? allModels : [browserModel];
-  const isBrowserCompatible = (m: string) => m.startsWith("gpt-") || m.startsWith("gemini");
+  const isBrowserCompatible = (m: string) => m.startsWith("gpt-");
   const hasNonBrowserCompatibleTarget =
     browserEngineRequested && browserCompatibilityModels.some((m) => !isBrowserCompatible(m));
   if (hasNonBrowserCompatibleTarget) {
     throw new PromptValidationError(
-      "Browser engine only supports GPT and Gemini models. Re-run with --engine api for Grok, Claude, or other models.",
+      "Browser engine only supports ChatGPT GPT models. Re-run with --engine api for Grok, Claude, or other models.",
       { engine: "browser", models: allModels },
     );
   }
@@ -163,13 +162,10 @@ function resolveAzureOptions(
 
 function resolveEffectiveModelId(model: ModelName, modelOverrides?: ModelOverridesConfig): string {
   // A user-config override of a known model's apiModel must win, since this id
-  // becomes the on-wire request model id in run.ts (including for Gemini aliases).
+  // becomes the on-wire request model id in run.ts.
   const overridden = resolveOverriddenApiModel(model, modelOverrides);
   if (overridden) {
     return overridden;
-  }
-  if (typeof model === "string" && model.startsWith("gemini")) {
-    return resolveGeminiModelId(model);
   }
   const config = MODEL_CONFIGS[model as keyof typeof MODEL_CONFIGS];
   return config?.apiModel ?? model;

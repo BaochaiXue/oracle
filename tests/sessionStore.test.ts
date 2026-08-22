@@ -32,32 +32,24 @@ describe("sessionStore", () => {
     expect(request?.prompt).toBe("Inspect me");
   });
 
-  test("persists waitPreference and gemini browser metadata for restarts", async () => {
+  test("persists browser restart metadata", async () => {
     const meta = await store.createSession(
       {
         prompt: "Persist me",
-        model: "gemini-3-pro",
+        model: "gpt-5-pro",
         mode: "browser",
         waitPreference: false,
-        youtube: "https://example.com/video",
         generateImage: "in.png",
-        editImage: "edit.png",
         outputPath: "out.png",
         browserFollowUps: ["second turn"],
-        aspectRatio: "1:1",
-        geminiShowThoughts: true,
       },
       process.cwd(),
     );
     const fetched = await store.readSession(meta.id);
     expect(fetched?.options.waitPreference).toBe(false);
-    expect(fetched?.options.youtube).toBe("https://example.com/video");
     expect(fetched?.options.generateImage).toBe("in.png");
-    expect(fetched?.options.editImage).toBe("edit.png");
     expect(fetched?.options.outputPath).toBe("out.png");
     expect(fetched?.options.browserFollowUps).toEqual(["second turn"]);
-    expect(fetched?.options.aspectRatio).toBe("1:1");
-    expect(fetched?.options.geminiShowThoughts).toBe(true);
   });
 
   test("writes per-model logs and aggregates combined log", async () => {
@@ -65,7 +57,7 @@ describe("sessionStore", () => {
       {
         prompt: "Combine logs",
         model: "gpt-5.2-pro",
-        models: ["gpt-5.2-pro", "gemini-3-pro"],
+        models: ["gpt-5.2-pro", "grok-4.1"],
       },
       process.cwd(),
     );
@@ -74,16 +66,16 @@ describe("sessionStore", () => {
     writerPro.stream.end();
     await finished(writerPro.stream);
 
-    const writerGem = store.createLogWriter(meta.id, "gemini-3-pro");
-    writerGem.logLine("gem-line");
-    writerGem.stream.end();
-    await finished(writerGem.stream);
+    const writerGrok = store.createLogWriter(meta.id, "grok-4.1");
+    writerGrok.logLine("grok-line");
+    writerGrok.stream.end();
+    await finished(writerGrok.stream);
 
     const combined = await store.readLog(meta.id);
     expect(combined).toContain("gpt-5.2-pro");
-    expect(combined).toContain("gemini-3-pro");
+    expect(combined).toContain("grok-4.1");
     expect(combined).toContain("pro-line");
-    expect(combined).toContain("gem-line");
+    expect(combined).toContain("grok-line");
 
     const proLog = await store.readModelLog(meta.id, "gpt-5.2-pro");
     expect(proLog).toContain("pro-line");

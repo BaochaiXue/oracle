@@ -119,7 +119,7 @@ describe("askOracleFlow", () => {
       promptInput: "Multi",
       mode: "api",
       model: DEFAULT_MODEL,
-      models: ["gemini-3-pro"],
+      models: ["grok-4.1"],
       files: [],
     });
 
@@ -129,7 +129,7 @@ describe("askOracleFlow", () => {
     const creationArgs = initializeSessionMock.mock.calls[0]?.[0] as RunOracleOptions & {
       models?: string[];
     };
-    expect(creationArgs.models).toEqual([DEFAULT_MODEL, "gemini-3-pro"]);
+    expect(creationArgs.models).toEqual([DEFAULT_MODEL, "grok-4.1"]);
   });
 });
 

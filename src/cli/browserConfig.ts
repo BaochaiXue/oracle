@@ -17,6 +17,7 @@ import type {
 } from "../browser/types.js";
 import type { CookieParam } from "../browser/types.js";
 import { getOracleHomeDir } from "../oracleHome.js";
+import { assertOracleModelAllowed } from "../oracle/forkPolicy.js";
 
 const DEFAULT_BROWSER_TIMEOUT_MS = 1_200_000;
 const DEFAULT_BROWSER_INPUT_TIMEOUT_MS = 60_000;
@@ -45,11 +46,6 @@ const BROWSER_MODEL_LABELS: [ModelName, string][] = [
   ["gpt-5.4", "Thinking 5.4"],
   ["gpt-5.2", "GPT-5.2"], // Selects "Auto" in ChatGPT UI
   ["gpt-5.1", "GPT-5.2"], // Legacy alias → Auto
-  ["gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite"],
-  ["gemini-3.5-flash", "Gemini 3.5 Flash"],
-  ["gemini-3.1-pro", "Gemini 3.1 Pro"],
-  ["gemini-3-pro", "Gemini 3.1 Pro"],
-  ["gemini-3-pro-deep-think", "gemini-3-deep-think"],
 ];
 
 export interface BrowserFlagOptions {
@@ -145,6 +141,7 @@ export function normalizeChatGptModelForBrowser(model: ModelName): ModelName {
 export async function buildBrowserConfig(
   options: BrowserFlagOptions,
 ): Promise<BrowserSessionConfig> {
+  assertOracleModelAllowed(options.model);
   const transport = options.browserTransport ?? "cdp";
   if (transport === "opencli" && options.browserAttachRunning) {
     throw new Error(

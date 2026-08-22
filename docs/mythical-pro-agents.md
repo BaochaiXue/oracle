@@ -1,29 +1,26 @@
 ---
 title: Mythical Pro Agents
-description: "The frontier 'Pro' model lineup Oracle speaks to — ChatGPT GPT-5.6 Pro, GPT-5.5 Pro APIs, Gemini Pro, Claude Opus, and Deep Research."
+description: "The canonical ChatGPT GPT-5.6 Pro lane plus explicitly selected API providers."
 ---
 
-The headline frontier models — the ones marked **Pro** — are slow, expensive, and gated behind separate consumer subscriptions or per-token bills. Oracle is the single CLI that talks to all of them with the same flags, the same session store, and the same bundling rules.
+The headline frontier models — the ones marked **Pro** — are slow, expensive, and gated behind separate consumer subscriptions or per-token bills. This fork's canonical browser lane is ChatGPT GPT-5.6 Pro; the other entries below are explicit API modes rather than automatic fallbacks.
 
 ## The lineup
 
-| Model                 | Engine         | Oracle key                  | Browser model picker      | Speciality                                  |
-| --------------------- | -------------- | --------------------------- | ------------------------- | ------------------------------------------- |
-| GPT-5.6 Pro           | Browser        | `gpt-5-pro`                 | `GPT-5.6 Sol` + `Pro`     | Current web Pro architecture/debug review   |
-| GPT-5.5 Pro           | API or browser | `gpt-5.5-pro` (API default) | "GPT-5.5 Pro" / "5.5 Pro" | Versioned API and legacy browser workflow   |
-| GPT-5.5               | API or browser | `gpt-5.5`                   | "GPT-5.5"                 | Fast everyday consults                      |
-| GPT-5.4 Pro           | API or browser | `gpt-5.4-pro`               | "5.4 Pro"                 | Mature Pro workflow                         |
-| GPT-5.4               | API or browser | `gpt-5.4`                   | "GPT-5.4"                 | Mid-tier general                            |
-| GPT-5.2 Pro           | API or browser | `gpt-5.2-pro`               | "5.2 Pro"                 | Heavy reasoning                             |
-| GPT-5.2               | API or browser | `gpt-5.2`                   | "GPT-5.2"                 | Mid-tier                                    |
-| GPT-5.1 Pro           | API or browser | `gpt-5.1-pro`               | "5.1 Pro"                 | Long context                                |
-| GPT-5.1               | API or browser | `gpt-5.1`                   | "GPT-5.1"                 | General                                     |
-| GPT-5.1 Codex         | API only       | `gpt-5.1-codex`             | —                         | Code generation                             |
-| Gemini 3.1 Pro        | API or browser | `gemini-3.1-pro`            | "3.1 Pro"                 | Long-context multimodal, image gen, YouTube |
-| Gemini 3.5 Flash      | API or browser | `gemini-3.5-flash`          | "3.5 Flash"               | Fast all-around Gemini work                 |
-| Gemini 3.1 Flash-Lite | API or browser | `gemini-3.1-flash-lite`     | "3.1 Flash-Lite"          | Lowest-cost, fastest Gemini work            |
-| Claude Opus 4.1       | API only       | `claude-4.1-opus`           | —                         | Deepest single-shot reasoning               |
-| Claude Sonnet 4.6     | API only       | `claude-4.6-sonnet`         | —                         | Fast Claude                                 |
+| Model             | Engine         | Oracle key                  | Browser model picker      | Speciality                                |
+| ----------------- | -------------- | --------------------------- | ------------------------- | ----------------------------------------- |
+| GPT-5.6 Pro       | Browser        | `gpt-5-pro`                 | `GPT-5.6 Sol` + `Pro`     | Current web Pro architecture/debug review |
+| GPT-5.5 Pro       | API or browser | `gpt-5.5-pro` (API default) | "GPT-5.5 Pro" / "5.5 Pro" | Versioned API and legacy browser workflow |
+| GPT-5.5           | API or browser | `gpt-5.5`                   | "GPT-5.5"                 | Fast everyday consults                    |
+| GPT-5.4 Pro       | API or browser | `gpt-5.4-pro`               | "5.4 Pro"                 | Mature Pro workflow                       |
+| GPT-5.4           | API or browser | `gpt-5.4`                   | "GPT-5.4"                 | Mid-tier general                          |
+| GPT-5.2 Pro       | API or browser | `gpt-5.2-pro`               | "5.2 Pro"                 | Heavy reasoning                           |
+| GPT-5.2           | API or browser | `gpt-5.2`                   | "GPT-5.2"                 | Mid-tier                                  |
+| GPT-5.1 Pro       | API or browser | `gpt-5.1-pro`               | "5.1 Pro"                 | Long context                              |
+| GPT-5.1           | API or browser | `gpt-5.1`                   | "GPT-5.1"                 | General                                   |
+| GPT-5.1 Codex     | API only       | `gpt-5.1-codex`             | —                         | Code generation                           |
+| Claude Opus 4.1   | API only       | `claude-4.1-opus`           | —                         | Deepest single-shot reasoning             |
+| Claude Sonnet 4.6 | API only       | `claude-4.6-sonnet`         | —                         | Fast Claude                               |
 
 Plus any **OpenRouter** id — e.g. `minimax/minimax-m2`, `openai/gpt-4o-mini`, `qwen/qwen-2.5-coder-32b-instruct` — when you set `OPENROUTER_API_KEY`.
 
@@ -37,16 +34,6 @@ The current browser "Oracle of last resort." Slow (10 minutes typical, hour+ for
 oracle --engine browser --model gpt-5-pro \
   -p "Plan the auth migration end-to-end" \
   --file "src/auth/**" --file "docs/auth.md"
-```
-
-### Gemini 3.1 Pro
-
-Free in browser mode if you're signed into `gemini.google.com` in Chrome. Also the path for **YouTube transcript analysis** (`--youtube`) and **image generation/edit** (`--generate-image`, `--edit-image`).
-
-```bash
-oracle --engine browser --model gemini-3.1-pro \
-  --prompt "a minimalist eye-of-providence logo, vector" \
-  --generate-image out.png --aspect 1:1
 ```
 
 ### Claude Opus 4.1
@@ -64,7 +51,7 @@ When the answer matters, ask three:
 
 ```bash
 oracle -p "Will this migration corrupt user data under concurrent writes?" \
-  --models gpt-5.5-pro,gemini-3.1-pro,claude-4.1-opus \
+  --models gpt-5.5-pro,grok-4.1,claude-4.1-opus \
   --file "migrations/0042_user_schema.sql" \
   --file "src/db/**"
 ```
@@ -106,7 +93,6 @@ oracle --engine browser --model gpt-5-pro \
 
 - **GPT-5.x Pro** (API): tokens cost meaningfully more than non-Pro. Watch the run summary.
 - **GPT-5.x Pro** (browser): included with eligible ChatGPT subscriptions, subject to account quotas, and slow.
-- **Gemini 3.1 Pro / 3.5 Flash / 3.1 Flash-Lite** (browser): available through a signed-in Google account, subject to account access.
 - **Claude Opus 4.1**: per-token API only.
 - **OpenRouter ids**: pricing varies wildly per provider; always preview with `--dry-run summary`.
 
@@ -114,17 +100,15 @@ oracle --engine browser --model gpt-5-pro \
 
 ## Engine compatibility
 
-| Capability                 | API               | Browser (ChatGPT)    | Browser (Gemini) |
-| -------------------------- | ----------------- | -------------------- | ---------------- |
-| GPT-5.x family             | ✅                | ✅                   | —                |
-| Gemini 3.1 Pro / Flash     | ✅                | —                    | ✅               |
-| Claude Sonnet / Opus       | ✅                | —                    | —                |
-| OpenRouter ids             | ✅                | —                    | —                |
-| Multi-model in one run     | ✅                | —                    | —                |
-| Followup / lineage         | ✅ (OpenAI/Azure) | partial (multi-turn) | —                |
-| Image generation           | —                 | ✅                   | ✅               |
-| YouTube analysis           | —                 | —                    | ✅               |
-| Deep Research              | —                 | ✅                   | —                |
-| `--render --copy` fallback | ✅                | ✅                   | ✅               |
+| Capability                 | API               | Browser (ChatGPT)    |
+| -------------------------- | ----------------- | -------------------- |
+| GPT-5.x family             | ✅                | ✅                   |
+| Claude Sonnet / Opus       | ✅                | —                    |
+| OpenRouter ids             | ✅                | —                    |
+| Multi-model in one run     | ✅                | —                    |
+| Followup / lineage         | ✅ (OpenAI/Azure) | partial (multi-turn) |
+| Image generation           | —                 | ✅                   |
+| Deep Research              | —                 | ✅                   |
+| `--render --copy` fallback | ✅                | ✅                   |
 
-See provider-specific docs for the gory details: [OpenAI / Azure / OpenRouter](openai-endpoints.md), [Gemini](gemini.md), [Anthropic](anthropic.md), [Grok](grok.md).
+See provider-specific docs for the gory details: [OpenAI / Azure / OpenRouter](openai-endpoints.md), [Anthropic](anthropic.md), [Grok](grok.md).

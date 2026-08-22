@@ -10,6 +10,7 @@ import {
   type ConsultInput,
 } from "../types.js";
 import { consultOutputShape, runConsultTool } from "./consult.js";
+import { GEMINI_REJECTED_MESSAGE, isGeminiModelRequest } from "../../oracle/forkPolicy.js";
 
 const chatGptImageInputShape = {
   prompt: z.string().min(1, "Prompt is required.").describe("Image generation prompt."),
@@ -29,7 +30,10 @@ const chatGptImageInputShape = {
     .describe('Optional requested image aspect ratio, e.g. "1:1", "9:16", or "16:9".'),
   model: z
     .string()
-    .refine((value) => !/^(claude|gemini|grok)(?:[-\s]|$)/i.test(value.trim()), {
+    .refine((value) => !isGeminiModelRequest(value), {
+      message: GEMINI_REJECTED_MESSAGE,
+    })
+    .refine((value) => !/^(claude|grok)(?:[-\s]|$)/i.test(value.trim()), {
       message: "chatgpt_image requires a ChatGPT/GPT model.",
     })
     .optional()

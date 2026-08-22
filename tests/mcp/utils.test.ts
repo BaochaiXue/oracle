@@ -17,12 +17,12 @@ describe("mapConsultToRunOptions", () => {
       prompt: "multi",
       files: [],
       model: "gpt-5.2-pro",
-      models: ["gemini-3-pro"],
+      models: ["grok-4.1"],
       userConfig: undefined,
       env,
     });
     expect(runOptions.model).toBe("gpt-5.2-pro");
-    expect(runOptions.models).toEqual(["gpt-5.2-pro", "gemini-3-pro"]);
+    expect(runOptions.models).toEqual(["gpt-5.2-pro", "grok-4.1"]);
   });
 
   test("maps browser follow-ups into run options", () => {

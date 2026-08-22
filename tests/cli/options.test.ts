@@ -231,11 +231,6 @@ describe("resolveApiModel", () => {
     expect(resolveApiModel("sonnet")).toBe("claude-4.6-sonnet");
     expect(resolveApiModel("opus")).toBe("claude-4.1-opus");
     expect(resolveApiModel("CLAUDE")).toBe("claude-4.6-sonnet");
-    expect(resolveApiModel("Gemini")).toBe("gemini-3-pro");
-    expect(resolveApiModel("Gemini 3.5 Flash")).toBe("gemini-3.5-flash");
-    expect(resolveApiModel("Gemini 3.1 Flash-Lite")).toBe("gemini-3.1-flash-lite");
-    expect(resolveApiModel("gemini-3.1-pro")).toBe("gemini-3.1-pro");
-    expect(resolveApiModel("Gemini 3.1 Pro")).toBe("gemini-3.1-pro");
     expect(resolveApiModel("grok")).toBe("grok-4.1");
     expect(resolveApiModel("Grok 4.1")).toBe("grok-4.1");
   });
@@ -246,14 +241,12 @@ describe("resolveApiModel", () => {
     );
   });
 
-  test("rejects Gemini deep-think aliases in API mode", () => {
-    expect(() => resolveApiModel("gemini-3-deep-think")).toThrow(
-      "Gemini Deep Think is browser-only today",
-    );
-    expect(() => resolveApiModel("Gemini Deep Think")).toThrow(
-      "Gemini Deep Think is browser-only today",
-    );
-  });
+  test.each(["Gemini", "Gemini 3.1 Pro", "gemini-3-deep-think", "google/gemini-2.5-pro"])(
+    "rejects Gemini model request %s with the fork boundary",
+    (model) => {
+      expect(() => resolveApiModel(model)).toThrow(/GPT-5\.6 Pro.*OpenCLI.*Gemini/);
+    },
+  );
 
   test("keeps GPT-5.6 API ids available for engine-aware validation", () => {
     expect(resolveApiModel("gpt-5.6")).toBe("gpt-5.6");
@@ -274,7 +267,6 @@ describe("resolveApiModel", () => {
     expect(resolveApiModel("instant")).toBe("instant");
     expect(resolveApiModel("openai/gpt-5.4")).toBe("openai/gpt-5.4");
     expect(resolveApiModel("anthropic/claude-sonnet-4.5")).toBe("anthropic/claude-sonnet-4.5");
-    expect(resolveApiModel("google/gemini-2.5-pro")).toBe("google/gemini-2.5-pro");
   });
 });
 
@@ -289,9 +281,6 @@ describe("inferModelFromLabel", () => {
     expect(inferModelFromLabel("gpt-5-pro")).toBe("gpt-5-pro");
     expect(inferModelFromLabel("gpt-5.1")).toBe("gpt-5.1");
     expect(inferModelFromLabel("gpt-5.1-codex")).toBe("gpt-5.1-codex");
-    expect(inferModelFromLabel("gemini-3.1-pro")).toBe("gemini-3.1-pro");
-    expect(inferModelFromLabel("gemini-3.5-flash")).toBe("gemini-3.5-flash");
-    expect(inferModelFromLabel("gemini-3.1-flash-lite")).toBe("gemini-3.1-flash-lite");
   });
 
   test("infers the browser GPT-5.6 Sol family", () => {
@@ -344,10 +333,8 @@ describe("inferModelFromLabel", () => {
     expect(inferModelFromLabel("5_2 FAST")).toBe("gpt-5.2-instant");
   });
 
-  test("preserves Gemini 3.1 labels", () => {
-    expect(inferModelFromLabel("Gemini 3.1 Pro")).toBe("gemini-3.1-pro");
-    expect(inferModelFromLabel("Gemini 3.5 Flash")).toBe("gemini-3.5-flash");
-    expect(inferModelFromLabel("Gemini 3.1 Flash-Lite")).toBe("gemini-3.1-flash-lite");
+  test("rejects Gemini labels before browser inference", () => {
+    expect(() => inferModelFromLabel("Gemini 3.1 Pro")).toThrow(/GPT-5\.6 Pro.*OpenCLI.*Gemini/);
   });
 
   test("infers Codex labels", () => {

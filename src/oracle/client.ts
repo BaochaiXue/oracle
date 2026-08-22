@@ -16,10 +16,10 @@ import type {
   ResponseStreamLike,
   ModelName,
 } from "./types.js";
-import { createGeminiClient } from "./gemini.js";
 import { createClaudeClient } from "./claude.js";
 import { isOpenRouterBaseUrl } from "./modelResolver.js";
 import { isCustomBaseUrl } from "./baseUrl.js";
+import { assertOracleModelAllowed } from "./forkPolicy.js";
 
 export function buildAzureResponsesBaseUrl(endpoint: string): string {
   return `${endpoint.replace(/\/+$/, "")}/openai/v1`;
@@ -38,6 +38,7 @@ export function createDefaultClientFactory(): ClientFactory {
       httpTimeoutMs?: number;
     },
   ): ClientLike => {
+    assertOracleModelAllowed(options?.model);
     const openRouter = isOpenRouterBaseUrl(options?.baseUrl);
     const customProxy = isCustomBaseUrl(options?.baseUrl);
 
@@ -45,10 +46,6 @@ export function createDefaultClientFactory(): ClientFactory {
     // route ALL models through the OpenAI chat/completions adapter instead of native SDKs
     // which would reject the proxy's API key.
     if (!openRouter && !customProxy) {
-      if (options?.model?.startsWith("gemini")) {
-        // Gemini client uses its own SDK; allow passing the already-resolved id for transparency/logging.
-        return createGeminiClient(key, options.model, options.resolvedModelId);
-      }
       if (options?.model?.startsWith("claude")) {
         return createClaudeClient(key, options.model, options.resolvedModelId, options.baseUrl);
       }

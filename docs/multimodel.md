@@ -3,7 +3,7 @@
 Status: **shipped** (November 21, 2025)  
 Owner: Oracle CLI
 
-This document describes the architecture for Oracle’s multi-model mode. A single CLI invocation can fan out the same prompt/files to multiple models (GPT-5 variants, Gemini, Claude, etc.), run them in parallel, and capture outputs side-by-side.
+This document describes the architecture for Oracle’s explicit API multi-model mode. A single CLI invocation can fan out the same prompt/files to multiple models (GPT-5 variants, Claude, Grok, etc.), run them in parallel, and capture outputs side-by-side.
 
 ---
 
@@ -27,16 +27,16 @@ This document describes the architecture for Oracle’s multi-model mode. A sing
 | `oracle session --status --model <name>`  | Filters the status table to only show sessions that touched `<name>`.                                             |
 | `oracle session <id> --model <name>`      | Shows only the metadata/log for `<name>`; omit the flag to display all models sequentially.                       |
 
-Execution flow: CLI normalizes the `--models` list, builds the prompt/files once, then dispatches per-model runs with isolated logs. Standard output prints each model section sequentially (`[gpt-5.1-pro] …`, then `[gemini-3-pro] …`).
+Execution flow: CLI normalizes the `--models` list, builds the prompt/files once, then dispatches per-model runs with isolated logs. Standard output prints each model section sequentially (`[gpt-5.1-pro] …`, then `[grok-4.1] …`).
 
 When some models fail, Oracle prints a structured multi-model result. If `--write-output` is set, saved outputs are listed before failures so agents and humans can recover the usable answers first.
 
 For advisory panels, preflight keys/routes first and allow partial success when one strong answer is useful:
 
 ```bash
-oracle --preflight --models gpt-5.4,claude-4.6-sonnet,gemini-3-pro
+oracle --preflight --models gpt-5.4,claude-4.6-sonnet,grok-4.1
 oracle \
-  --models gpt-5.4,claude-4.6-sonnet,gemini-3-pro \
+  --models gpt-5.4,claude-4.6-sonnet,grok-4.1 \
   --allow-partial \
   --write-output /tmp/panel.md \
   -p "Compare these options and recommend one."
@@ -57,8 +57,8 @@ sessionId/
 └── models/
     ├── gpt-5.1-pro.json    # per-model metadata
     ├── gpt-5.1-pro.log     # per-model log
-    ├── gemini-3-pro.json
-    ├── gemini-3-pro.log
+    ├── grok-4.1.json
+    ├── grok-4.1.log
     └── …
 ```
 

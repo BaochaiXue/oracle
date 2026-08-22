@@ -78,7 +78,6 @@ const VALUE_FLAGS = new Set([
   "--slug",
   "--timeout",
   "--write-output",
-  "--youtube",
   "--zombie-timeout",
   "-e",
   "-m",
@@ -283,6 +282,5 @@ function redactPotentialSecret(value: string): string {
     .replace(/([?&](?:access_)?token=)[^&#\s]+/gi, "$1[redacted]")
     .replace(/([?&](?:api[-_]?key|auth|authorization|password|secret)=)[^&#\s]+/gi, "$1[redacted]")
     .replace(/\bsk-(?:ant-|or-)?[A-Za-z0-9_-]{8,}\b/g, "sk-...[redacted]")
-    .replace(/\bxai-[A-Za-z0-9_-]{8,}\b/g, "xai-...[redacted]")
-    .replace(/\bAIza[0-9A-Za-z_-]{8,}\b/g, "AIza...[redacted]");
+    .replace(/\bxai-[A-Za-z0-9_-]{8,}\b/g, "xai-...[redacted]");
 }

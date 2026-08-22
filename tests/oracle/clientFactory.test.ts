@@ -42,43 +42,17 @@ describe("createDefaultClientFactory", () => {
     expect(typeof (await streamed).finalResponse).toBe("function");
   });
 
-  test("routes gemini models through the Gemini client", async () => {
+  test("rejects Gemini before selecting an API client", async () => {
     process.env.ORACLE_CLIENT_FACTORY = "";
-    const createGeminiClient = vi.fn((key, model, resolvedModelId) => ({
-      client: "gemini",
-      key,
-      model,
-      resolvedModelId,
-    }));
-    vi.doMock("../../src/oracle/gemini.js", () => ({ createGeminiClient }));
-
     const { createDefaultClientFactory } = await import("../../src/oracle/client.js");
     const factory = createDefaultClientFactory();
-    const client = factory("abc", { model: "gemini-3-pro", resolvedModelId: "gem-3-pro" });
-
-    expect(createGeminiClient).toHaveBeenCalledWith("abc", "gemini-3-pro", "gem-3-pro");
-    expect(client).toMatchObject({ client: "gemini", model: "gemini-3-pro" });
-  });
-
-  test("routes gemini custom base URLs through the chat/completions adapter", async () => {
-    process.env.ORACLE_CLIENT_FACTORY = "";
-    const createGeminiClient = vi.fn();
-    vi.doMock("../../src/oracle/gemini.js", () => ({ createGeminiClient }));
-
-    const { createDefaultClientFactory } = await import("../../src/oracle/client.js");
-    const factory = createDefaultClientFactory();
-    const client = factory("abc", {
-      model: "gemini-3-pro",
-      resolvedModelId: "gem-3-pro",
-      baseUrl: "https://litellm.test/v1",
-    });
-
-    expect(createGeminiClient).not.toHaveBeenCalled();
-    expect(client.responses).toMatchObject({
-      create: expect.any(Function),
-      stream: expect.any(Function),
-      retrieve: expect.any(Function),
-    });
+    expect(() =>
+      factory("abc", {
+        model: "gemini-3-pro",
+        resolvedModelId: "gem-3-pro",
+        baseUrl: "https://litellm.test/v1",
+      }),
+    ).toThrow(/GPT-5\.6 Pro.*OpenCLI.*Gemini/);
   });
 
   test("routes claude models through the Claude client", async () => {

@@ -23,7 +23,7 @@ describe("session lifecycle formatting", () => {
       options: {},
       models: [
         { model: "gpt-5.2-pro", status: "running" },
-        { model: "gemini-3-pro", status: "running" },
+        { model: "grok-4.1", status: "running" },
       ],
       lifecycle,
     } as SessionMetadata;

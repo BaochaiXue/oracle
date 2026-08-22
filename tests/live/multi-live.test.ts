@@ -13,7 +13,7 @@ const baseUrl = process.env.OPENAI_BASE_URL ?? "";
 const isOpenRouterBase = baseUrl.includes("openrouter");
 const hasKeys =
   Boolean(process.env.OPENAI_API_KEY) &&
-  Boolean(process.env.GEMINI_API_KEY) &&
+  Boolean(process.env.XAI_API_KEY) &&
   Boolean(process.env.ANTHROPIC_API_KEY) &&
   !isOpenRouterBase;
 const OPENAI_ENV = {
@@ -42,7 +42,7 @@ const TSX_BIN = path.join(process.cwd(), "node_modules", "tsx", "dist", "cli.mjs
 const CLI_ENTRY = path.join(process.cwd(), "bin", "oracle-cli.ts");
 
 (live && !isOpenRouterBase ? describe : describe.skip)(
-  "Multi-model live smoke (GPT + Gemini + Claude)",
+  "Multi-model live smoke (GPT + Grok + Claude)",
   () => {
     const originalBaseUrl = process.env.OPENAI_BASE_URL;
     const originalOpenRouter = process.env.OPENROUTER_API_KEY;
@@ -66,13 +66,13 @@ const CLI_ENTRY = path.join(process.cwd(), "bin", "oracle-cli.ts");
     });
 
     if (!hasKeys) {
-      it.skip("requires OPENAI_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY", () => {});
+      it.skip("requires OPENAI_API_KEY, XAI_API_KEY, ANTHROPIC_API_KEY", () => {});
       return;
     }
 
     it("completes all providers", async () => {
       const prompt = "In one concise sentence, explain photosynthesis.";
-      const models: ModelName[] = ["gpt-5-nano", "gemini-2.5-flash-lite", "claude-4.6-sonnet"];
+      const models: ModelName[] = ["gpt-5-nano", "grok-4.1", "claude-4.6-sonnet"];
       const baseModel = models[0];
       await sessionStore.ensureStorage();
       const sessionMeta = await sessionStore.createSession(
@@ -140,7 +140,7 @@ const CLI_ENTRY = path.join(process.cwd(), "bin", "oracle-cli.ts");
             "--prompt",
             "Live shorthand multi-model prompt for cross-checking this design end-to-end.",
             "--models",
-            "gpt-5-nano,gemini-2.5-flash-lite,claude-4.6-sonnet",
+            "gpt-5-nano,grok-4.1,claude-4.6-sonnet",
             "--wait",
           ],
           { env: { ...env, ...OPENAI_ENV } },
@@ -169,7 +169,7 @@ const CLI_ENTRY = path.join(process.cwd(), "bin", "oracle-cli.ts");
         (m: { model: string }) => m.model,
       );
       expect(selectedModels).toEqual(
-        expect.arrayContaining(["gpt-5-nano", "gemini-2.5-flash-lite", "claude-4.6-sonnet"]),
+        expect.arrayContaining(["gpt-5-nano", "grok-4.1", "claude-4.6-sonnet"]),
       );
       expect(metadata.status).toBe("completed");
 

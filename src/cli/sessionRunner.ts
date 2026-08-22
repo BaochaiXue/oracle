@@ -53,6 +53,7 @@ import type { BrowserLogger } from "../browser/types.js";
 import { formatElapsed } from "../oracle/format.js";
 import { formatBrowserReattachGuidance } from "./reattachGuidance.js";
 import { isTerminalProResponseTimingCode } from "../browser/proResponseTiming.js";
+import { assertOracleModelsAllowed } from "../oracle/forkPolicy.js";
 
 const isTty = process.stdout.isTTY;
 const dim = (text: string): string => (isTty ? kleur.dim(text) : text);
@@ -84,6 +85,10 @@ export async function performSessionRun({
   browserDeps,
   muteStdout = false,
 }: SessionRunParams): Promise<void> {
+  assertOracleModelsAllowed([
+    runOptions.model,
+    ...(Array.isArray(runOptions.models) ? runOptions.models : []),
+  ]);
   const writeInline = (chunk: string): boolean => {
     // Keep session logs intact while still echoing inline output to the user.
     write(chunk);

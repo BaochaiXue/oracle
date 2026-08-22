@@ -253,12 +253,12 @@ describe("session lifecycle", () => {
       recursive: true,
       force: true,
     });
-    const writer = sessionModule.createSessionLogWriter(meta.id, "gemini-3-pro");
-    writer.logLine("Gemini line");
+    const writer = sessionModule.createSessionLogWriter(meta.id, "grok-4.1");
+    writer.logLine("Grok line");
     writer.stream.end();
     await new Promise<void>((resolve) => writer.stream.once("close", () => resolve()));
-    const logText = await sessionModule.readModelLog(meta.id, "gemini-3-pro");
-    expect(logText).toContain("Gemini line");
+    const logText = await sessionModule.readModelLog(meta.id, "grok-4.1");
+    expect(logText).toContain("Grok line");
   });
 
   test("readSessionLog falls back to empty string when no log exists", async () => {

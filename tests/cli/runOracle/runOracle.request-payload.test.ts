@@ -321,30 +321,22 @@ describe("runOracle request payload", () => {
     );
   });
 
-  test("passes gemini custom baseUrl through to clientFactory", async () => {
+  test("rejects Gemini before a custom API client can be selected", async () => {
     const stream = new MockStream([], buildResponse());
     const client = new MockClient(stream);
-    const captured: Array<{ apiKey: string; baseUrl?: string; model?: string }> = [];
-    await runOracle(
-      {
-        prompt: "Gemini custom endpoint",
-        model: "gemini-3-pro",
-        baseUrl: "https://litellm.test/v1",
-        background: false,
-      },
-      {
-        apiKey: "gk-test",
-        clientFactory: (apiKey, options) => {
-          captured.push({ apiKey, baseUrl: options?.baseUrl, model: options?.model });
-          return client;
+    const clientFactory = vi.fn(() => client);
+    await expect(
+      runOracle(
+        {
+          prompt: "Disallowed provider request",
+          model: "gemini-3-pro",
+          baseUrl: "https://litellm.test/v1",
+          background: false,
         },
-        log: () => {},
-        write: () => true,
-      },
-    );
-    expect(captured).toEqual([
-      { apiKey: "gk-test", baseUrl: "https://litellm.test/v1", model: "gemini-3-pro" },
-    ]);
+        { apiKey: "gk-test", clientFactory, log: () => {}, write: () => true },
+      ),
+    ).rejects.toThrow(/GPT-5\.6 Pro.*OpenCLI.*Gemini/);
+    expect(clientFactory).not.toHaveBeenCalled();
   });
 
   test("keeps explicit claude baseUrl even when ANTHROPIC_BASE_URL is set", async () => {
@@ -1167,10 +1159,10 @@ describe("runOracle request payload", () => {
     await expect(
       runOracle(
         {
-          prompt: "Custom Gemini should not run through Azure OpenAI",
-          model: "gemini-3-pro-preview",
+          prompt: "Custom Grok should not run through Azure OpenAI",
+          model: "grok-preview",
           provider: "azure",
-          azure: { endpoint: "https://my-azure.com/", deployment: "my-gemini" },
+          azure: { endpoint: "https://my-azure.com/", deployment: "my-grok" },
           background: false,
         },
         {
@@ -1180,7 +1172,7 @@ describe("runOracle request payload", () => {
           write: () => true,
         },
       ),
-    ).rejects.toThrow(/Azure OpenAI provider cannot run gemini-3-pro-preview/);
+    ).rejects.toThrow(/Azure OpenAI provider cannot run grok-preview/);
     expect(client.lastRequest).toBeNull();
   });
 
@@ -1189,10 +1181,10 @@ describe("runOracle request payload", () => {
     await expect(
       runOracle(
         {
-          prompt: "Provider-qualified Gemini should not run through Azure OpenAI",
-          model: "google/gemini-3-pro-preview",
+          prompt: "Provider-qualified Claude should not run through Azure OpenAI",
+          model: "anthropic/claude-sonnet-4.5",
           provider: "azure",
-          azure: { endpoint: "https://my-azure.com/", deployment: "my-gemini" },
+          azure: { endpoint: "https://my-azure.com/", deployment: "my-claude" },
           background: false,
         },
         {
@@ -1202,7 +1194,7 @@ describe("runOracle request payload", () => {
           write: () => true,
         },
       ),
-    ).rejects.toThrow(/Azure OpenAI provider cannot run google\/gemini-3-pro-preview/);
+    ).rejects.toThrow(/Azure OpenAI provider cannot run anthropic\/claude-sonnet-4\.5/);
     expect(client.lastRequest).toBeNull();
   });
 

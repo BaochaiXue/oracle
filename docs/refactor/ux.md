@@ -21,8 +21,8 @@ Add:
 
 ```sh
 oracle doctor --providers
-oracle doctor --providers --models gpt-5.4,claude-4.6-sonnet,gemini-3-pro
-oracle --preflight --models gpt-5.4,claude-4.6-sonnet,gemini-3-pro -p "..."
+oracle doctor --providers --models gpt-5.4,claude-4.6-sonnet,grok-4.1
+oracle --preflight --models gpt-5.4,claude-4.6-sonnet,grok-4.1 -p "..."
 ```
 
 Expected output:
@@ -44,8 +44,8 @@ Anthropic: auth failed
   key: ANTHROPIC_API_KEY=sk-...9bc
   error: invalid x-api-key
 
-Gemini: auth failed
-  key: GEMINI_API_KEY=AIza...77e
+xAI: auth failed
+  key: XAI_API_KEY=xai-...77e
   error: API key expired
 ```
 
@@ -61,7 +61,7 @@ Implementation:
 Add:
 
 ```sh
-oracle --route --models gpt-5.4,gemini-3-pro
+oracle --route --models gpt-5.4,grok-4.1
 oracle --provider openai --route --model gpt-5.4
 oracle --no-azure --route --model gpt-5.4
 ```
@@ -77,10 +77,10 @@ gpt-5.4
   key: OPENAI_API_KEY=sk-...a91
   azure: ignored, AZURE_OPENAI_ENDPOINT is set
 
-gemini-3-pro
-  provider: Google Gemini
-  base: generativelanguage.googleapis.com
-  key: GEMINI_API_KEY=AIza...77e
+grok-4.1
+  provider: xAI
+  base: api.x.ai/v1
+  key: XAI_API_KEY=xai-...77e
 ```
 
 Implementation:
@@ -135,7 +135,7 @@ Migration:
 Add:
 
 ```sh
-oracle --models gpt-5.4,claude-4.6-sonnet,gemini-3-pro --allow-partial ...
+oracle --models gpt-5.4,claude-4.6-sonnet,grok-4.1 --allow-partial ...
 oracle --models ... --partial fail
 oracle --models ... --partial ok
 ```
@@ -150,7 +150,7 @@ Saved outputs:
 
 Failures:
 - claude-4.6-sonnet: auth failed, invalid x-api-key
-- gemini-3-pro: auth failed, API key expired
+- grok-4.1: auth failed, API key expired
 
 Session:
 - oracle session 20260515-naming-panel
@@ -176,7 +176,7 @@ Run logs:
 - claude-4.6-sonnet -> ~/.oracle/sessions/.../logs/claude-4.6-sonnet.log
 
 Failures:
-- gemini-3-pro -> auth failed
+- grok-4.1 -> auth failed
 ```
 
 Implementation:
@@ -196,8 +196,8 @@ Failures:
   provider said: invalid x-api-key
   fix: refresh ANTHROPIC_API_KEY or run `oracle doctor --providers anthropic`
 
-- gemini-3-pro: auth expired
-  key: GEMINI_API_KEY=AIza...77e
+- grok-4.1: auth expired
+  key: XAI_API_KEY=xai-...77e
   fix: rotate key, then rerun failed model:
        oracle session <id> --rerun-failed
 ```

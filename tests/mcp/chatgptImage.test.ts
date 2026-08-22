@@ -147,6 +147,6 @@ describe("chatgpt_image MCP tool", () => {
     })) as { isError?: boolean; content: Array<{ type: "text"; text: string }> };
 
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toMatch(/requires a ChatGPT\/GPT model/);
+    expect(result.content[0]?.text).toMatch(/GPT-5\.6 Pro.*OpenCLI.*Gemini/);
   });
 });

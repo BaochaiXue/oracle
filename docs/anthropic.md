@@ -63,5 +63,5 @@ Scope: API support for Claude 4.5 Sonnet and Claude 4.1 Opus in Oracle CLI.
 ## Next Steps (post-v1)
 
 - Optional: add tool/use support with a provider-agnostic tool layer.
-- Add dated model-id mapping if Anthropic starts versioned IDs (similar to Gemini resolver) — currently aliases map to the undated IDs above.
+- Add dated model-id mapping if Anthropic starts versioned IDs; currently aliases map to the undated IDs above.
 - Improve cost estimation if API exposes cached-token counters.

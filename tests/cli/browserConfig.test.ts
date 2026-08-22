@@ -355,27 +355,10 @@ describe("buildBrowserConfig", () => {
     expect(config.desiredModel).toBe("Thinking 5.4");
   });
 
-  test("maps legacy Gemini Pro to current Pro label", async () => {
-    const config = await buildBrowserConfig({
-      model: "gemini-3-pro",
-    });
-    expect(config.desiredModel).toBe("Gemini 3.1 Pro");
-  });
-
-  test.each([
-    ["gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite"],
-    ["gemini-3.5-flash", "Gemini 3.5 Flash"],
-    ["gemini-3.1-pro", "Gemini 3.1 Pro"],
-  ])("maps current Gemini model %s to %s", async (model, expected) => {
-    const config = await buildBrowserConfig({ model });
-    expect(config.desiredModel).toBe(expected);
-  });
-
-  test("maps deep-think Gemini model to deep-think label", async () => {
-    const config = await buildBrowserConfig({
-      model: "gemini-3-pro-deep-think",
-    });
-    expect(config.desiredModel).toBe("gemini-3-deep-think");
+  test("rejects Gemini before resolving browser configuration", async () => {
+    await expect(buildBrowserConfig({ model: "gemini-3.1-pro" })).rejects.toThrow(
+      /GPT-5\.6 Pro.*OpenCLI.*Gemini/,
+    );
   });
 
   test("trims whitespace around override labels", async () => {

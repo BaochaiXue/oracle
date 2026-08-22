@@ -125,12 +125,9 @@ See [Browser Mode](browser-mode.md) for usage.
 
 ## Image / media (browser)
 
-| Flag                      | Purpose                                                              |
-| ------------------------- | -------------------------------------------------------------------- |
-| `--generate-image <file>` | Save generated image (Gemini browser; ChatGPT also saves artifacts). |
-| `--edit-image <file>`     | Edit an image (Gemini browser).                                      |
-| `--aspect <ratio>`        | Aspect ratio for image gen.                                          |
-| `--youtube <url>`         | Analyze a YouTube video (Gemini browser).                            |
+| Flag                      | Purpose                                    |
+| ------------------------- | ------------------------------------------ |
+| `--generate-image <file>` | Save a generated ChatGPT browser artifact. |
 
 ## Stale session detection
 
@@ -145,7 +142,6 @@ See [Browser Mode](browser-mode.md) for usage.
 | ----------------------------------- | ------------------------------------------------------- |
 | `OPENAI_API_KEY`                    | Enables OpenAI API mode.                                |
 | `AZURE_OPENAI_API_KEY` etc.         | Enables Azure mode (paired with endpoint / deployment). |
-| `GEMINI_API_KEY`                    | Enables Gemini API mode.                                |
 | `ANTHROPIC_API_KEY`                 | Enables Claude API mode.                                |
 | `OPENROUTER_API_KEY`                | Enables OpenRouter ids.                                 |
 | `ORACLE_HOME_DIR`                   | Override `~/.oracle/` root.                             |

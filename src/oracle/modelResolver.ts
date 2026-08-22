@@ -8,6 +8,7 @@ import type {
   ModelOverridesConfig,
   ReasoningEffort,
 } from "./types.js";
+import { assertOracleModelAllowed } from "./forkPolicy.js";
 import { MODEL_CONFIGS, PRO_MODELS } from "./config.js";
 import { pricingFromUsdPerToken } from "tokentally";
 
@@ -167,6 +168,7 @@ export async function resolveModelConfig(
     modelOverrides?: ModelOverridesConfig;
   } = {},
 ): Promise<ModelConfig> {
+  assertOracleModelAllowed(model);
   const base = await resolveBaseModelConfig(model, options);
   // Apply user-config per-model overrides last, after known/OpenRouter/synthesized
   // resolution, so an explicit override always wins.

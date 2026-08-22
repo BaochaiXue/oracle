@@ -63,7 +63,6 @@ Without `--followup-model`, Oracle errors with the available lineage.
 | Azure OpenAI (Responses) | ✅ via `previous_response_id`                                                      |
 | ChatGPT browser mode     | ✅ saved sessions; see [Same-run browser multi-turn](#same-run-browser-multi-turn) |
 | Anthropic                | ❌ no Oracle-side response id chaining yet                                         |
-| Gemini                   | ❌                                                                                 |
 | OpenRouter               | ❌                                                                                 |
 | Custom `--base-url`      | ❌ — unknown whether the upstream preserves the id                                 |
 
@@ -102,7 +101,7 @@ Children inherit the parent's slug prefix unless you pass `--slug` explicitly.
 
 ## Limitations
 
-- Followups don't move between providers. You can't follow up an OpenAI run with a Gemini one — open a new session and re-bundle.
-- Browser followup requires a recoverable HTTPS ChatGPT conversation URL and an authenticated browser profile. Gemini web sessions are not supported.
+- Followups don't move between providers. Open a new session and re-bundle when changing provider.
+- Browser followup requires a recoverable HTTPS ChatGPT conversation URL and an authenticated browser profile.
 - `previous_response_id` retention on OpenAI / Azure varies by tier. If a followup fails with "response not found," the parent has aged out — start fresh.
 - Custom `--base-url` proxies (LiteLLM, etc.) often strip the response id. Test once before relying on it.

@@ -11,10 +11,6 @@ Oracle's `--engine browser` supports four explicit execution paths:
 - **Attach-running or remote Chrome** (operator-controlled): Oracle connects to
   an already-running CDP endpoint. Personal-browser approval and remote-network
   boundaries apply separately.
-- **Gemini web mode** (Gemini models): Oracle talks to `gemini.google.com` using
-  the configured Gemini browser identity rather than ChatGPT automation.
-
-If you are running Gemini, also see [Gemini](gemini.md).
 
 ## Dedicated local CDP (default)
 
@@ -245,7 +241,7 @@ Notes:
 - `--browser-auto-reattach-delay`, `--browser-auto-reattach-interval`, `--browser-auto-reattach-timeout`: after an actual timeout, periodically retry capture from the stored conversation (delay, interval, and per-attempt timeout). Normal direct CDP waits in one browser worker; OpenCLI waits in one long-lived tool-side waiter. Neither requires the calling coding model to poll or open duplicate tabs. Auto-reattach is disabled by default.
 - `--heartbeat`: browser mode uses this interval to emit long-run ChatGPT status. When ChatGPT exposes a Thinking/Reasoning disclosure, Oracle opens it and logs only liveness metadata such as sidecar presence, UI progress percentage, elapsed time, and last-change age. It does not log the reasoning text.
 - If an assistant response still times out (common with long Pro runs), Oracle marks the session as an incomplete capture, stores reattach/runtime diagnostics, and keeps enough browser metadata for `oracle session <id>` to recover the final answer. Visible ChatGPT rate-limit, temporary-unavailable, and authentication/challenge warnings are included in the error and session metadata instead of being reduced to a generic timeout. Increase `--browser-timeout` only when the browser session is truly unrecoverable.
-- `--browser-model-strategy <select|current|ignore>`: control ChatGPT model selection. `select` (default) switches to the requested model; `current` keeps the active model and logs its label; `ignore` skips the picker entirely. (Ignored for Gemini web runs.)
+- `--browser-model-strategy <select|current|ignore>`: control ChatGPT model selection. `select` (default) switches to the requested model; `current` keeps the active model and logs its label; `ignore` skips the picker entirely.
 - Temporary Chat can reduce account-sidebar clutter for one-shot browser consults, but it is a different ChatGPT workflow: Oracle skips archive attempts there and the local transcript/artifacts are the durable record. Verify live behavior before relying on Project Sources, Deep Research reports, or multi-turn persistence.
 - `--browser-thinking-time <light|standard|extended|extra-high|pro|heavy>`: set the ChatGPT thinking-time intensity. The unversioned `--model gpt-5-pro` selects `GPT-5.6 Sol` with Pro effort automatically; versioned legacy Pro aliases remain pinned to their documented family. Because Pro is expensive and rate-limited, `pro` fails closed: an unconfirmed selection aborts instead of quietly submitting at a cheaper tier. Effort rows are matched across the currently supported UI languages. In ChatGPT's unified Intelligence picker Oracle opens `Advanced` → `Model`, verifies the requested model, then opens `Advanced` → `Effort`; it declines to guess when the control cannot be identified.
 - GPT-5.6 Pro is represented in the current ChatGPT UI as model `GPT-5.6 Sol` plus effort `Pro`. Oracle verifies both selections independently and **fails closed** rather than silently submitting at a weaker model or effort. Detection failures write a bounded, redacted picker diagnostic to the normal session log. Versioned GPT-5.5/5.4 aliases retain their legacy picker contracts instead of being silently remapped.
@@ -551,6 +547,5 @@ This mode is ideal when you have a macOS VM (or spare Mac mini) logged into Chat
 ## Testing Notes
 
 - ChatGPT automation smoke: `pnpm test:browser`
-- Gemini web (cookie) smoke: `ORACLE_LIVE_TEST=1 pnpm vitest run tests/live/gemini-web-live.test.ts` (requires a signed-in Chrome profile at `gemini.google.com`)
 - `pnpm test --filter browser` does not exist yet; manual runs with `--engine browser -v` are the current validation path.
 - Most of the heavy lifting lives in `src/browserMode.ts`. If you change selectors or the mutation observer logic, run a local `oracle --engine browser --browser-keep-browser` session so you can inspect DevTools before cleanup.

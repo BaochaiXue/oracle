@@ -93,7 +93,7 @@ describe("provider doctor CLI", () => {
         // biome-ignore lint/style/useNamingConvention: env var name
         OPENAI_API_KEY: "sk-route-openai-key",
         // biome-ignore lint/style/useNamingConvention: env var name
-        GEMINI_API_KEY: "gk-route-gemini-key",
+        XAI_API_KEY: "xai-route-key",
         // biome-ignore lint/style/useNamingConvention: env var name
         AZURE_OPENAI_ENDPOINT: "",
         // biome-ignore lint/style/useNamingConvention: env var name
@@ -125,7 +125,7 @@ describe("provider doctor CLI", () => {
         // biome-ignore lint/style/useNamingConvention: env var name
         OPENAI_API_KEY: "sk-preflight-openai-key",
         // biome-ignore lint/style/useNamingConvention: env var name
-        GEMINI_API_KEY: "gk-preflight-gemini-key",
+        XAI_API_KEY: "xai-preflight-key",
         // biome-ignore lint/style/useNamingConvention: env var name
         AZURE_OPENAI_ENDPOINT: "",
         // biome-ignore lint/style/useNamingConvention: env var name
@@ -138,18 +138,18 @@ describe("provider doctor CLI", () => {
 
       const { stdout } = await execFileAsync(
         process.execPath,
-        ["--import", "tsx", CLI_ENTRY, "--preflight", "--models", "gpt-5.4,gemini-3-pro"],
+        ["--import", "tsx", CLI_ENTRY, "--preflight", "--models", "gpt-5.4,grok-4.1"],
         { env },
       );
 
       expect(stdout).toContain("Provider preflight");
       expect(stdout).toContain("gpt-5.4: ok");
-      expect(stdout).toContain("gemini-3-pro: ok");
+      expect(stdout).toContain("grok-4.1: ok");
       expect(stdout).toContain("key: OPENAI_API_KEY=sk-p");
-      expect(stdout).toContain("key: GEMINI_API_KEY=gk-p");
+      expect(stdout).toContain("key: XAI_API_KEY=xai-");
       expect(stdout).not.toContain("Prompt is required");
       expect(stdout).not.toContain("sk-preflight-openai-key");
-      expect(stdout).not.toContain("gk-preflight-gemini-key");
+      expect(stdout).not.toContain("xai-preflight-key");
     },
     CLI_TIMEOUT,
   );
@@ -165,6 +165,8 @@ describe("provider doctor CLI", () => {
         // biome-ignore lint/style/useNamingConvention: env var name
         OPENAI_API_KEY: "sk-route-openai-key",
         // biome-ignore lint/style/useNamingConvention: env var name
+        XAI_API_KEY: "xai-route-key",
+        // biome-ignore lint/style/useNamingConvention: env var name
         AZURE_OPENAI_ENDPOINT: "",
         // biome-ignore lint/style/useNamingConvention: env var name
         AZURE_OPENAI_API_KEY: "",
@@ -176,12 +178,12 @@ describe("provider doctor CLI", () => {
 
       const { stdout } = await execFileAsync(
         process.execPath,
-        ["--import", "tsx", CLI_ENTRY, "--route", "--models", "gpt-5.4,gemini-3-pro"],
+        ["--import", "tsx", CLI_ENTRY, "--route", "--models", "gpt-5.4,grok-4.1"],
         { env },
       );
 
       expect(stdout).toContain("gpt-5.4: ok");
-      expect(stdout).toContain("gemini-3-pro: ok");
+      expect(stdout).toContain("grok-4.1: ok");
       expect(stdout).not.toContain("gpt-5.1");
 
       await rm(oracleHome, { recursive: true, force: true });

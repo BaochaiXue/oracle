@@ -7,10 +7,10 @@ import {
 } from "./modelResolver.js";
 import { resolveProviderRoutingState, validateProviderRouting } from "./providerRouting.js";
 import type { ApiProviderMode, AzureOptions, ModelConfig, ModelName } from "./types.js";
+import { assertOracleModelAllowed } from "./forkPolicy.js";
 
 const DEFAULT_PROVIDER_HOSTS: Record<string, string> = {
   anthropic: "api.anthropic.com",
-  google: "generativelanguage.googleapis.com",
   openai: "api.openai.com",
   xai: "api.x.ai",
 };
@@ -65,6 +65,7 @@ export function buildProviderRoutePlan(input: ProviderRoutePlanInput): ProviderR
 }
 
 function buildResolvedProviderRoute(input: ProviderRoutePlanInput): ResolvedProviderRoute {
+  assertOracleModelAllowed(input.model);
   const env = input.env ?? process.env;
   const providerMode = input.providerMode ?? "auto";
   const azureConfigured = Boolean(input.azure?.endpoint?.trim());
@@ -168,7 +169,6 @@ function buildResolvedProviderRoute(input: ProviderRoutePlanInput): ResolvedProv
         ? !nativeKey.present
         : (provider === "openai" && !nativeKey.present) ||
           (provider === "anthropic" && !nativeKey.present) ||
-          (provider === "google" && !nativeKey.present) ||
           (provider === "xai" && !nativeKey.present) ||
           provider === "other");
   const openRouterKey = readKey(["OPENROUTER_API_KEY"], env);
@@ -297,9 +297,6 @@ function getKeyForRoute({
   if (model.startsWith("gpt")) {
     return readKey(["OPENAI_API_KEY"], env);
   }
-  if (model.startsWith("gemini")) {
-    return readKey(["GEMINI_API_KEY"], env);
-  }
   if (model.startsWith("claude")) {
     return readKey(["ANTHROPIC_API_KEY"], env);
   }
@@ -349,7 +346,6 @@ function routeProviderLabel({
 
 function providerLabel(provider: NonNullable<ModelConfig["provider"]>): string {
   if (provider === "anthropic") return "Anthropic";
-  if (provider === "google") return "Google Gemini";
   if (provider === "xai") return "xAI";
   return "OpenAI";
 }
@@ -370,10 +366,8 @@ function inferProviderFromModel(model: ModelName): NonNullable<ModelConfig["prov
   const prefix = model.includes("/") ? model.split("/", 1)[0] : undefined;
   if (prefix === "openai") return "openai";
   if (prefix === "anthropic") return "anthropic";
-  if (prefix === "google") return "google";
   if (prefix === "xai") return "xai";
   if (model.startsWith("claude")) return "anthropic";
-  if (model.startsWith("gemini")) return "google";
   if (model.startsWith("grok")) return "xai";
   return "other";
 }

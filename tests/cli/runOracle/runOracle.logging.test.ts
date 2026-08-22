@@ -153,28 +153,28 @@ describe("api key logging", () => {
     expect(combined).not.toContain("supersecret");
   });
 
-  test("logs masked GEMINI_API_KEY when using gemini model in verbose mode", async () => {
+  test("rejects Gemini before logging credentials or calling a client", async () => {
     const stream = new MockStream([], buildResponse());
     const client = new MockClient(stream);
     const logs: string[] = [];
-    await runOracle(
-      {
-        prompt: "Key log test Gemini",
-        model: "gemini-3-pro",
-        background: false,
-        verbose: true,
-      },
-      {
-        apiKey: "sk-gemini-secret-9999",
-        client,
-        log: (msg: string) => logs.push(msg),
-        write: () => true,
-      },
-    );
-
-    const combined = logs.join("\n");
-    expect(combined).toContain("Using GEMINI_API_KEY=sk-g****9999 for model gemini-3-pro");
-    expect(combined).not.toContain("gemini-secret");
+    await expect(
+      runOracle(
+        {
+          prompt: "Disallowed provider request",
+          model: "gemini-3-pro",
+          background: false,
+          verbose: true,
+        },
+        {
+          apiKey: "provider-secret-9999",
+          client,
+          log: (msg: string) => logs.push(msg),
+          write: () => true,
+        },
+      ),
+    ).rejects.toThrow(/GPT-5\.6 Pro.*OpenCLI.*Gemini/);
+    expect(logs).toEqual([]);
+    expect(client.lastRequest).toBeNull();
   });
 
   test("throws when OPENAI_API_KEY is missing for API engine", async () => {
@@ -203,39 +203,6 @@ describe("api key logging", () => {
         process.env.OPENAI_API_KEY = originalOpenai;
       } else {
         delete process.env.OPENAI_API_KEY;
-      }
-      if (originalOpenRouter !== undefined) {
-        process.env.OPENROUTER_API_KEY = originalOpenRouter;
-      } else {
-        delete process.env.OPENROUTER_API_KEY;
-      }
-    }
-  });
-
-  test("throws when GEMINI_API_KEY is missing for gemini API engine", async () => {
-    const originalGemini = process.env.GEMINI_API_KEY;
-    const originalOpenRouter = process.env.OPENROUTER_API_KEY;
-    delete process.env.GEMINI_API_KEY;
-    delete process.env.OPENROUTER_API_KEY;
-    try {
-      await expect(
-        runOracle(
-          {
-            prompt: "Needs gemini key",
-            model: "gemini-3-pro",
-            background: false,
-          },
-          {
-            log: () => {},
-            write: () => true,
-          },
-        ),
-      ).rejects.toThrow(/Missing GEMINI_API_KEY|API key not valid/);
-    } finally {
-      if (originalGemini !== undefined) {
-        process.env.GEMINI_API_KEY = originalGemini;
-      } else {
-        delete process.env.GEMINI_API_KEY;
       }
       if (originalOpenRouter !== undefined) {
         process.env.OPENROUTER_API_KEY = originalOpenRouter;

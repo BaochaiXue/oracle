@@ -76,13 +76,13 @@ describe("provider failure classification", () => {
   test("classifies auth messages before display redaction", () => {
     expect(
       classifyProviderFailure(new Error("API key is expired"), {
-        model: "gemini-3-pro",
-        env: { GEMINI_API_KEY: "gm-secret123456789" },
+        model: "claude-4.6-sonnet",
+        env: { ANTHROPIC_API_KEY: "ak-secret123456789" },
       }),
     ).toMatchObject({
       category: "auth-expired",
-      provider: "gemini",
-      keyEnv: "GEMINI_API_KEY",
+      provider: "anthropic",
+      keyEnv: "ANTHROPIC_API_KEY",
       providerMessage: "API key is expired",
     });
 

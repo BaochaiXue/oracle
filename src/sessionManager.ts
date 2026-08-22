@@ -30,6 +30,7 @@ import { DEFAULT_MODEL } from "./oracle/config.js";
 import { formatElapsed } from "./oracle/format.js";
 import { safeModelSlug } from "./oracle/modelResolver.js";
 import { getOracleHomeDir } from "./oracleHome.js";
+import { assertOracleModelsAllowed } from "./oracle/forkPolicy.js";
 
 export type SessionMode = "api" | "browser";
 
@@ -316,14 +317,10 @@ export interface StoredRunOptions {
   zombieUseLastActivity?: boolean;
   /** Whether the run preferred to stay attached (true) or detach (false). */
   waitPreference?: boolean;
-  youtube?: string;
   generateImage?: string;
-  editImage?: string;
   outputPath?: string;
   browserFollowUps?: string[];
   browserResumeConversationUrl?: string;
-  aspectRatio?: string;
-  geminiShowThoughts?: boolean;
 }
 
 export interface SessionMetadata {
@@ -694,6 +691,10 @@ export async function initializeSession(
   notifications?: SessionNotifications,
   baseSlugOverride?: string,
 ): Promise<SessionMetadata> {
+  assertOracleModelsAllowed([
+    options.model,
+    ...(Array.isArray(options.models) ? options.models : []),
+  ]);
   await ensureSessionStorage();
   const baseSlug =
     baseSlugOverride || createSessionId(options.prompt || DEFAULT_SLUG, options.slug);
@@ -760,14 +761,10 @@ export async function initializeSession(
       writeOutputPath: options.writeOutputPath,
       partialMode: options.partialMode,
       waitPreference: options.waitPreference,
-      youtube: options.youtube,
       generateImage: options.generateImage,
-      editImage: options.editImage,
       outputPath: options.outputPath,
       browserFollowUps: options.browserFollowUps,
       browserResumeConversationUrl: options.browserResumeConversationUrl,
-      aspectRatio: options.aspectRatio,
-      geminiShowThoughts: options.geminiShowThoughts,
     },
   };
   await ensureDir(modelsDir(sessionId));

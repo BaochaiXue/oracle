@@ -55,17 +55,14 @@ describe("provider route plan", () => {
     expect(plan.error).toMatch(/Azure mode requires --azure-deployment/);
   });
 
-  test("native provider route reports missing Gemini key", () => {
-    const plan = buildProviderRoutePlan({
-      model: "gemini-3-pro",
-      providerMode: "auto",
-      env: {},
-    });
-
-    expect(plan.ok).toBe(false);
-    expect(plan.providerLabel).toBe("Google Gemini");
-    expect(plan.keySource).toBe("GEMINI_API_KEY");
-    expect(plan.error).toBe("Missing GEMINI_API_KEY.");
+  test("rejects Gemini before provider route planning", () => {
+    expect(() =>
+      buildProviderRoutePlan({
+        model: "gemini-3-pro",
+        providerMode: "auto",
+        env: {},
+      }),
+    ).toThrow(/GPT-5\.6 Pro.*OpenCLI.*Gemini/);
   });
 
   test("forced OpenAI invalid model reports the attempted OpenAI route", () => {

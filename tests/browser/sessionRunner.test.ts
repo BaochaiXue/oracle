@@ -1262,38 +1262,25 @@ describe("runBrowserSessionExecution", () => {
     );
   });
 
-  test("allows Gemini in browser mode with custom executor", async () => {
+  test("rejects Gemini before prompt assembly or custom browser execution", async () => {
     const log = vi.fn();
-    const executeBrowser = vi.fn().mockResolvedValue({
-      answerText: "gemini response",
-      answerMarkdown: "gemini response",
-      tookMs: 100,
-      answerTokens: 5,
-      answerChars: 15,
-    });
-    const result = await runBrowserSessionExecution(
-      {
-        runOptions: { ...baseRunOptions, model: "gemini-3-pro" },
-        browserConfig: baseConfig,
-        cwd: "/repo",
-        log,
-      },
-      {
-        assemblePrompt: async () => ({
-          markdown: "prompt",
-          composerText: "prompt",
-          estimatedInputTokens: 1,
-          attachments: [],
-          inlineFileCount: 0,
-          tokenEstimateIncludesInlineFiles: false,
-          attachmentsPolicy: "auto",
-          attachmentMode: "inline",
-          fallback: null,
-        }),
-        executeBrowser,
-      },
-    );
-    expect(result.answerText).toBe("gemini response");
-    expect(executeBrowser).toHaveBeenCalled();
+    const assemblePrompt = vi.fn();
+    const executeBrowser = vi.fn();
+    await expect(
+      runBrowserSessionExecution(
+        {
+          runOptions: { ...baseRunOptions, model: "gemini-3-pro" },
+          browserConfig: baseConfig,
+          cwd: "/repo",
+          log,
+        },
+        {
+          assemblePrompt,
+          executeBrowser,
+        },
+      ),
+    ).rejects.toThrow(/GPT-5\.6 Pro.*OpenCLI.*Gemini/);
+    expect(assemblePrompt).not.toHaveBeenCalled();
+    expect(executeBrowser).not.toHaveBeenCalled();
   });
 });

@@ -153,6 +153,6 @@ browser. See [Dedicated Chrome](dedicated-chrome.md) and
 ## Patterns that work
 
 - **Stuck → Oracle.** When the agent has been spinning on the same bug, hand the failing test plus the involved files to GPT-5.6 Pro through the dedicated-CDP lane. Keep the question self-contained so the second model can challenge the actual evidence rather than reconstructing the first agent's context.
-- **Plan → Oracle → execute.** Draft the plan, ask Claude Opus or Gemini 3 Pro to challenge it, then implement.
+- **Plan → Oracle → execute.** Draft the plan, ask ChatGPT GPT-5.6 Pro through the canonical Oracle lane to challenge it, then implement.
 - **Refactor → cross-check.** After a non-trivial refactor, send the diff plus the spec to a different provider than the one that wrote the diff. Catches drift fast.
 - **Followup chain.** Use `--followup <id>` to keep one Pro session alive across iterations rather than re-bundling the whole repo every time. See [Followup](followup.md).

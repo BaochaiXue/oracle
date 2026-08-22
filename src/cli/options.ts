@@ -6,6 +6,7 @@ import type { ModelName, PreviewMode } from "../oracle.js";
 import { DEFAULT_MODEL, MODEL_CONFIGS } from "../oracle/config.js";
 import { normalizeThinkingTimeLevel } from "../oracle/thinkingTime.js";
 import type { ThinkingTimeLevel } from "../oracle/types.js";
+import { assertOracleModelAllowed } from "../oracle/forkPolicy.js";
 
 export function collectPaths(
   value: string | string[] | undefined,
@@ -211,16 +212,8 @@ export function parseDurationOption(value: string | undefined, label: string): n
   return parsed;
 }
 
-function isGeminiDeepThinkAlias(normalized: string): boolean {
-  return (
-    (normalized.includes("gemini") && normalized.includes("deep")) ||
-    normalized.includes("deep-think") ||
-    normalized.includes("deep_think") ||
-    normalized.includes("deepthink")
-  );
-}
-
 export function resolveApiModel(modelValue: string): ModelName {
+  assertOracleModelAllowed(modelValue);
   const normalized = normalizeModelOption(modelValue).toLowerCase();
   if (normalized in MODEL_CONFIGS) {
     return normalized as ModelName;
@@ -281,27 +274,6 @@ export function resolveApiModel(modelValue: string): ModelName {
     }
     return "gpt-5.1-codex";
   }
-  if (isGeminiDeepThinkAlias(normalized)) {
-    throw new InvalidArgumentError(
-      "Gemini Deep Think is browser-only today. Use --engine browser --model gemini-3-deep-think.",
-    );
-  }
-  if (normalized.includes("gemini")) {
-    if (normalized.includes("3.5") && normalized.includes("flash")) {
-      return "gemini-3.5-flash";
-    }
-    if (
-      (normalized.includes("3.1") || normalized.includes("3_1")) &&
-      normalized.includes("flash") &&
-      normalized.includes("lite")
-    ) {
-      return "gemini-3.1-flash-lite";
-    }
-    if (normalized.includes("3.1") || normalized.includes("3_1")) {
-      return "gemini-3.1-pro";
-    }
-    return "gemini-3-pro";
-  }
   if (normalized.includes("pro")) {
     return DEFAULT_MODEL;
   }
@@ -324,6 +296,7 @@ export function isGpt56BrowserLabel(modelValue: string): boolean {
 }
 
 export function inferModelFromLabel(modelValue: string): ModelName {
+  assertOracleModelAllowed(modelValue);
   const normalized = normalizeModelOption(modelValue).toLowerCase();
   if (!normalized) {
     return DEFAULT_MODEL;
@@ -345,25 +318,6 @@ export function inferModelFromLabel(modelValue: string): ModelName {
   }
   if (normalized.includes("codex")) {
     return "gpt-5.1-codex";
-  }
-  if (isGeminiDeepThinkAlias(normalized)) {
-    return "gemini-3-pro-deep-think" as ModelName;
-  }
-  if (normalized.includes("gemini")) {
-    if (normalized.includes("3.5") && normalized.includes("flash")) {
-      return "gemini-3.5-flash";
-    }
-    if (
-      (normalized.includes("3.1") || normalized.includes("3_1")) &&
-      normalized.includes("flash") &&
-      normalized.includes("lite")
-    ) {
-      return "gemini-3.1-flash-lite";
-    }
-    if (normalized.includes("3.1") || normalized.includes("3_1")) {
-      return "gemini-3.1-pro";
-    }
-    return "gemini-3-pro";
   }
   if (normalized.includes("classic")) {
     return "gpt-5-pro";

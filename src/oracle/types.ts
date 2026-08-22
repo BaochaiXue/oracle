@@ -14,10 +14,6 @@ export type KnownModelName =
   | "gpt-5.2"
   | "gpt-5.2-instant"
   | "gpt-5.2-pro"
-  | "gemini-3.1-flash-lite"
-  | "gemini-3.1-pro"
-  | "gemini-3.5-flash"
-  | "gemini-3-pro"
   | "claude-4.6-sonnet"
   | "claude-4.1-opus"
   | "grok-4.1";
@@ -66,7 +62,7 @@ export interface ModelConfig {
   /** Provider-specific model id used for API calls (defaults to `model`). */
   apiModel?: string;
   /** Upstream provider to help with OpenRouter mapping and auth precedence. */
-  provider?: "openai" | "anthropic" | "google" | "xai" | "other";
+  provider?: "openai" | "anthropic" | "xai" | "other";
   /** Explicit OpenRouter model id when it differs from apiModel/model. */
   openRouterId?: string;
   tokenizer: TokenizerFn;

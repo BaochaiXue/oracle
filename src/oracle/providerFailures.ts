@@ -132,8 +132,7 @@ export function sanitizeProviderMessage(message: string): string {
       "$1$2[redacted]",
     )
     .replace(/\bsk-(?:ant-|or-)?[A-Za-z0-9_-]{8,}\b/g, "sk-...[redacted]")
-    .replace(/\bxai-[A-Za-z0-9_-]{8,}\b/g, "xai-...[redacted]")
-    .replace(/\bAIza[0-9A-Za-z_-]{8,}\b/g, "AIza...[redacted]");
+    .replace(/\bxai-[A-Za-z0-9_-]{8,}\b/g, "xai-...[redacted]");
 }
 
 function normalizeContext(context?: string | ProviderFailureContext): ProviderFailureContext {
@@ -161,7 +160,6 @@ function inferFailureRoute(context: ProviderFailureContext): {
       return { provider: "openrouter", keySource };
     }
     if (plan.provider === "azure") return { provider: "azure", keySource };
-    if (plan.provider === "google") return { provider: "gemini", keySource };
     return { provider: plan.provider, keySource };
   }
   const normalized = context.model?.toLowerCase() ?? "";
@@ -177,11 +175,9 @@ function inferFailureRoute(context: ProviderFailureContext): {
     return { provider: "azure", keySource: keyEnvForProvider("azure") };
   }
   if (normalized.startsWith("anthropic/")) return providerRoute("anthropic");
-  if (normalized.startsWith("google/")) return providerRoute("gemini");
   if (normalized.startsWith("xai/")) return providerRoute("xai");
   if (normalized.startsWith("openai/")) return providerRoute("openai");
   if (normalized.startsWith("claude")) return providerRoute("anthropic");
-  if (normalized.startsWith("gemini")) return providerRoute("gemini");
   if (normalized.startsWith("grok")) return providerRoute("xai");
   return providerRoute("openai");
 }
@@ -201,8 +197,6 @@ function keyEnvForProvider(provider: string): string | undefined {
   switch (provider) {
     case "anthropic":
       return "ANTHROPIC_API_KEY";
-    case "gemini":
-      return "GEMINI_API_KEY";
     case "xai":
       return "XAI_API_KEY";
     case "azure":

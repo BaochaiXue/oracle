@@ -26,7 +26,7 @@ liveDescribe("live TUI flow (API multi-model)", () => {
           prompt: "seed",
           model: "gpt-5.1",
           mode: "api",
-          models: ["gpt-5.1", "gemini-3-pro"],
+          models: ["gpt-5.1", "grok-4.1"],
         },
       }),
     );

@@ -28,12 +28,7 @@ export interface BrowserTabLeaseRecord {
   updatedAt: string;
 }
 
-export type BrowserTargetOwnerKind =
-  | "chatgpt"
-  | "project-sources"
-  | "gemini"
-  | "recovery"
-  | "sentinel";
+export type BrowserTargetOwnerKind = "chatgpt" | "project-sources" | "recovery" | "sentinel";
 
 export type BrowserOwnedTargetDisposition = "active" | "recoverable" | "terminal" | "sentinel";
 

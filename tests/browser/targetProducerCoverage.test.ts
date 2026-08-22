@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 
 const root = process.cwd();
@@ -10,10 +10,9 @@ async function source(file: string): Promise<string> {
 
 describe("local browser target producer ownership", () => {
   test("every persistent local producer records ownership before handing off its target", async () => {
-    const [chatgpt, projectSources, gemini, reattach, recovery, reconciler] = await Promise.all([
+    const [chatgpt, projectSources, reattach, recovery, reconciler] = await Promise.all([
       source("src/browser/index.ts"),
       source("src/browser/projectSourcesRunner.ts"),
-      source("src/gemini-web/browserSessionManager.ts"),
       source("src/browser/reattach.ts"),
       source("src/browser/recoverConversation.ts"),
       source("src/browser/lifecycleReconciler.ts"),
@@ -21,12 +20,25 @@ describe("local browser target producer ownership", () => {
 
     expect(chatgpt).toMatch(/connectWithNewTab[\s\S]*ownsTarget,/);
     expect(projectSources).toMatch(/connectWithNewTab[\s\S]*ownsTarget: true/);
-    expect(gemini).toMatch(/connectWithNewTab[\s\S]*ownsTarget: true/);
     expect(reattach).toMatch(/connectWithNewTab[\s\S]*ownsTarget: true/);
     expect(recovery).toMatch(
       /acquireBrowserTabLease[\s\S]*openChatGptTarget[\s\S]*ownsTarget: true/,
     );
     expect(reconciler).toMatch(/createChromePageTarget[\s\S]*registerOwned/);
+  });
+
+  test("Gemini implementation and canonical routing are absent from the fork", async () => {
+    await expect(access(path.join(root, "src/gemini-web/index.ts"))).rejects.toThrow();
+    await expect(access(path.join(root, "src/oracle/gemini.ts"))).rejects.toThrow();
+
+    const canonicalRoutes = await Promise.all([
+      source("bin/oracle-cli.ts"),
+      source("src/cli/runOptions.ts"),
+      source("src/oracle/client.ts"),
+    ]);
+    expect(canonicalRoutes.join("\n")).not.toMatch(
+      /gemini-web|resolveGeminiModelId|createGeminiClient/,
+    );
   });
 
   test("operator reconciliation is absent from remote and attach-running execution", async () => {

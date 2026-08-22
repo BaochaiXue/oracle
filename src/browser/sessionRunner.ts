@@ -14,6 +14,7 @@ import { runOpenCliBrowserMode } from "./opencliTransport.js";
 import type { BrowserRunResult } from "../browserMode.js";
 import { assembleBrowserPrompt } from "./prompt.js";
 import { BrowserAutomationError } from "../oracle/errors.js";
+import { assertOracleModelAllowed } from "../oracle/forkPolicy.js";
 import type { BrowserArchiveResult, BrowserLogger } from "./types.js";
 import {
   appendArtifacts,
@@ -193,6 +194,7 @@ export async function runBrowserSessionExecution(
   { runOptions, browserConfig, cwd, log }: RunBrowserSessionArgs,
   deps: BrowserSessionRunnerDeps = {},
 ): Promise<BrowserExecutionResult> {
+  assertOracleModelAllowed(runOptions.model);
   const assemblePrompt = deps.assemblePrompt ?? assembleBrowserPrompt;
   const promptArtifacts = await assemblePrompt(runOptions, { cwd });
   const proInputTokens = promptArtifacts.estimatedInputTokens;

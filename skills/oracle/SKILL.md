@@ -5,10 +5,15 @@ description: "Oracle second-model review: bundle prompts/files, debug, refactor,
 
 # Oracle (CLI) — best use
 
-Oracle bundles a prompt and selected files into a one-shot request so another
-model can answer with real repository context through the API or browser. A
-prompt is required; attach files only when they add necessary context. Treat
-responses as advisory and verify them against the codebase and tests.
+Oracle bundles a prompt and selected files for a ChatGPT GPT-5.6 Pro
+second-model review with real repository context. The canonical lane is browser
+mode over direct CDP with Oracle's dedicated profile. A prompt is required;
+attach files only when they add necessary context. Treat responses as advisory
+and verify them against the codebase and tests.
+
+This fork reserves the canonical Oracle lane for ChatGPT GPT-5.6 Pro. Use
+OpenCLI separately for incidental Gemini queries; Oracle never dispatches or
+falls back to Gemini.
 
 ## Main use case (browser, GPT-5.6)
 
@@ -31,12 +36,12 @@ Recommended defaults:
 - Explicit Pro effort on GPT-5.6 Sol: `--browser-thinking-time pro` (fails closed if Pro cannot be confirmed)
 - Browser GPT-5.5 with Pro effort: `--model gpt-5.5 --browser-thinking-time pro`
 - API Pro maximum reasoning: `--model gpt-5.6-sol --reasoning-mode pro --reasoning-effort max`
-- Fallback: explicitly use `--model gpt-5.5-pro` when GPT-5.6 is unavailable
 - Attachments: directories/globs plus excludes; never attach secrets by default
 
 GPT-5.6 availability is account-dependent. Confirm the base Sol picker and
 retain model-selection evidence. A bare `Pro` picker label proves picker
-selection but does not, by itself, prove the server-side Pro generation.
+selection but does not, by itself, prove the server-side Pro generation. If the
+Pro target cannot be confirmed, fail closed; do not substitute another model.
 
 ## GPT-5.6 model selection
 
@@ -47,11 +52,11 @@ This version supports GPT-5.6 on both surfaces, but Pro selection differs:
 - Browser: `gpt-5-pro` selects ChatGPT's `Pro` target
 - API: `--reasoning-mode pro` enables Pro execution on `gpt-5.6-sol`; pair it with `--reasoning-effort max` for maximum reasoning
 
-For base Sol, use:
+For the canonical GPT-5.6 Pro browser lane, use:
 
 ```bash
-oracle --engine browser --model gpt-5.6-sol \
-  --browser-thinking-time extra-high \
+oracle --engine browser --browser-transport cdp --model gpt-5-pro \
+  --browser-thinking-time pro \
   -p "<task>" --file "src/**"
 ```
 
@@ -78,29 +83,14 @@ recognizes the current English and Chinese effort labels, avoids matching
 `高` inside `极高`, and re-queries the composer pill after React replaces it so
 selection verification cannot rely on a detached stale node.
 
-## Compatibility with npm 0.15.2
-
-Do not pass `gpt-5.6` or `gpt-5.6-sol` to an unpatched npm 0.15.2 install. That
-release can normalize those labels to `gpt-5.2`. Use the explicit fallback:
-
-```bash
-npx -y @steipete/oracle@0.15.2 --engine browser --model gpt-5.5-pro \
-  -p "<task>" --file "src/**"
-```
-
-After upgrading to a release containing the GPT-5.6 model-selection and
-unified-picker changes, verify all of the following before removing the
-fallback guidance: `--help --verbose` exposes the new options, browser dry-run
-resolves both aliases to GPT-5.6 Sol, API routing selects first-party OpenAI,
-and a live browser run records strict GPT-5.6 selection evidence.
-
 ## Golden path
 
 1. Pick the smallest file set that still contains the truth.
 2. Run the browser consultation directly. Normal consults must not run
    dry-runs, smoke tests, live tests, doctor, or preflight validation unless a
    concrete bundle/runtime uncertainty makes that diagnostic material.
-3. Use browser mode for GPT-5.6; use API only when explicitly intended.
+3. Use browser mode, direct CDP, and the GPT-5.6 Pro target. Do not switch
+   model, tier, provider, or transport silently.
 4. If a run detaches or times out, reattach to the stored session instead of
    starting a duplicate.
 
@@ -117,7 +107,7 @@ and a live browser run records strict GPT-5.6 selection evidence.
   - `npx -y @steipete/oracle --dry-run summary --files-report -p "<task>" --file "src/**"`
 
 - Browser run:
-  - `oracle --engine browser --model gpt-5.6-sol --browser-thinking-time extra-high -p "<task>" --file "src/**"`
+  - `oracle --engine browser --browser-transport cdp --model gpt-5-pro --browser-thinking-time pro -p "<task>" --file "src/**"`
 
 - Manual paste fallback:
   - `npx -y @steipete/oracle --render-markdown --copy-markdown -p "<task>" --file "src/**"`
@@ -148,11 +138,10 @@ are essential to the question.
 
 ## Engines and browser controls
 
-- Auto-selection uses API when `OPENAI_API_KEY` is set and browser otherwise.
-- Browser supports GPT models through ChatGPT and Gemini models through Gemini
-  web. API-only models include `gpt-5.1-codex`.
-- Current model families include GPT-5.5/5.4/5.2/5.1, Gemini 3.x, and Claude
-  4.x; availability depends on engine and provider.
+- The canonical skill invocation explicitly selects browser mode, direct CDP,
+  and GPT-5.6 Pro; it does not rely on engine auto-selection.
+- Browser mode in this fork supports ChatGPT GPT targets only. API-only models
+  remain available only when the operator explicitly intends an API run.
 - API runs require explicit user consent because they may incur usage costs.
 - Browser attachments use `--browser-attachments auto|never|always`.
 - For many files, add `--browser-bundle-files --browser-bundle-format auto|zip`.
@@ -169,8 +158,8 @@ are essential to the question.
 Before an API run, check provider readiness without printing secrets:
 
 ```bash
-oracle doctor --providers --models gpt-5.4,claude-4.6-sonnet,gemini-3-pro
-oracle --preflight --models gpt-5.4,gemini-3-pro
+oracle doctor --providers --models gpt-5.4,claude-4.6-sonnet
+oracle --preflight --models gpt-5.4,claude-4.6-sonnet
 oracle --route --model gpt-5.4
 ```
 

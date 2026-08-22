@@ -550,7 +550,7 @@ describe("attachSession rendering", () => {
           usage: { inputTokens: 10, outputTokens: 12, reasoningTokens: 0, totalTokens: 24 },
         },
         {
-          model: "gemini-3-pro",
+          model: "grok-4.1",
           status: "running",
           usage: { inputTokens: 10, outputTokens: 0, reasoningTokens: 0, totalTokens: 10 },
         },
@@ -567,7 +567,7 @@ describe("attachSession rendering", () => {
     expect(logSpy).toHaveBeenCalledWith(
       expect.stringMatching(/gpt-5\.2-pro.*completed tok=12\/24/),
     );
-    expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/gemini-3-pro.*running tok=0\/10/));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/grok-4.1.*running tok=0\/10/));
   });
 
   test("ignores empty model filter from CLI defaults", async () => {
@@ -773,7 +773,7 @@ describe("attachSession rendering", () => {
           usage: { inputTokens: 1, outputTokens: 2, reasoningTokens: 0, totalTokens: 3 },
         },
         {
-          model: "gemini-3-pro",
+          model: "grok-4.1",
           status: "completed",
           usage: { inputTokens: 4, outputTokens: 5, reasoningTokens: 0, totalTokens: 9 },
         },
@@ -788,14 +788,14 @@ describe("attachSession rendering", () => {
 
     sessionStoreMock.readModelLog
       .mockResolvedValueOnce("Answer:\nfrom gpt-5.2-pro")
-      .mockResolvedValueOnce("Answer:\nfrom gemini");
+      .mockResolvedValueOnce("Answer:\nfrom grok");
 
     await attachSession("sess", { renderMarkdown: false });
 
     const written = writeSpy.mock.calls.map((c) => c[0]).join("");
     expect(written).toContain("from gpt-5.2-pro");
-    expect(written).toContain("=== gemini-3-pro ===");
-    expect(written).toContain("from gemini");
+    expect(written).toContain("=== grok-4.1 ===");
+    expect(written).toContain("from grok");
     expect(sessionStoreMock.readModelLog).toHaveBeenCalledTimes(2);
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Models:"));
   });
@@ -805,7 +805,7 @@ describe("attachSession rendering", () => {
       ...baseMeta,
       models: [
         { model: "gpt-5.2-pro", status: "completed" },
-        { model: "gemini-3-pro", status: "completed" },
+        { model: "grok-4.1", status: "completed" },
       ],
     } as SessionMetadata;
 
@@ -813,15 +813,15 @@ describe("attachSession rendering", () => {
     sessionStoreMock.readSession.mockResolvedValue(multiMeta);
     readSessionRequestMock.mockResolvedValue({ prompt: "Prompt here" });
     const writeSpy = vi.spyOn(process.stdout, "write");
-    sessionStoreMock.readModelLog.mockResolvedValueOnce("Answer:\nfrom gemini only");
+    sessionStoreMock.readModelLog.mockResolvedValueOnce("Answer:\nfrom grok only");
 
-    await attachSession("sess", { renderMarkdown: false, model: "Gemini-3-Pro" });
+    await attachSession("sess", { renderMarkdown: false, model: "Grok-4.1" });
 
     const written = writeSpy.mock.calls.map((c) => c[0]).join("");
-    expect(written).toContain("from gemini only");
+    expect(written).toContain("from grok only");
     expect(written).not.toContain("gpt-5.2-pro");
     expect(sessionStoreMock.readModelLog).toHaveBeenCalledTimes(1);
-    expect(sessionStoreMock.readModelLog).toHaveBeenCalledWith("sess", "gemini-3-pro");
+    expect(sessionStoreMock.readModelLog).toHaveBeenCalledWith("sess", "grok-4.1");
   });
 
   test("exits with error when requested model is not part of the session", async () => {
@@ -829,7 +829,7 @@ describe("attachSession rendering", () => {
       ...baseMeta,
       models: [
         { model: "gpt-5.2-pro", status: "completed" },
-        { model: "gemini-3-pro", status: "completed" },
+        { model: "grok-4.1", status: "completed" },
       ],
     } as SessionMetadata;
 

@@ -246,7 +246,7 @@ describe("performSessionRun", () => {
       ...baseSessionMeta,
       models: [
         { model: "gpt-5.1", status: "running" } as SessionModelRun,
-        { model: "gemini-3-pro", status: "running" } as SessionModelRun,
+        { model: "grok-4.1", status: "running" } as SessionModelRun,
       ],
     } as SessionMetadata;
 
@@ -265,10 +265,10 @@ describe("performSessionRun", () => {
     vi.mocked(runMultiModelApiSession).mockImplementation(async (params) => {
       const fulfilled: ModelExecutionResult[] = [
         {
-          model: "gemini-3-pro" as ModelName,
+          model: "grok-4.1" as ModelName,
           usage: { inputTokens: 1, outputTokens: 1, reasoningTokens: 0, totalTokens: 2, cost: 0 },
-          answerText: "gemini answer",
-          logPath: "log-gemini",
+          answerText: "grok answer",
+          logPath: "log-grok",
         },
         {
           model: "gpt-5.1" as ModelName,
@@ -293,7 +293,7 @@ describe("performSessionRun", () => {
 
     await performSessionRun({
       sessionMeta,
-      runOptions: { ...baseRunOptions, models: ["gpt-5.1", "gemini-3-pro"] },
+      runOptions: { ...baseRunOptions, models: ["gpt-5.1", "grok-4.1"] },
       mode: "api",
       cwd: "/tmp",
       log: logSpy,
@@ -302,13 +302,13 @@ describe("performSessionRun", () => {
     });
 
     const written = writeSpy.mock.calls.map((c) => c[0]).join("");
-    expect(written).toContain("from gemini-3-pro");
+    expect(written).toContain("from grok-4.1");
     expect(written).toContain("from gpt-5.1");
-    const geminiIndex = written.indexOf("from gemini-3-pro");
+    const grokIndex = written.indexOf("from grok-4.1");
     const gptIndex = written.indexOf("from gpt-5.1");
-    expect(geminiIndex).toBeGreaterThan(-1);
+    expect(grokIndex).toBeGreaterThan(-1);
     expect(gptIndex).toBeGreaterThan(-1);
-    expect(geminiIndex).toBeLessThan(gptIndex);
+    expect(grokIndex).toBeLessThan(gptIndex);
 
     writeSpy.mockRestore();
     logSpy.mockRestore();
@@ -325,7 +325,7 @@ describe("performSessionRun", () => {
       ...baseSessionMeta,
       models: [
         { model: "gpt-5.1", status: "running" } as SessionModelRun,
-        { model: "gemini-3-pro", status: "running" } as SessionModelRun,
+        { model: "grok-4.1", status: "running" } as SessionModelRun,
       ],
     } as SessionMetadata;
 
@@ -350,7 +350,7 @@ describe("performSessionRun", () => {
           logPath: "log-gpt",
         },
         {
-          model: "gemini-3-pro" as ModelName,
+          model: "grok-4.1" as ModelName,
           usage: { inputTokens: 1, outputTokens: 1, reasoningTokens: 0, totalTokens: 2, cost: 0 },
           answerText: "fallback text",
           logPath: "log-gem",
@@ -371,7 +371,7 @@ describe("performSessionRun", () => {
 
     await performSessionRun({
       sessionMeta,
-      runOptions: { ...baseRunOptions, models: ["gpt-5.1", "gemini-3-pro"] },
+      runOptions: { ...baseRunOptions, models: ["gpt-5.1", "grok-4.1"] },
       mode: "api",
       cwd: "/tmp",
       log: logSpy,
@@ -411,7 +411,7 @@ describe("performSessionRun", () => {
           logPath: "log-pro",
         },
         {
-          model: "gemini-3-pro" as ModelName,
+          model: "grok-4.1" as ModelName,
           usage: {
             inputTokens: 1,
             outputTokens: 2,
@@ -419,8 +419,8 @@ describe("performSessionRun", () => {
             totalTokens: 3,
             cost: 0.02,
           },
-          answerText: "gemini answer",
-          logPath: "log-gemini",
+          answerText: "grok answer",
+          logPath: "log-grok",
         },
       ],
       rejected: [],
@@ -433,12 +433,12 @@ describe("performSessionRun", () => {
         ...baseSessionMeta,
         models: [
           { model: "gpt-5.2-pro", status: "pending" } as SessionModelRun,
-          { model: "gemini-3-pro", status: "pending" } as SessionModelRun,
+          { model: "grok-4.1", status: "pending" } as SessionModelRun,
         ],
       },
       runOptions: {
         ...baseRunOptions,
-        models: ["gpt-5.2-pro", "gemini-3-pro"],
+        models: ["gpt-5.2-pro", "grok-4.1"],
         writeOutputPath: "/tmp/out.md",
       },
       mode: "api",
@@ -451,7 +451,7 @@ describe("performSessionRun", () => {
     const writeCalls = (fsPromises.writeFile as unknown as { mock: { calls: unknown[][] } }).mock
       .calls;
     const expectedProPath = path.resolve("/tmp/out.gpt-5.2-pro.md");
-    const expectedGeminiPath = path.resolve("/tmp/out.gemini-3-pro.md");
+    const expectedGrokPath = path.resolve("/tmp/out.grok-4.1.md");
     const expectedManifestPath = path.resolve("/tmp/out.oracle.json");
     expect(writeCalls).toContainEqual([
       expectedProPath,
@@ -459,8 +459,8 @@ describe("performSessionRun", () => {
       "utf8",
     ]);
     expect(writeCalls).toContainEqual([
-      expectedGeminiPath,
-      expect.stringContaining("gemini answer\n"),
+      expectedGrokPath,
+      expect.stringContaining("grok answer\n"),
       "utf8",
     ]);
     const manifestCall = writeCalls.find((call) => call[0] === expectedManifestPath);
@@ -480,10 +480,10 @@ describe("performSessionRun", () => {
           usage: { totalTokens: 3 },
         },
         {
-          model: "gemini-3-pro",
+          model: "grok-4.1",
           status: "completed",
-          outputPath: expectedGeminiPath,
-          logPath: "log-gemini",
+          outputPath: expectedGrokPath,
+          logPath: "log-grok",
           usage: { totalTokens: 3 },
         },
       ],
@@ -493,7 +493,7 @@ describe("performSessionRun", () => {
     expect(logLines).toContain(`gpt-5.2-pro -> ${expectedProPath}`);
     expect(logLines).toContain(`Output manifest: ${expectedManifestPath}`);
     expect(logLines).toContain("Run logs:");
-    expect(logLines).toContain("gemini-3-pro -> log-gemini");
+    expect(logLines).toContain("grok-4.1 -> log-grok");
   });
 
   test("prints one aggregate header and colored summary for multi-model runs", async () => {
@@ -501,7 +501,7 @@ describe("performSessionRun", () => {
       ...baseSessionMeta,
       models: [
         { model: "gpt-5.1", status: "running" } as SessionModelRun,
-        { model: "gemini-3-pro", status: "running" } as SessionModelRun,
+        { model: "grok-4.1", status: "running" } as SessionModelRun,
       ],
     } as SessionMetadata;
 
@@ -530,7 +530,7 @@ describe("performSessionRun", () => {
           logPath: "log-gpt",
         },
         {
-          model: "gemini-3-pro" as ModelName,
+          model: "grok-4.1" as ModelName,
           usage: {
             inputTokens: 5,
             outputTokens: 5,
@@ -538,8 +538,8 @@ describe("performSessionRun", () => {
             totalTokens: 10,
             cost: 0.02,
           },
-          answerText: "ans-gemini",
-          logPath: "log-gemini",
+          answerText: "ans-grok",
+          logPath: "log-grok",
         },
       ],
       rejected: [],
@@ -549,7 +549,7 @@ describe("performSessionRun", () => {
 
     await performSessionRun({
       sessionMeta,
-      runOptions: { ...baseRunOptions, models: ["gpt-5.1", "gemini-3-pro"] },
+      runOptions: { ...baseRunOptions, models: ["gpt-5.1", "grok-4.1"] },
       mode: "api",
       cwd: "/tmp",
       log: logSpy,
@@ -558,7 +558,7 @@ describe("performSessionRun", () => {
     });
 
     const logsCombined = logSpy.mock.calls.map((c) => c[0]).join("\n");
-    expect(logsCombined).toContain("Calling gpt-5.1, gemini-3-pro");
+    expect(logsCombined).toContain("Calling gpt-5.1, grok-4.1");
     expect((logsCombined.match(/Calling gpt-5.1/g) ?? []).length).toBe(1);
     expect((logsCombined.match(/Tip: no files attached/g) ?? []).length).toBe(1);
     expect(
@@ -584,7 +584,7 @@ describe("performSessionRun", () => {
       ...baseSessionMeta,
       models: [
         { model: "gpt-5.1", status: "running" },
-        { model: "gemini-3-pro", status: "running" },
+        { model: "grok-4.1", status: "running" },
       ],
     } as SessionMetadata;
 
@@ -607,7 +607,7 @@ describe("performSessionRun", () => {
           logPath: "log-ok",
         },
       ],
-      rejected: [{ model: "gemini-3-pro" as ModelName, reason: new Error("boom") }],
+      rejected: [{ model: "grok-4.1" as ModelName, reason: new Error("boom") }],
       elapsedMs: 500,
     };
     vi.mocked(runMultiModelApiSession).mockResolvedValue(summary);
@@ -615,7 +615,7 @@ describe("performSessionRun", () => {
     await expect(
       performSessionRun({
         sessionMeta,
-        runOptions: { ...baseRunOptions, models: ["gpt-5.1", "gemini-3-pro"] },
+        runOptions: { ...baseRunOptions, models: ["gpt-5.1", "grok-4.1"] },
         mode: "api",
         cwd: "/tmp",
         log: logSpy,
@@ -625,11 +625,11 @@ describe("performSessionRun", () => {
     ).rejects.toThrow("boom");
 
     const logsCombined = logSpy.mock.calls.map((c) => c[0]).join("\n");
-    expect(logsCombined).toContain("Calling gpt-5.1, gemini-3-pro");
+    expect(logsCombined).toContain("Calling gpt-5.1, grok-4.1");
     expect(logsCombined).toContain("1/2 models");
     expect(logsCombined).toContain("Multi-model result: partial success, 1/2 succeeded");
     expect(logsCombined).toContain("Failures:");
-    expect(logsCombined).toContain("gemini-3-pro: boom");
+    expect(logsCombined).toContain("grok-4.1: boom");
 
     writeSpy.mockRestore();
     logSpy.mockRestore();
@@ -646,7 +646,7 @@ describe("performSessionRun", () => {
       ...baseSessionMeta,
       models: [
         { model: "gpt-5.1", status: "running" },
-        { model: "gemini-3-pro", status: "running" },
+        { model: "grok-4.1", status: "running" },
       ],
     } as SessionMetadata;
 
@@ -662,7 +662,7 @@ describe("performSessionRun", () => {
           logPath: "log-ok",
         },
       ],
-      rejected: [{ model: "gemini-3-pro" as ModelName, reason: new Error("boom") }],
+      rejected: [{ model: "grok-4.1" as ModelName, reason: new Error("boom") }],
       elapsedMs: 500,
     };
     vi.mocked(runMultiModelApiSession).mockResolvedValue(summary);
@@ -671,7 +671,7 @@ describe("performSessionRun", () => {
       sessionMeta,
       runOptions: {
         ...baseRunOptions,
-        models: ["gpt-5.1", "gemini-3-pro"],
+        models: ["gpt-5.1", "grok-4.1"],
         partialMode: "ok",
       },
       mode: "api",
@@ -885,7 +885,7 @@ describe("performSessionRun", () => {
       ...baseSessionMeta,
       models: [
         { model: "gpt-5.1", status: "running" } as SessionModelRun,
-        { model: "gemini-3-pro", status: "running" } as SessionModelRun,
+        { model: "grok-4.1", status: "running" } as SessionModelRun,
       ],
     } as SessionMetadata;
 
@@ -924,7 +924,7 @@ describe("performSessionRun", () => {
 
     await performSessionRun({
       sessionMeta,
-      runOptions: { ...baseRunOptions, models: ["gpt-5.1", "gemini-3-pro"], prompt: "short" },
+      runOptions: { ...baseRunOptions, models: ["gpt-5.1", "grok-4.1"], prompt: "short" },
       mode: "api",
       cwd: "/tmp",
       log: logSpy,
@@ -958,7 +958,7 @@ describe("performSessionRun", () => {
       ...baseSessionMeta,
       models: [
         { model: "gpt-5.1", status: "running" } as SessionModelRun,
-        { model: "gemini-3-pro", status: "running" } as SessionModelRun,
+        { model: "grok-4.1", status: "running" } as SessionModelRun,
       ],
     } as SessionMetadata;
 
@@ -985,10 +985,10 @@ describe("performSessionRun", () => {
           logPath: "log-gpt",
         },
         {
-          model: "gemini-3-pro" as ModelName,
+          model: "grok-4.1" as ModelName,
           usage: { inputTokens: 1, outputTokens: 1, reasoningTokens: 0, totalTokens: 2, cost: 0 },
           answerText: "ans-gem",
-          logPath: "log-gemini",
+          logPath: "log-grok",
         },
       ],
       rejected: [],
@@ -1002,7 +1002,7 @@ describe("performSessionRun", () => {
         ...baseRunOptions,
         prompt: "a".repeat(100),
         file: [tmpFile],
-        models: ["gpt-5.1", "gemini-3-pro"],
+        models: ["gpt-5.1", "grok-4.1"],
       },
       mode: "api",
       cwd: tmpDir,
@@ -1012,7 +1012,7 @@ describe("performSessionRun", () => {
     });
 
     const logsCombined = logSpy.mock.calls.map((c) => c[0]).join("\n");
-    expect(logsCombined).toContain("Calling gpt-5.1, gemini-3-pro");
+    expect(logsCombined).toContain("Calling gpt-5.1, grok-4.1");
     expect(logsCombined).not.toContain("Tip: no files attached");
     expect(logsCombined).not.toContain("Tip: brief prompts often yield generic answers");
 

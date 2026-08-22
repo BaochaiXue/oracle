@@ -11,7 +11,6 @@ import type {
   RunOracleDeps,
   RunOracleOptions,
   RunOracleResult,
-  ModelName,
 } from "./types.js";
 import { DEFAULT_SYSTEM_PROMPT, TOKENIZER_OPTIONS } from "./config.js";
 import { readFiles } from "./files.js";
@@ -33,7 +32,6 @@ import { maskApiKey } from "./logging.js";
 import { startHeartbeat } from "../heartbeat.js";
 import { startOscProgress } from "./oscProgress.js";
 import { createFsAdapter } from "./fsAdapter.js";
-import { resolveGeminiModelId } from "./gemini.js";
 import { resolveClaudeModelId } from "./claude.js";
 import { renderMarkdownAnsi } from "../cli/markdownRenderer.js";
 import { createMarkdownStreamer } from "markdansi";
@@ -47,6 +45,7 @@ import {
   resolveOverriddenApiModel,
 } from "./modelResolver.js";
 import { validateProviderRouting } from "./providerRouting.js";
+import { assertOracleModelAllowed } from "./forkPolicy.js";
 import {
   formatRouteTargetForLog,
   resolveProviderRoute,
@@ -105,7 +104,6 @@ function runtimeKeySource({
     return "OPENROUTER_API_KEY";
   }
   if (route.model.startsWith("gpt")) return "OPENAI_API_KEY";
-  if (route.model.startsWith("gemini")) return "GEMINI_API_KEY";
   if (route.model.startsWith("claude")) return "ANTHROPIC_API_KEY";
   if (route.model.startsWith("grok")) return "XAI_API_KEY";
   return optionsApiKey ? "apiKey option" : route.keySource;
@@ -156,6 +154,7 @@ export async function runOracle(
   options: RunOracleOptions,
   deps: RunOracleDeps = {},
 ): Promise<RunOracleResult> {
+  assertOracleModelAllowed(options.model);
   const {
     apiKey: optionsApiKey = options.apiKey,
     cwd = process.cwd(),
@@ -316,15 +315,14 @@ export async function runOracle(
     options.httpTimeoutMs > 0
       ? options.httpTimeoutMs
       : timeoutMs;
-  // Track the concrete model id we dispatch to (especially for Gemini preview aliases)
+  // Track the concrete model id we dispatch to.
   const effectiveModelId =
     azureDeploymentName ??
     options.effectiveModelId ??
-    // A user-config apiModel override (known models only) wins over Gemini alias remapping.
+    // A user-config apiModel override (known models only) wins over the bundled model id.
     resolveOverriddenApiModel(options.model, options.modelOverrides) ??
-    (options.model.startsWith("gemini")
-      ? resolveGeminiModelId(options.model)
-      : (modelConfig.apiModel ?? modelConfig.model));
+    modelConfig.apiModel ??
+    modelConfig.model;
   if (!isPreview && options.previousResponseId) {
     log(dim(`Continuing from response ${options.previousResponseId}`));
   }
@@ -451,19 +449,7 @@ export async function runOracle(
     };
   }
 
-  const proxyCompatibleBaseUrl =
-    !isAzureOpenAI && baseUrl && (isOpenRouterBaseUrl(baseUrl) || isCustomBaseUrl(baseUrl))
-      ? baseUrl
-      : undefined;
-  const apiEndpoint = isAzureOpenAI
-    ? undefined
-    : modelConfig.model.startsWith("gemini")
-      ? proxyCompatibleBaseUrl
-      : proxyCompatibleBaseUrl
-        ? proxyCompatibleBaseUrl
-        : modelConfig.model.startsWith("claude")
-          ? baseUrl
-          : baseUrl;
+  const apiEndpoint = isAzureOpenAI ? undefined : baseUrl;
   const clientInstance: ClientLike =
     client ??
     clientFactory(apiKey, {
@@ -472,9 +458,7 @@ export async function runOracle(
       model: options.model,
       resolvedModelId: modelConfig.model.startsWith("claude")
         ? resolveClaudeModelId(effectiveModelId)
-        : modelConfig.model.startsWith("gemini")
-          ? resolveGeminiModelId(effectiveModelId as ModelName)
-          : effectiveModelId,
+        : effectiveModelId,
       httpTimeoutMs,
     });
   logVerbose("Dispatching request to API...");

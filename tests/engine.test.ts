@@ -7,7 +7,6 @@ const envWithoutKey = { ...process.env } as NodeJS.ProcessEnv;
 delete envWithoutKey.OPENAI_API_KEY;
 delete envWithoutKey.AZURE_OPENAI_ENDPOINT;
 delete envWithoutKey.ANTHROPIC_API_KEY;
-delete envWithoutKey.GEMINI_API_KEY;
 delete envWithoutKey.XAI_API_KEY;
 delete envWithoutKey.OPENROUTER_API_KEY;
 delete envWithKey.ORACLE_ENGINE;
@@ -69,7 +68,7 @@ describe("resolveEngine", () => {
   });
 
   it("does not treat model-specific provider keys as default GPT API readiness", () => {
-    const env = { ...envWithoutKey, GEMINI_API_KEY: "gm-test" };
+    const env = { ...envWithoutKey, ANTHROPIC_API_KEY: "ak-test" };
     const engine = resolveEngine({ engine: undefined, browserFlag: false, env });
     expect(engine).toBe<EngineMode>("browser");
   });

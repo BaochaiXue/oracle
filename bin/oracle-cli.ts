@@ -62,7 +62,6 @@ import { formatIntroLine } from "../src/cli/tagline.js";
 import { warnIfOversizeBundle } from "../src/cli/bundleWarnings.js";
 import { formatRenderedMarkdown } from "../src/cli/renderOutput.js";
 import { resolveRenderFlag, resolveRenderPlain } from "../src/cli/renderFlags.js";
-import { resolveGeminiModelId } from "../src/oracle/geminiModels.js";
 import type { StatusOptions } from "../src/cli/sessionCommand.js";
 import { isErrorLogged } from "../src/cli/errorUtils.js";
 import { resolveOutputPath } from "../src/cli/writeOutputPath.js";
@@ -168,12 +167,8 @@ interface CliOptions extends OptionValues {
   browserDebugPort?: number;
   remoteHost?: string;
   remoteToken?: string;
-  youtube?: string;
   generateImage?: string;
-  editImage?: string;
   output?: string;
-  aspect?: string;
-  geminiShowThoughts?: boolean;
   copyMarkdown?: boolean;
   copy?: boolean;
   verbose?: boolean;
@@ -444,13 +439,13 @@ program
   .option("-s, --slug <words>", "Custom session slug (3-5 words).")
   .option(
     "-m, --model <model>",
-    "Model to target (gpt-5.5-pro API default). In browser mode, gpt-5-pro is the stable alias for the effective GPT-5.6 Pro target: ChatGPT selects model GPT-5.6 Sol with reasoning tier Pro. GPT-5.6 aliases gpt-5.6 and gpt-5.6-sol work with the OpenAI API or ChatGPT browser. Browser mode also supports current GPT-5.5/GPT-5.4 targets; retired GPT-5.2 base/Instant/Thinking aliases are API-only. Other API targets include gpt-5.1-codex, gpt-5.2, gpt-5.2-instant, Gemini, Claude, and custom model IDs.",
+    "Model to target (gpt-5.5-pro API default). In browser mode, gpt-5-pro is the stable alias for the effective GPT-5.6 Pro target: ChatGPT selects model GPT-5.6 Sol with reasoning tier Pro. GPT-5.6 aliases gpt-5.6 and gpt-5.6-sol work with the OpenAI API or ChatGPT browser. Browser mode also supports current GPT-5.5/GPT-5.4 targets; retired GPT-5.2 base/Instant/Thinking aliases are API-only. Other API targets include gpt-5.1-codex, gpt-5.2, gpt-5.2-instant, Claude, and custom model IDs.",
     normalizeModelOption,
   )
   .addOption(
     new Option(
       "--models <models>",
-      'Comma-separated API model list to query in parallel (e.g., "gpt-5.5-pro,gemini-3-pro").',
+      'Comma-separated API model list to query in parallel (e.g., "gpt-5.5-pro,claude-4.6-sonnet").',
     )
       .argParser(collectModelList)
       .default([]),
@@ -474,7 +469,7 @@ program
   .addOption(
     new Option(
       "-e, --engine <mode>",
-      "Execution engine (api | browser). Browser engine: GPT models automate ChatGPT; Gemini models use a cookie-based client for gemini.google.com. If omitted, oracle picks api when OPENAI_API_KEY is set, otherwise browser.",
+      "Execution engine (api | browser). Browser engine automates ChatGPT. If omitted, oracle picks api when OPENAI_API_KEY is set, otherwise browser.",
     ).choices(["api", "browser"]),
   )
   .addOption(
@@ -904,35 +899,11 @@ program
   )
   .addOption(
     new Option(
-      "--youtube <url>",
-      "YouTube video URL to analyze (Gemini web/cookie mode only; uses your signed-in Chrome cookies for gemini.google.com).",
-    ),
-  )
-  .addOption(
-    new Option(
       "--generate-image <file>",
-      "Generate image and save to file (Gemini browser mode; ChatGPT browser mode saves downloadable image artifacts when present).",
-    ),
-  )
-  .addOption(
-    new Option(
-      "--edit-image <file>",
-      "Edit existing image (Gemini browser mode; for ChatGPT attach source images with --file and use --generate-image for output).",
+      "Generate an image in ChatGPT browser mode and save the downloaded artifact.",
     ),
   )
   .addOption(new Option("--output <file>", "Output file path for image operations."))
-  .addOption(
-    new Option(
-      "--aspect <ratio>",
-      "Aspect ratio for image generation: 16:9, 1:1, 4:3, 3:4 (Gemini web/cookie mode only).",
-    ),
-  )
-  .addOption(
-    new Option(
-      "--gemini-show-thoughts",
-      "Display Gemini thinking process (Gemini web/cookie mode only).",
-    ).default(false),
-  )
   .option(
     "--retain-hours <hours>",
     "Prune stored sessions older than this many hours before running (set 0 to disable).",
@@ -1727,7 +1698,7 @@ function assertFollowupSupported({
   if (engine !== "api") {
     throw new Error("--followup requires --engine api.");
   }
-  if (model.startsWith("gemini") || model.startsWith("claude")) {
+  if (model.startsWith("claude")) {
     throw new Error(
       `--followup is only supported for OpenAI Responses API runs. Model ${model} uses a provider client without previous_response_id support.`,
     );
@@ -2175,20 +2146,18 @@ async function runRootCommand(options: CliOptions): Promise<void> {
       ? inferModelFromLabel(cliModelArg || DEFAULT_MODEL)
       : resolveApiModel(cliModelArg || DEFAULT_MODEL);
   const primaryModelCandidate = normalizedMultiModels[0] ?? resolvedModelCandidate;
-  const isGemini = primaryModelCandidate.startsWith("gemini");
   const isCodex = primaryModelCandidate.startsWith("gpt-5.1-codex");
   const isClaude = primaryModelCandidate.startsWith("claude");
   const userForcedBrowser = options.browser || options.engine === "browser";
   const browserExplicitlyRequested = browserEngineRequested;
-  const isBrowserCompatible = (model: string) =>
-    model.startsWith("gpt-") || model.startsWith("gemini");
+  const isBrowserCompatible = (model: string) => model.startsWith("gpt-");
   const hasNonBrowserCompatibleTarget =
     normalizedMultiModels.length > 0
       ? normalizedMultiModels.some((model) => !isBrowserCompatible(model))
       : !isBrowserCompatible(resolvedModelCandidate);
   if (browserExplicitlyRequested && hasNonBrowserCompatibleTarget) {
     throw new Error(
-      "Browser engine only supports GPT and Gemini models. Re-run with --engine api for Grok, Claude, or other models.",
+      "Browser engine only supports ChatGPT GPT models. Re-run with --engine api for Grok, Claude, or other models.",
     );
   }
   if (engine === "browser" && hasNonBrowserCompatibleTarget) {
@@ -2208,19 +2177,16 @@ async function runRootCommand(options: CliOptions): Promise<void> {
   if (remoteHost && normalizedMultiModels.length > 0) {
     throw new Error("--remote-host does not support --models yet. Use API engine locally instead.");
   }
-  const resolvedModel: ModelName =
-    normalizedMultiModels[0] ?? (isGemini ? resolveApiModel(cliModelArg) : resolvedModelCandidate);
-  // A user-config apiModel override (known models only) wins over Gemini alias
-  // remapping and the bundled apiModel, so it becomes the on-wire request id.
+  const resolvedModel: ModelName = normalizedMultiModels[0] ?? resolvedModelCandidate;
+  // A user-config apiModel override (known models only) wins over the bundled
+  // apiModel, so it becomes the on-wire request id.
   const apiModelOverrides = engine === "api" ? userConfig.modelOverrides : undefined;
   const overriddenApiModel = resolveOverriddenApiModel(resolvedModel, apiModelOverrides);
   const effectiveModelId =
     overriddenApiModel ??
-    (resolvedModel.startsWith("gemini")
-      ? resolveGeminiModelId(resolvedModel)
-      : isKnownModel(resolvedModel)
-        ? (MODEL_CONFIGS[resolvedModel].apiModel ?? resolvedModel)
-        : resolvedModel);
+    (isKnownModel(resolvedModel)
+      ? (MODEL_CONFIGS[resolvedModel].apiModel ?? resolvedModel)
+      : resolvedModel);
   const resolvedBaseUrl = normalizeBaseUrl(
     options.baseUrl ?? (isClaude ? process.env.ANTHROPIC_BASE_URL : process.env.OPENAI_BASE_URL),
   );
@@ -2487,22 +2453,6 @@ async function runRootCommand(options: CliOptions): Promise<void> {
       executeBrowser: createRemoteBrowserExecutor({ host: remoteHost, token: remoteToken }),
     };
     console.log(chalk.dim(`Routing browser automation to remote host ${remoteHost}`));
-  } else if (browserConfig && activeModel.startsWith("gemini")) {
-    const { createGeminiWebExecutor } = await import("../src/gemini-web/index.js");
-    browserDeps = {
-      executeBrowser: createGeminiWebExecutor({
-        youtube: options.youtube,
-        generateImage: options.generateImage,
-        editImage: options.editImage,
-        outputPath: options.output,
-        aspectRatio: options.aspect,
-        showThoughts: options.geminiShowThoughts,
-      }),
-    };
-    console.log(chalk.dim("Using Gemini web client for browser automation"));
-    if (browserConfig.modelStrategy && browserConfig.modelStrategy !== "select") {
-      console.log(chalk.dim("Browser model strategy is ignored for Gemini web runs."));
-    }
   }
   const remoteExecutionActive = Boolean(browserDeps);
 
@@ -2569,12 +2519,8 @@ async function runRootCommand(options: CliOptions): Promise<void> {
       followupModel: resolvedOptions.followupModel,
       browserResumeConversationUrl: resolvedOptions.browserResumeConversationUrl,
       waitPreference,
-      youtube: options.youtube,
       generateImage: options.generateImage,
-      editImage: options.editImage,
       outputPath: options.output,
-      aspectRatio: options.aspect,
-      geminiShowThoughts: options.geminiShowThoughts,
     },
     process.cwd(),
     notifications,
@@ -2883,22 +2829,6 @@ async function restartSession(sessionId: string, options: RestartCommandOptions)
       executeBrowser: createRemoteBrowserExecutor({ host: remoteHost, token: remoteToken }),
     };
     console.log(chalk.dim(`Routing browser automation to remote host ${remoteHost}`));
-  } else if (browserConfig && runOptions.model.startsWith("gemini")) {
-    const { createGeminiWebExecutor } = await import("../src/gemini-web/index.js");
-    browserDeps = {
-      executeBrowser: createGeminiWebExecutor({
-        youtube: storedOptions.youtube,
-        generateImage: storedOptions.generateImage,
-        editImage: storedOptions.editImage,
-        outputPath: storedOptions.outputPath,
-        aspectRatio: storedOptions.aspectRatio,
-        showThoughts: storedOptions.geminiShowThoughts,
-      }),
-    };
-    console.log(chalk.dim("Using Gemini web client for browser automation"));
-    if (browserConfig.modelStrategy && browserConfig.modelStrategy !== "select") {
-      console.log(chalk.dim("Browser model strategy is ignored for Gemini web runs."));
-    }
   }
   const remoteExecutionActive = Boolean(browserDeps);
 
@@ -2920,12 +2850,8 @@ async function restartSession(sessionId: string, options: RestartCommandOptions)
       followupSessionId: storedOptions.followupSessionId,
       followupModel: storedOptions.followupModel,
       waitPreference,
-      youtube: storedOptions.youtube,
       generateImage: storedOptions.generateImage,
-      editImage: storedOptions.editImage,
       outputPath: storedOptions.outputPath,
-      aspectRatio: storedOptions.aspectRatio,
-      geminiShowThoughts: storedOptions.geminiShowThoughts,
     },
     cwd,
     notifications,
@@ -3183,9 +3109,6 @@ function resolveRestartWaitPreference({
 
 function resolveEffectiveModelIdForRun(model: ModelName, stored?: string): string {
   if (stored) return stored;
-  if (model.startsWith("gemini")) {
-    return resolveGeminiModelId(model);
-  }
   return isKnownModel(model) ? (MODEL_CONFIGS[model].apiModel ?? model) : model;
 }
 

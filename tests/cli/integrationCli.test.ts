@@ -394,9 +394,9 @@ module.exports = () => ({
   );
 
   test(
-    "keeps Gemini dry-runs in browser mode when Azure env is present",
+    "rejects Gemini at the root CLI before engine routing",
     async () => {
-      const oracleHome = await mkdtemp(path.join(os.tmpdir(), "oracle-provider-gemini-azure-"));
+      const oracleHome = await mkdtemp(path.join(os.tmpdir(), "oracle-reject-gemini-"));
       const env: NodeJS.ProcessEnv = {
         ...process.env,
         // biome-ignore lint/style/useNamingConvention: env var name
@@ -411,27 +411,27 @@ module.exports = () => ({
         ORACLE_DISABLE_KEYTAR: "1",
       };
       delete env.OPENAI_API_KEY;
-      delete env.GEMINI_API_KEY;
+      delete env.XAI_API_KEY;
       delete env.OPENROUTER_API_KEY;
       delete env.ORACLE_ENGINE;
 
-      const { stdout } = await execFileAsync(
-        process.execPath,
-        [
-          "--import",
-          "tsx",
-          CLI_ENTRY,
-          "--dry-run",
-          "--prompt",
-          "Gemini browser route check",
-          "--model",
-          "gemini-3.1-pro",
-        ],
-        { env },
-      );
-
-      expect(stdout).toContain("[preview] Oracle");
-      expect(stdout).toContain("browser mode (target=Gemini 3.1 Pro; requested=gemini-3.1-pro)");
+      await expect(
+        execFileAsync(
+          process.execPath,
+          [
+            "--import",
+            "tsx",
+            CLI_ENTRY,
+            "--dry-run",
+            "--prompt",
+            "Disallowed provider route check",
+            "--model",
+            "gemini-3.1-pro",
+          ],
+          { env },
+        ),
+      ).rejects.toMatchObject({ stderr: expect.stringMatching(/GPT-5\.6 Pro.*OpenCLI.*Gemini/) });
+      expect(await readdir(oracleHome)).toEqual([]);
 
       await rm(oracleHome, { recursive: true, force: true });
     },
@@ -460,7 +460,7 @@ module.exports = () => ({
         ORACLE_DISABLE_KEYTAR: "1",
       };
       delete env.OPENAI_API_KEY;
-      delete env.GEMINI_API_KEY;
+      delete env.XAI_API_KEY;
       delete env.OPENROUTER_API_KEY;
 
       const { stdout } = await execFileAsync(
@@ -507,7 +507,7 @@ module.exports = () => ({
       env.ORACLE_DISABLE_KEYTAR = "1";
       delete env.ORACLE_ENGINE;
       delete env.OPENAI_API_KEY;
-      delete env.GEMINI_API_KEY;
+      delete env.XAI_API_KEY;
       delete env.OPENROUTER_API_KEY;
 
       const { stdout } = await execFileAsync(
@@ -552,7 +552,7 @@ module.exports = () => ({
       env.ORACLE_ENGINE = "api";
       env.ORACLE_DISABLE_KEYTAR = "1";
       delete env.OPENAI_API_KEY;
-      delete env.GEMINI_API_KEY;
+      delete env.XAI_API_KEY;
       delete env.OPENROUTER_API_KEY;
 
       const { stdout } = await execFileAsync(
@@ -588,7 +588,7 @@ module.exports = () => ({
       env.ORACLE_DISABLE_KEYTAR = "1";
       delete env.ORACLE_ENGINE;
       delete env.OPENAI_API_KEY;
-      delete env.GEMINI_API_KEY;
+      delete env.XAI_API_KEY;
       delete env.OPENROUTER_API_KEY;
 
       for (const scenario of [
@@ -1269,53 +1269,6 @@ module.exports = () => ({
   );
 
   test(
-    "rejects --followup for Gemini API runs",
-    async () => {
-      const oracleHome = await mkdtemp(
-        path.join(os.tmpdir(), "oracle-followup-gemini-unsupported-"),
-      );
-      const env = {
-        ...process.env,
-        // biome-ignore lint/style/useNamingConvention: env var name
-        GEMINI_API_KEY: "gk-integration",
-        // biome-ignore lint/style/useNamingConvention: env var name
-        ORACLE_HOME_DIR: oracleHome,
-        // biome-ignore lint/style/useNamingConvention: env var name
-        ORACLE_DISABLE_KEYTAR: "1",
-      };
-
-      try {
-        await execFileAsync(
-          process.execPath,
-          [
-            "--import",
-            "tsx",
-            CLI_ENTRY,
-            "--prompt",
-            "Gemini followup",
-            "--model",
-            "gemini-3-pro",
-            "--followup",
-            "resp_parent_1234",
-          ],
-          { env },
-        );
-        throw new Error("Expected oracle CLI to fail but it succeeded.");
-      } catch (error) {
-        const stderr =
-          error && typeof error === "object" && error !== null && "stderr" in error
-            ? String((error as { stderr?: unknown }).stderr ?? "")
-            : "";
-        expect(stderr).toMatch(/only supported for OpenAI Responses API runs/i);
-        expect(stderr).toMatch(/gemini-3-pro/i);
-      }
-
-      await rm(oracleHome, { recursive: true, force: true });
-    },
-    INTEGRATION_TIMEOUT,
-  );
-
-  test(
     "rejects --followup for Claude API runs",
     async () => {
       const oracleHome = await mkdtemp(
@@ -1757,7 +1710,7 @@ module.exports = () => ({
   );
 
   test(
-    "runs multi-model across OpenAI, Gemini, and Claude with custom factory",
+    "runs multi-model across OpenAI, Grok, and Claude with custom factory",
     async () => {
       const oracleHome = await mkdtemp(path.join(os.tmpdir(), "oracle-multi-"));
       const env = {
@@ -1765,7 +1718,7 @@ module.exports = () => ({
         // biome-ignore lint/style/useNamingConvention: env var name
         OPENAI_API_KEY: "sk-integration",
         // biome-ignore lint/style/useNamingConvention: env var name
-        GEMINI_API_KEY: "gk-integration",
+        XAI_API_KEY: "xai-integration",
         // biome-ignore lint/style/useNamingConvention: env var name
         ANTHROPIC_API_KEY: "ak-integration",
         // biome-ignore lint/style/useNamingConvention: env var name
@@ -1785,7 +1738,7 @@ module.exports = () => ({
           "--prompt",
           "Multi run test prompt long enough",
           "--models",
-          "gpt-5.1,gemini-3-pro,claude-4.6-sonnet",
+          "gpt-5.1,grok-4.1,claude-4.6-sonnet",
         ],
         { env },
       );
@@ -1799,7 +1752,7 @@ module.exports = () => ({
         (m: { model: string }) => m.model,
       );
       expect(selectedModels).toEqual(
-        expect.arrayContaining(["gpt-5.1", "gemini-3-pro", "claude-4.6-sonnet"]),
+        expect.arrayContaining(["gpt-5.1", "grok-4.1", "claude-4.6-sonnet"]),
       );
       expect(metadata.status).toBe("completed");
 
@@ -1818,7 +1771,7 @@ module.exports = () => ({
         // biome-ignore lint/style/useNamingConvention: env var name
         OPENAI_API_KEY: "sk-integration",
         // biome-ignore lint/style/useNamingConvention: env var name
-        GEMINI_API_KEY: "gk-integration",
+        XAI_API_KEY: "xai-integration",
         // biome-ignore lint/style/useNamingConvention: env var name
         ORACLE_HOME_DIR: oracleHome,
         // biome-ignore lint/style/useNamingConvention: env var name
@@ -1826,7 +1779,7 @@ module.exports = () => ({
         // biome-ignore lint/style/useNamingConvention: env var name
         ORACLE_NO_DETACH: "1",
         // biome-ignore lint/style/useNamingConvention: env var name
-        ORACLE_TEST_FAIL_MODEL: "gemini-3-pro",
+        ORACLE_TEST_FAIL_MODEL: "grok-4.1",
       };
 
       const result = await execFileAsync(
@@ -1838,7 +1791,7 @@ module.exports = () => ({
           "--prompt",
           "Partial multi-model run prompt long enough",
           "--models",
-          "gpt-5.1,gemini-3-pro",
+          "gpt-5.1,grok-4.1",
           "--allow-partial",
           "--write-output",
           outputPath,
@@ -1871,13 +1824,13 @@ module.exports = () => ({
             usage: { totalTokens: 20 },
           },
           {
-            model: "gemini-3-pro",
+            model: "grok-4.1",
             status: "error",
           },
         ],
       });
       expect(manifest.models[0].logPath).toContain("gpt-5.1.log");
-      expect(manifest.models[1].logPath).toContain("gemini-3-pro.log");
+      expect(manifest.models[1].logPath).toContain("grok-4.1.log");
 
       const savedIndex = result.stdout.indexOf("Saved outputs:");
       const logsIndex = result.stdout.indexOf("Run logs:");
@@ -1887,7 +1840,7 @@ module.exports = () => ({
       expect(logsIndex).toBeGreaterThan(savedIndex);
       expect(failuresIndex).toBeGreaterThan(logsIndex);
       expect(result.stdout).toContain("Output manifest:");
-      expect(result.stdout).toContain("gemini-3-pro");
+      expect(result.stdout).toContain("grok-4.1");
 
       await execFileAsync(
         process.execPath,
@@ -1913,7 +1866,7 @@ module.exports = () => ({
         // biome-ignore lint/style/useNamingConvention: env var name
         OPENAI_API_KEY: "sk-integration",
         // biome-ignore lint/style/useNamingConvention: env var name
-        GEMINI_API_KEY: "gk-integration",
+        XAI_API_KEY: "xai-integration",
         // biome-ignore lint/style/useNamingConvention: env var name
         ANTHROPIC_API_KEY: "ak-integration",
         // biome-ignore lint/style/useNamingConvention: env var name
@@ -1933,7 +1886,7 @@ module.exports = () => ({
           "--prompt",
           "Shorthand multi-model normalization prompt that is safely over twenty characters.",
           "--models",
-          "gpt-5.1,gemini,sonnet",
+          "gpt-5.1,grok,sonnet",
         ],
         { env },
       );
@@ -1947,7 +1900,7 @@ module.exports = () => ({
         (m: { model: string }) => m.model,
       );
       expect(selectedModels).toEqual(
-        expect.arrayContaining(["gpt-5.1", "gemini-3-pro", "claude-4.6-sonnet"]),
+        expect.arrayContaining(["gpt-5.1", "grok-4.1", "claude-4.6-sonnet"]),
       );
       expect(metadata.status).toBe("completed");
 

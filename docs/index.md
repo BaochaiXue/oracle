@@ -109,7 +109,7 @@ automatic fallback in either direction. Oracle remains the session authority,
 and OpenCLI owns only the browser bridge handoff. Read
 [OpenCLI alternative transport](opencli-transport.md).
 
-Attach-running personal Chrome, remote Chrome, API providers, Gemini web, MCP,
+Attach-running personal Chrome, remote Chrome, API providers, MCP,
 Deep Research, image generation, and render/copy are separate documented paths.
 
 ## Pick the next guide

@@ -49,7 +49,7 @@ describe("runMultiModelApiSession", () => {
       options: {},
     };
 
-    const models: ModelName[] = ["gpt-5.2-pro", "gpt-5.1", "gemini-3-pro"];
+    const models: ModelName[] = ["gpt-5.2-pro", "gpt-5.1", "grok-4.1"];
 
     const updateModelRun = vi.fn();
 
@@ -108,7 +108,7 @@ describe("runMultiModelApiSession", () => {
 
     expect(runOracleImpl).toHaveBeenCalledTimes(models.length);
     expect(summary.fulfilled.map((r) => r.model)).toEqual(
-      expect.arrayContaining(["gpt-5.1", "gemini-3-pro"]),
+      expect.arrayContaining(["gpt-5.1", "grok-4.1"]),
     );
     expect(summary.rejected).toEqual([
       expect.objectContaining({ model: "gpt-5.2-pro", reason: expect.any(OracleResponseError) }),
@@ -130,7 +130,7 @@ describe("runMultiModelApiSession", () => {
     expect(statusUpdatesFor("gpt-5.2-pro")).toContain("running");
     expect(statusUpdatesFor("gpt-5.2-pro")).toContain("error");
     expect(statusUpdatesFor("gpt-5.1")).toContain("completed");
-    expect(statusUpdatesFor("gemini-3-pro")).toContain("completed");
+    expect(statusUpdatesFor("grok-4.1")).toContain("completed");
     const failedUpdate = updateModelRun.mock.calls
       .filter(([, model]) => model === "gpt-5.2-pro")
       .map(([, , updates]) => updates)
@@ -234,7 +234,7 @@ describe("runMultiModelApiSession", () => {
       options: {},
     };
 
-    const models: ModelName[] = ["gemini-3-pro", "gpt-5.1"];
+    const models: ModelName[] = ["grok-4.1", "gpt-5.1"];
     const order: string[] = [];
 
     const store: SessionStore = {
@@ -277,7 +277,7 @@ describe("runMultiModelApiSession", () => {
     };
 
     const runOracleImpl = vi.fn(async ({ model }: RunOracleOptions) => {
-      const delay = model === "gemini-3-pro" ? 5 : 15;
+      const delay = model === "grok-4.1" ? 5 : 15;
       await new Promise((resolve) => setTimeout(resolve, delay));
       return successResult(model as ModelName);
     });
@@ -301,7 +301,7 @@ describe("runMultiModelApiSession", () => {
     vi.useRealTimers();
 
     expect(order).toHaveLength(2);
-    expect(order.sort()).toEqual(["gemini-3-pro", "gpt-5.1"]);
+    expect(order.sort()).toEqual(["gpt-5.1", "grok-4.1"]);
   });
 
   test("forwards OSC progress updates to stdout during multi-model runs", async () => {

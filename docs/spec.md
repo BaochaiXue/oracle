@@ -7,7 +7,7 @@ This page captures the design constraints. The README and the rest of the docs d
 
 ## Goals
 
-1. **One CLI to every Pro model.** Same session and bundle vocabulary whether the answer comes from ChatGPT GPT-5.6 Pro in the browser, GPT-5.5 Pro through an API, Gemini Pro, or Claude Opus.
+1. **A stable Pro lane.** The canonical fork route sends reviews to ChatGPT GPT-5.6 Pro through the dedicated browser; API providers are explicit secondary modes.
 2. **Runs on every box.** macOS first, Linux and Windows supported. Browser mode optional.
 3. **Stable artifacts.** `--render` is contracted; session metadata stays machine-readable; stderr is for humans.
 4. **Bundles, not chats.** Oracle assembles a deterministic prompt+files bundle and ships it once. Chat-style interactivity is the agent's job, not Oracle's.
@@ -41,7 +41,7 @@ Auto-pick rules:
 3. Else if `OPENAI_API_KEY` (or another supported API key) is set, use API.
 4. Else use browser.
 
-Browser engine handles ChatGPT (GPT-\* models) and Gemini (Gemini-\*); everything else is API only.
+Browser engine handles ChatGPT GPT models only; everything else is API only.
 
 ## Session lifecycle states
 

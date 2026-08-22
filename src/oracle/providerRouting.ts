@@ -2,6 +2,7 @@ import { MODEL_CONFIGS } from "./config.js";
 import { PromptValidationError } from "./errors.js";
 import { isKnownModel } from "./modelResolver.js";
 import type { ApiProviderMode, AzureOptions, ModelConfig, ModelName } from "./types.js";
+import { assertOracleModelAllowed } from "./forkPolicy.js";
 
 export const AZURE_DEPLOYMENT_REQUIRED_MESSAGE =
   "Azure mode requires --azure-deployment unless your deployment is literally gpt-5.5-pro. Pass --azure-deployment <deployment> (or set AZURE_OPENAI_DEPLOYMENT), or rerun with --provider openai/--no-azure to use api.openai.com.";
@@ -28,6 +29,7 @@ export function resolveProviderRoutingState({
   providerMode = "auto",
   azure,
 }: ProviderRoutingInput): ProviderRoutingState {
+  assertOracleModelAllowed(model);
   const knownModelConfig = isKnownModel(model) ? MODEL_CONFIGS[model] : undefined;
   const provider = knownModelConfig?.provider ?? inferNativeProviderFromModelId(model) ?? "other";
   const azureEndpoint = azure?.endpoint?.trim();
@@ -98,10 +100,8 @@ function inferNativeProviderFromModelId(model: ModelName): ModelConfig["provider
   const providerPrefix = model.includes("/") ? model.split("/", 1)[0] : undefined;
   if (providerPrefix === "openai") return "openai";
   if (providerPrefix === "anthropic") return "anthropic";
-  if (providerPrefix === "google") return "google";
   if (providerPrefix === "xai") return "xai";
   if (model.startsWith("claude")) return "anthropic";
-  if (model.startsWith("gemini")) return "google";
   if (model.startsWith("grok")) return "xai";
   return undefined;
 }

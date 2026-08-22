@@ -46,7 +46,7 @@ JSON5 parsing, so trailing commas and comments are allowed.
     autoReattachDelayMs: 0, // delay before starting periodic auto-reattach attempts (0 = disabled)
     autoReattachIntervalMs: 0, // interval between auto-reattach attempts (0 = disabled)
     autoReattachTimeoutMs: 120000, // time budget per auto-reattach attempt (default: 2m)
-    modelStrategy: "select", // select | current | ignore (ChatGPT only; ignored for Gemini web)
+    modelStrategy: "select", // select | current | ignore
     thinkingTime: "pro", // light | standard | extended | extra-high | pro | heavy
     researchMode: "off", // off | deep (ChatGPT Deep Research; browser only)
     manualLogin: true, // historical name for the canonical persistent isolated profile
@@ -176,7 +176,7 @@ Under the hood, pruning removes entire session directories (metadata + logs). Th
 
 - `--followup <sessionId|responseId>` continues a saved ChatGPT browser conversation or an OpenAI/Azure Responses API run. Browser followup reopens the exact conversation and inherits the parent's browser profile, configuration, and model; API followup accepts a stored Oracle session id or a `resp_...` Responses API id.
 - For multi-model OpenAI/Azure parent sessions, add `--followup-model <model>` to choose which parent model response to chain from.
-- Gemini/Claude API runs and custom `--base-url` providers are intentionally excluded because Oracle cannot preserve `previous_response_id` through those adapters.
+- Claude API runs and custom `--base-url` providers are intentionally excluded because Oracle cannot preserve `previous_response_id` through those adapters.
 - If the session id is wrong, Oracle now prints actionable guidance and suggests close matches from local session history.
 
 Example:

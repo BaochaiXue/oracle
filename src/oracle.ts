@@ -26,7 +26,6 @@ export {
 } from "./oracle/errors.js";
 export { createDefaultClientFactory } from "./oracle/client.js";
 export { runOracle, extractTextOutput } from "./oracle/run.js";
-export { resolveGeminiModelId } from "./oracle/gemini.js";
 export { classifyProviderFailure } from "./oracle/providerFailures.js";
 export type {
   ProviderFailureClassification,

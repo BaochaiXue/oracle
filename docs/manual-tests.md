@@ -37,34 +37,19 @@ for both cycles, and `promptSubmitted:false`. The profile and requested port
 must be idle before the test. No debugging consent click and no ChatGPT
 conversation should be created.
 
-### Gemini browser mode (Gemini web / cookies)
-
-Run this whenever you touch the Gemini web client or the `--generate-image` / `--edit-image` plumbing.
-
-Prereqs:
-
-- Chrome profile is signed into `gemini.google.com`.
-
-1. Generate an image:
-   `pnpm run oracle -- --engine browser --model gemini-3-pro --prompt "a cute robot holding a banana" --generate-image /tmp/gemini-gen.jpg --aspect 1:1 --wait --verbose`
-   - Confirm the output file exists and is a real image (`file /tmp/gemini-gen.jpg`).
-2. Edit an image:
-   `pnpm run oracle -- --engine browser --model gemini-3-pro --prompt "add sunglasses" --edit-image /tmp/gemini-gen.jpg --output /tmp/gemini-edit.jpg --wait --verbose`
-   - Confirm `/tmp/gemini-edit.jpg` exists.
-
 ### Multi-Model CLI fan-out
 
 Run this whenever you touch the session store, CLI session views, or TUI wiring for multi-model runs.
 
 1. Kick off an API multi-run:
-   `pnpm run oracle -- --models "gpt-5.1-pro,gemini-3-pro" --prompt "Compare the moon & sun."`
-   - Expect stdout to print sequential sections, one per model (`[gpt-5.1-pro] …` followed by `[gemini-3-pro] …`). No interleaved tokens.
+   `pnpm run oracle -- --models "gpt-5.1-pro,grok-4.1" --prompt "Compare the moon & sun."`
+   - Expect stdout to print sequential sections, one per model (`[gpt-5.1-pro] …` followed by `[grok-4.1] …`). No interleaved tokens.
 2. Capture the session ID from the summary line. Run `oracle session --status --model gpt-5.1-pro`.
    - Table should collapse to sessions that include GPT-5.1 Pro and show status icons (✓/⌛/✖) per model.
 3. Inspect detailed logs: `oracle session <id>`
    - The metadata header now includes a `Models:` block with one line per model plus token counts.
-   - When prompted, pick `View gemini-3-pro log` and confirm only that model’s stream renders. Refresh should keep completed models intact even if others still run.
-4. Model filter path: `oracle session <id> --model gemini-3-pro`
+   - When prompted, pick `View grok-4.1 log` and confirm only that model’s stream renders. Refresh should keep completed models intact even if others still run.
+4. Model filter path: `oracle session <id> --model grok-4.1`
    - Attach mode should error if that model is missing (double-check by filtering for a bogus model), otherwise it should render the prompt + single-model log only.
 
 ### Write-output export (API)
@@ -75,8 +60,8 @@ Run this when touching session serialization, file IO helpers, or CLI flag plumb
    - Expect the test to create a temp `write-output-live.md` file containing `write-output e2e`.
 2. Manual spot-check: `oracle --prompt "answer file smoke" --write-output /tmp/out.md --wait`
    - Confirm `/tmp/out.md` exists with the answer text and a trailing newline.
-3. Multi-model spot-check: `oracle --models "gpt-5.1-pro,gemini-3-pro" --prompt "two files" --write-output /tmp/out.md --wait`
-   - Confirm `/tmp/out.gpt-5.1-pro.md` and `/tmp/out.gemini-3-pro.md` exist with distinct content.
+3. Multi-model spot-check: `oracle --models "gpt-5.1-pro,grok-4.1" --prompt "two files" --write-output /tmp/out.md --wait`
+   - Confirm `/tmp/out.gpt-5.1-pro.md` and `/tmp/out.grok-4.1.md` exist with distinct content.
 
 ### CLI guardrails and perf traces
 

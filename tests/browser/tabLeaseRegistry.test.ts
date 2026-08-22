@@ -236,29 +236,29 @@ describe("tabLeaseRegistry", () => {
       const lease = await acquireBrowserTabLease(dir, {
         maxConcurrentTabs: 1,
         timeoutMs: 500,
-        sessionId: "gemini-session",
-        ownerKind: "gemini",
-        purpose: "deep-think",
+        sessionId: "project-sources-session",
+        ownerKind: "project-sources",
+        purpose: "project-sources",
       });
       await lease.update({
         chromeHost: "127.0.0.1",
         chromePort: 9333,
-        chromeTargetId: "gemini-target",
-        tabUrl: "https://gemini.google.com/app",
+        chromeTargetId: "project-sources-target",
+        tabUrl: "https://chatgpt.com/g/g-p-project/project",
         ownsTarget: true,
       });
 
       let snapshot = await readBrowserTargetRegistry(dir);
       expect(snapshot.leases[0]).toMatchObject({
-        chromeTargetId: "gemini-target",
-        ownerKind: "gemini",
+        chromeTargetId: "project-sources-target",
+        ownerKind: "project-sources",
       });
       expect(snapshot.targets).toEqual([
         expect.objectContaining({
-          targetId: "gemini-target",
-          ownerKind: "gemini",
+          targetId: "project-sources-target",
+          ownerKind: "project-sources",
           disposition: "active",
-          sessionId: "gemini-session",
+          sessionId: "project-sources-session",
         }),
       ]);
 
@@ -267,7 +267,7 @@ describe("tabLeaseRegistry", () => {
       snapshot = await readBrowserTargetRegistry(dir);
       expect(snapshot.leases).toEqual([]);
       expect(snapshot.targets[0]).toMatchObject({
-        targetId: "gemini-target",
+        targetId: "project-sources-target",
         disposition: "recoverable",
         recoveryKind: "awaiting-response",
       });

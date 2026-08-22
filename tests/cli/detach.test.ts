@@ -12,10 +12,10 @@ describe("shouldDetachSession", () => {
     expect(result).toBe(false);
   });
 
-  test("disables detach for non-pro models (gemini, codex, 5.1)", () => {
+  test("disables detach for non-pro models (Grok, Codex, 5.1)", () => {
     const result = shouldDetachSession({
       engine: "api",
-      model: "gemini-3-pro",
+      model: "grok-4.1",
       waitPreference: true,
       disableDetachEnv: false,
     });

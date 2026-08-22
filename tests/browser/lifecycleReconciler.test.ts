@@ -209,8 +209,8 @@ describe("generic target reconciliation", () => {
       registry: registry([
         {
           targetId: "recover-target",
-          ownerKind: "gemini",
-          purpose: "deep-think",
+          ownerKind: "recovery",
+          purpose: "reattach",
           disposition: "recoverable",
           controllerPid: 123,
           createdAt: "2026-08-22T00:00:00.000Z",
@@ -218,7 +218,7 @@ describe("generic target reconciliation", () => {
         },
       ]),
       targets: [
-        { targetId: "recover-target", type: "page", url: "https://gemini.google.com/app" },
+        { targetId: "recover-target", type: "page", url: "https://chatgpt.com/c/recover" },
         { targetId: "manual-gpt", type: "page", url: "https://chatgpt.com/c/manual" },
       ],
       nowMs: Date.parse("2026-08-22T01:00:00.000Z"),
@@ -229,18 +229,16 @@ describe("generic target reconciliation", () => {
     expect(plan.untrackedChatgptTargetIds).toEqual(["manual-gpt"]);
   });
 
-  test("closes completed generic owned targets from ChatGPT, Project Sources, Gemini, and recovery", () => {
-    const owned = (["chatgpt", "project-sources", "gemini", "recovery"] as const).map(
-      (ownerKind, index) => ({
-        targetId: `owned-${index}`,
-        ownerKind,
-        purpose: "test",
-        disposition: "terminal" as const,
-        controllerPid: 999,
-        createdAt: "2026-08-22T00:00:00.000Z",
-        updatedAt: "2026-08-22T00:00:00.000Z",
-      }),
-    );
+  test("closes completed generic owned targets from ChatGPT, Project Sources, and recovery", () => {
+    const owned = (["chatgpt", "project-sources", "recovery"] as const).map((ownerKind, index) => ({
+      targetId: `owned-${index}`,
+      ownerKind,
+      purpose: "test",
+      disposition: "terminal" as const,
+      controllerPid: 999,
+      createdAt: "2026-08-22T00:00:00.000Z",
+      updatedAt: "2026-08-22T00:00:00.000Z",
+    }));
     const plan = planOwnedTargetReconciliation({
       profileDir: profile,
       sessions: [],
@@ -251,7 +249,7 @@ describe("generic target reconciliation", () => {
         url: "https://example.test/owned",
       })),
     });
-    expect(plan.terminalOwnedTargetIds).toEqual(["owned-0", "owned-1", "owned-2", "owned-3"]);
+    expect(plan.terminalOwnedTargetIds).toEqual(["owned-0", "owned-1", "owned-2"]);
   });
 
   test("coalesces multiple registered sentinels instead of protecting every blank", () => {
@@ -488,7 +486,7 @@ describe("generic target reconciliation", () => {
       const lease = await acquireBrowserTabLease(dir, {
         maxConcurrentTabs: 1,
         timeoutMs: 250,
-        ownerKind: "gemini",
+        ownerKind: "chatgpt",
         purpose: "concurrent-run",
       });
       expect(lease.id).toBeTruthy();

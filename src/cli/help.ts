@@ -95,7 +95,7 @@ function renderHelpFooter(program: Command, colors: HelpColors): string {
       "Build the bundle, print it, and copy it for manual paste into ChatGPT.",
     ),
     formatExample(
-      `${program.name()} --prompt "Cross-check the data layer assumptions" --models gpt-5.2-pro,gemini-3-pro --file "src/**/*.ts"`,
+      `${program.name()} --prompt "Cross-check the data layer assumptions" --models gpt-5.2-pro,claude-4.6-sonnet --file "src/**/*.ts"`,
       "Run multiple API models in one go and aggregate cost/usage.",
     ),
     formatExample(

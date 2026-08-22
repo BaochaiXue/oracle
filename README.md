@@ -367,16 +367,21 @@ after dispatch. See [OpenCLI alternative transport](docs/opencli-transport.md).
 | Workload-aware Pro timing guard           |           Yes |                       Yes |
 | Automatic cross-transport fallback        |         Never |                     Never |
 
-Attach-running against a personal Chrome, remote Chrome, Gemini web, API, MCP,
-and render paths remain available as separate explicit modes. Their trust and
-account boundaries are documented in [Browser Mode](docs/browser-mode.md).
+Attach-running against a personal Chrome, remote Chrome, API, MCP, and render
+paths remain available as separate explicit modes. Their trust and account
+boundaries are documented in [Browser Mode](docs/browser-mode.md).
+
+This fork reserves its canonical Oracle lane for ChatGPT GPT-5.6 Pro over
+direct CDP. Gemini is intentionally outside Oracle; use OpenCLI separately for
+incidental Gemini queries. There is no Oracle fallback or dispatch to Gemini.
 
 ## Upstream Oracle
 
 Oracle is a CLI and MCP server that bundles a prompt with selected files, sends
 that context through an API or signed-in browser, and stores the result as a
-session. Upstream supports OpenAI, Azure OpenAI, Anthropic, Gemini, xAI,
-OpenRouter, compatible endpoints, direct Chrome automation, and a manual
+session. Unlike this fork, upstream also supports Gemini alongside OpenAI,
+Azure OpenAI, Anthropic, xAI, OpenRouter, compatible endpoints, direct Chrome
+automation, and a manual
 `--render --copy` fallback.
 
 Upstream packages:
