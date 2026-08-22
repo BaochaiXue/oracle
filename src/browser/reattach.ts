@@ -15,7 +15,7 @@ import {
 import type { BrowserLogger, ChromeClient } from "./types.js";
 import {
   launchChrome,
-  connectToChrome,
+  connectWithNewTab,
   positionChromeWindowOffscreen,
   connectToRemoteChromeTarget,
   listRemoteChromeTargets,
@@ -48,6 +48,8 @@ import {
   hasProResponseTimingReceiptMarker,
   verifyStoredProResponseWorkloadTiming,
 } from "./proResponseTiming.js";
+import { acquireBrowserTabLease, type BrowserTabLease } from "./tabLeaseRegistry.js";
+import { reconcileBrowserTargets } from "./lifecycleReconciler.js";
 
 export interface ReattachDeps {
   listTargets?: () => Promise<TargetInfoLite[]>;
@@ -61,6 +63,8 @@ export interface ReattachDeps {
     config: BrowserSessionConfig | undefined,
   ) => Promise<ReattachResult>;
   promptPreview?: string;
+  sessionId?: string;
+  persistRuntime?: (runtime: BrowserRuntimeMetadata) => Promise<void>;
 }
 
 export interface ReattachResult {
@@ -334,185 +338,281 @@ async function resumeBrowserSessionViaNewChrome(
   if (manualLogin) {
     await ensureDedicatedBrowserProfileDirectory(userDataDir);
   }
-  const chrome = await launchChrome(resolved, userDataDir, logger);
+  let tabLease: BrowserTabLease | null = await acquireBrowserTabLease(userDataDir, {
+    maxConcurrentTabs: resolved.maxConcurrentTabs,
+    timeoutMs: resolved.timeoutMs,
+    logger,
+    sessionId: deps.sessionId,
+    ownerKind: "recovery",
+    purpose: "session-reattach",
+  });
+  let chrome: Awaited<ReturnType<typeof launchChrome>>;
+  try {
+    chrome = await launchChrome(resolved, userDataDir, logger);
+  } catch (error) {
+    const handle = tabLease;
+    tabLease = null;
+    await handle?.release();
+    throw error;
+  }
   const chromeHost = (chrome as unknown as { host?: string }).host ?? "127.0.0.1";
-  const client = await connectToChrome(chrome.port, logger, chromeHost);
-  const { Network, Page, Runtime, DOM, Target } = client;
-
-  if (Runtime?.enable) {
-    await Runtime.enable();
+  const startupReceipt = await reconcileBrowserTargets({
+    profileDir: userDataDir,
+    host: chromeHost,
+    port: chrome.port,
+    logger,
+    apply: true,
+    ensureSentinel: Boolean(resolved.keepBrowser),
+  });
+  if (startupReceipt.status !== "complete") {
+    logger(
+      `[browser] Reattach startup reconciliation ${startupReceipt.status}; retry receipt is durable.`,
+    );
   }
-  if (DOM && typeof DOM.enable === "function") {
-    await DOM.enable();
-  }
-  if (!resolved.headless && resolved.hideWindow) {
-    await positionChromeWindowOffscreen(client, logger);
-  }
-  let appliedCookies = 0;
-  if (!manualLogin && resolved.cookieSync) {
-    appliedCookies = await syncCookies(Network, resolved.url, resolved.chromeProfile, logger, {
-      allowErrors: resolved.allowCookieErrors,
-      filterNames: resolved.cookieNames ?? undefined,
-      inlineCookies: resolved.inlineCookies ?? undefined,
-      cookiePath: resolved.chromeCookiePath ?? undefined,
-      waitMs: resolved.cookieSyncWaitMs ?? 0,
+  const connection = await connectWithNewTab(chrome.port, logger, "about:blank", chromeHost, {
+    fallbackToDefault: false,
+    retries: 6,
+    retryDelayMs: 500,
+    preserveWindowFocus: manualLogin,
+  });
+  const client = connection.client;
+  const ownedTargetId = connection.targetId;
+  let currentUrl = "about:blank";
+  if (ownedTargetId) {
+    await tabLease.update({
+      chromeHost,
+      chromePort: chrome.port,
+      chromeTargetId: ownedTargetId,
+      tabUrl: currentUrl,
+      ownsTarget: true,
     });
   }
-
-  await clearStaleChatGptConversationCookies(Network, Target, logger, {
-    preserveConversationIds: [
-      runtime.conversationId,
-      extractConversationIdFromUrl(runtime.tabUrl ?? ""),
-      extractConversationIdFromUrl(resolved.url),
-    ],
+  const buildRuntime = (
+    disposition: NonNullable<BrowserRuntimeMetadata["browserDisposition"]>,
+    reconcileNeeded = false,
+    baseRuntime: BrowserRuntimeMetadata = runtime,
+  ): BrowserRuntimeMetadata => ({
+    ...baseRuntime,
+    browserTransport: "cdp",
+    chromePid: chrome.pid,
+    chromePort: chrome.port,
+    chromeHost,
+    userDataDir,
+    chromeTargetId: ownedTargetId,
+    tabUrl: currentUrl,
+    conversationId: extractConversationIdFromUrl(currentUrl) ?? runtime.conversationId,
+    browserDisposition: disposition,
+    recoveryKind: disposition === "recoverable" ? "awaiting-response" : undefined,
+    recoveryExpiresAt:
+      disposition === "recoverable"
+        ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+        : undefined,
+    reconcileNeeded: reconcileNeeded || undefined,
+    controllerPid: process.pid,
   });
-
-  await navigateToChatGPT(Page, Runtime, CHATGPT_URL, logger);
-  await ensureNotBlocked(Runtime, resolved.headless, logger);
-  await ensureLoggedIn(Runtime, logger, { appliedCookies });
-  if (resolved.url !== CHATGPT_URL) {
-    await navigateToChatGPT(Page, Runtime, resolved.url, logger);
-    await ensureNotBlocked(Runtime, resolved.headless, logger);
-  }
-  await ensurePromptReady(Runtime, resolved.inputTimeoutMs, logger);
-
-  const conversationUrl = buildConversationUrl(runtime, resolved.url);
-  if (conversationUrl) {
-    logger(`Reopening conversation at ${conversationUrl}`);
-    await navigateToChatGPT(Page, Runtime, conversationUrl, logger);
-    await ensureNotBlocked(Runtime, resolved.headless, logger);
-    await ensurePromptReady(Runtime, resolved.inputTimeoutMs, logger);
-  } else {
-    const opened = await openConversationFromSidebarWithRetry(
-      Runtime,
-      {
-        conversationId:
-          runtime.conversationId ?? extractConversationIdFromUrl(runtime.tabUrl ?? ""),
-        preferProjects:
-          resolved.url !== CHATGPT_URL ||
-          Boolean(
-            runtime.tabUrl && (/\/g\//.test(runtime.tabUrl) || runtime.tabUrl.includes("/project")),
-          ),
-        promptPreview: deps.promptPreview,
-      },
-      15_000,
+  await deps.persistRuntime?.(buildRuntime("active", startupReceipt.status !== "complete"));
+  const { Network, Page, Runtime, DOM, Target } = client;
+  let cleaned = false;
+  const cleanup = async (
+    disposition: "completed" | "recoverable",
+    baseRuntime: BrowserRuntimeMetadata = runtime,
+  ) => {
+    if (cleaned) return;
+    cleaned = true;
+    await client.close().catch(() => undefined);
+    const recoveryExpiresAt =
+      disposition === "recoverable"
+        ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+        : undefined;
+    await tabLease?.setTargetDisposition(disposition === "completed" ? "terminal" : "recoverable", {
+      tabUrl: currentUrl,
+      recoveryKind: disposition === "recoverable" ? "awaiting-response" : undefined,
+      recoveryExpiresAt,
+    });
+    let reconciliationFailed = false;
+    const handle = tabLease;
+    tabLease = null;
+    let releaseError: unknown;
+    try {
+      await handle?.release({
+        onRelease: async () => {
+          const receipt = await reconcileBrowserTargets({
+            profileDir: userDataDir,
+            host: chromeHost,
+            port: chrome.port,
+            logger,
+            apply: true,
+            ensureSentinel: Boolean(resolved.keepBrowser || disposition === "recoverable"),
+          });
+          reconciliationFailed = reconciliationFailed || receipt.status !== "complete";
+        },
+      });
+    } catch (error) {
+      reconciliationFailed = true;
+      releaseError = error;
+    }
+    await deps.persistRuntime?.(
+      buildRuntime(
+        disposition,
+        reconciliationFailed || startupReceipt.status !== "complete",
+        baseRuntime,
+      ),
     );
-    if (!opened) {
-      throw new Error("Unable to locate prior ChatGPT conversation in sidebar.");
-    }
-    await waitForLocationChange(Runtime, 15_000);
-  }
-
-  const waitForHydration = deps.waitForConversationHydration ?? waitForResumedConversationHydration;
-  await waitForHydration(Runtime, resolved.inputTimeoutMs, logger, {
-    requirePriorTurns: true,
-    requirePromptReady: false,
-    expectedConversationUrl: conversationUrl ?? undefined,
-  });
-  const waitForResponse = deps.waitForAssistantResponse ?? waitForAssistantResponse;
-  const captureMarkdown = deps.captureAssistantMarkdown ?? captureAssistantMarkdown;
-  const timeoutMs = resolved.timeoutMs ?? 120_000;
-  const cleanup = async () => {
-    if (client && typeof client.close === "function") {
-      try {
-        await client.close();
-      } catch {
-        // ignore
-      }
-    }
-    if (!resolved.keepBrowser) {
-      try {
-        await chrome.kill();
-      } catch {
-        // ignore
-      }
+    if (releaseError) throw releaseError;
+    if (disposition === "completed" && !resolved.keepBrowser && !reconciliationFailed) {
+      await Promise.resolve(chrome.kill());
       if (manualLogin) {
-        await cleanupStaleProfileState(userDataDir, logger, { lockRemovalMode: "never" }).catch(
-          () => undefined,
-        );
+        await cleanupStaleProfileState(userDataDir, logger, { lockRemovalMode: "never" });
       } else {
-        await rm(userDataDir, { recursive: true, force: true }).catch(() => undefined);
+        await rm(userDataDir, { recursive: true, force: true });
       }
     }
   };
-  let verifiedProTurnIndex: number | null;
+
   try {
-    verifiedProTurnIndex = await verifyCommittedProTurnIdentity(Runtime, runtime);
-  } catch (error) {
-    await cleanup();
-    throw error;
-  }
-  const minTurnIndex =
-    verifiedProTurnIndex ??
-    (await readPromptPreviewTurnIndex(Runtime, deps.promptPreview)) ??
-    (deps.promptPreview ? null : await readConversationTurnIndex(Runtime, logger));
-  if (resolved.researchMode === "deep") {
-    const waitForDeepResearch = deps.waitForDeepResearchCompletion ?? waitForDeepResearchCompletion;
-    const researchResult = await waitForDeepResearch(
-      Runtime,
-      logger,
-      timeoutMs,
-      minTurnIndex ?? undefined,
-      Page,
-      client,
-      {
-        requireScopedTargetOwner: true,
-      },
-    );
-    let responseRuntime: BrowserRuntimeMetadata;
-    try {
-      responseRuntime = {
-        ...verifyStoredProResponseWorkloadTiming({
+    if (Runtime?.enable) await Runtime.enable();
+    if (DOM && typeof DOM.enable === "function") await DOM.enable();
+    if (!resolved.headless && resolved.hideWindow) {
+      await positionChromeWindowOffscreen(client, logger);
+    }
+    let appliedCookies = 0;
+    if (!manualLogin && resolved.cookieSync) {
+      appliedCookies = await syncCookies(Network, resolved.url, resolved.chromeProfile, logger, {
+        allowErrors: resolved.allowCookieErrors,
+        filterNames: resolved.cookieNames ?? undefined,
+        inlineCookies: resolved.inlineCookies ?? undefined,
+        cookiePath: resolved.chromeCookiePath ?? undefined,
+        waitMs: resolved.cookieSyncWaitMs ?? 0,
+      });
+    }
+    await clearStaleChatGptConversationCookies(Network, Target, logger, {
+      preserveConversationIds: [
+        runtime.conversationId,
+        extractConversationIdFromUrl(runtime.tabUrl ?? ""),
+        extractConversationIdFromUrl(resolved.url),
+      ],
+    });
+    await navigateToChatGPT(Page, Runtime, CHATGPT_URL, logger);
+    currentUrl = CHATGPT_URL;
+    await ensureNotBlocked(Runtime, resolved.headless, logger);
+    await ensureLoggedIn(Runtime, logger, { appliedCookies });
+    if (resolved.url !== CHATGPT_URL) {
+      await navigateToChatGPT(Page, Runtime, resolved.url, logger);
+      currentUrl = resolved.url;
+      await ensureNotBlocked(Runtime, resolved.headless, logger);
+    }
+    await ensurePromptReady(Runtime, resolved.inputTimeoutMs, logger);
+
+    const conversationUrl = buildConversationUrl(runtime, resolved.url);
+    if (conversationUrl) {
+      logger(`Reopening conversation at ${conversationUrl}`);
+      await navigateToChatGPT(Page, Runtime, conversationUrl, logger);
+      currentUrl = conversationUrl;
+      await ensureNotBlocked(Runtime, resolved.headless, logger);
+      await ensurePromptReady(Runtime, resolved.inputTimeoutMs, logger);
+    } else {
+      const opened = await openConversationFromSidebarWithRetry(
+        Runtime,
+        {
+          conversationId:
+            runtime.conversationId ?? extractConversationIdFromUrl(runtime.tabUrl ?? ""),
+          preferProjects:
+            resolved.url !== CHATGPT_URL ||
+            Boolean(
+              runtime.tabUrl &&
+              (/\/g\//.test(runtime.tabUrl) || runtime.tabUrl.includes("/project")),
+            ),
+          promptPreview: deps.promptPreview,
+        },
+        15_000,
+      );
+      if (!opened) throw new Error("Unable to locate prior ChatGPT conversation in sidebar.");
+      await waitForLocationChange(Runtime, 15_000);
+      const locationResult = await Runtime.evaluate({
+        expression: "location.href",
+        returnByValue: true,
+      });
+      if (typeof locationResult.result?.value === "string") {
+        currentUrl = locationResult.result.value;
+      }
+    }
+    await tabLease?.update({ tabUrl: currentUrl });
+    await deps.persistRuntime?.(buildRuntime("active", startupReceipt.status !== "complete"));
+
+    const waitForHydration =
+      deps.waitForConversationHydration ?? waitForResumedConversationHydration;
+    await waitForHydration(Runtime, resolved.inputTimeoutMs, logger, {
+      requirePriorTurns: true,
+      requirePromptReady: false,
+      expectedConversationUrl: conversationUrl ?? undefined,
+    });
+    const waitForResponse = deps.waitForAssistantResponse ?? waitForAssistantResponse;
+    const captureMarkdown = deps.captureAssistantMarkdown ?? captureAssistantMarkdown;
+    const timeoutMs = resolved.timeoutMs ?? 120_000;
+    const verifiedProTurnIndex = await verifyCommittedProTurnIdentity(Runtime, runtime);
+    const minTurnIndex =
+      verifiedProTurnIndex ??
+      (await readPromptPreviewTurnIndex(Runtime, deps.promptPreview)) ??
+      (deps.promptPreview ? null : await readConversationTurnIndex(Runtime, logger));
+    if (resolved.researchMode === "deep") {
+      const waitForDeepResearch =
+        deps.waitForDeepResearchCompletion ?? waitForDeepResearchCompletion;
+      const researchResult = await waitForDeepResearch(
+        Runtime,
+        logger,
+        timeoutMs,
+        minTurnIndex ?? undefined,
+        Page,
+        client,
+        { requireScopedTargetOwner: true },
+      );
+      const responseRuntime = buildRuntime(
+        "completed",
+        false,
+        verifyStoredProResponseWorkloadTiming({
           answer: researchResult.text,
           runtime,
           capturedAt: new Date(),
         }),
-        browserDisposition: "completed",
-        recoveryKind: undefined,
-        recoveryExpiresAt: undefined,
+      );
+      await cleanup("completed", responseRuntime);
+      return {
+        answerText: researchResult.text,
+        answerMarkdown: researchResult.text,
+        runtime: responseRuntime,
       };
-    } finally {
-      await cleanup();
     }
-    return {
-      answerText: researchResult.text,
-      answerMarkdown: researchResult.text,
-      runtime: responseRuntime,
-    };
-  }
-  const promptEcho = buildPromptEchoMatcher(deps.promptPreview);
-  const answer = await waitForResponse(Runtime, timeoutMs, logger, minTurnIndex ?? undefined);
-  const recovered = await recoverPromptEcho(
-    Runtime,
-    answer,
-    promptEcho,
-    logger,
-    minTurnIndex,
-    timeoutMs,
-  );
-  const markdown = (await captureMarkdown(Runtime, recovered.meta, logger)) ?? recovered.text;
-  const aligned = alignPromptEchoMarkdown(recovered.text, markdown, promptEcho, logger);
-  let responseRuntime: BrowserRuntimeMetadata;
-  try {
-    responseRuntime = {
-      ...verifyStoredProResponseWorkloadTiming({
+    const promptEcho = buildPromptEchoMatcher(deps.promptPreview);
+    const answer = await waitForResponse(Runtime, timeoutMs, logger, minTurnIndex ?? undefined);
+    const recovered = await recoverPromptEcho(
+      Runtime,
+      answer,
+      promptEcho,
+      logger,
+      minTurnIndex,
+      timeoutMs,
+    );
+    const markdown = (await captureMarkdown(Runtime, recovered.meta, logger)) ?? recovered.text;
+    const aligned = alignPromptEchoMarkdown(recovered.text, markdown, promptEcho, logger);
+    const responseRuntime = buildRuntime(
+      "completed",
+      false,
+      verifyStoredProResponseWorkloadTiming({
         answer: aligned.answerText,
         runtime,
         capturedAt: new Date(),
       }),
-      browserDisposition: "completed",
-      recoveryKind: undefined,
-      recoveryExpiresAt: undefined,
+    );
+    await cleanup("completed", responseRuntime);
+    return {
+      answerText: aligned.answerText,
+      answerMarkdown: aligned.answerMarkdown,
+      runtime: responseRuntime,
     };
-  } finally {
-    await cleanup();
+  } catch (error) {
+    await cleanup("recoverable");
+    throw error;
   }
-
-  return {
-    answerText: aligned.answerText,
-    answerMarkdown: aligned.answerMarkdown,
-    runtime: responseRuntime,
-  };
 }
 
 function isResponseTimingError(error: unknown): boolean {

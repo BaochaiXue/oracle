@@ -1159,6 +1159,49 @@ browserCommand
     printDedicatedBrowserSmokeResult(result, commandOptions.json);
   });
 
+browserCommand
+  .command("reconcile-tabs")
+  .description(
+    "Plan or apply bounded target cleanup for the exact running dedicated Oracle Chrome profile.",
+  )
+  .option(
+    "--profile-dir <path>",
+    "Dedicated Chrome user-data directory (default: browser.manualLoginProfileDir or ~/.oracle/browser-profile).",
+  )
+  .option("--port <number>", "Require this exact loopback CDP port.", parseIntOption)
+  .option("--chrome-path <path>", "Explicit Chrome for Testing executable path.")
+  .option("--plan", "Print the reconciliation plan without changing targets (default).", false)
+  .option("--apply", "Apply the bounded reconciliation plan.", false)
+  .option(
+    "--include-untracked-chatgpt",
+    "Also close untracked ChatGPT pages in this exact dedicated profile (requires --apply to mutate).",
+    false,
+  )
+  .option("--json", "Print structured JSON.", false)
+  .option("-v, --verbose", "Show reconciliation details.", false)
+  .action(async (commandOptions) => {
+    if (commandOptions.plan && commandOptions.apply) {
+      throw new Error("Choose either --plan or --apply, not both.");
+    }
+    const { printDedicatedBrowserReconcileResult, runDedicatedBrowserReconcile } =
+      await import("../src/cli/dedicatedBrowser.js");
+    const userConfig = (await loadUserConfig({ includeProject: false })).config;
+    const result = await runDedicatedBrowserReconcile({
+      ...commandOptions,
+      profileDir: path.resolve(
+        commandOptions.profileDir ??
+          userConfig.browser?.manualLoginProfileDir ??
+          path.join(os.homedir(), ".oracle", "browser-profile"),
+      ),
+      chromePath: commandOptions.chromePath ?? userConfig.browser?.chromePath ?? undefined,
+      apply: commandOptions.apply === true,
+    });
+    printDedicatedBrowserReconcileResult(result, commandOptions.json);
+    if (result.mode === "apply" && result.status === "failed") {
+      process.exitCode = 1;
+    }
+  });
+
 const projectSourcesCommand = program
   .command("project-sources")
   .description("Manage ChatGPT Project Sources as explicit shared project context.");

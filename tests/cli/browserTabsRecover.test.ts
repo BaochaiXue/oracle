@@ -55,12 +55,14 @@ describe("harvestSessionBrowserOutput recovery fallback", () => {
       .mockResolvedValueOnce(completedHarvest);
 
     const fakeChrome = { kill: vi.fn(), process: { unref: vi.fn() } };
+    const finish = vi.fn(async () => undefined);
     const recoverConversationTab = vi.fn(async (meta: SessionMetadata) => ({
       host: "127.0.0.1",
       port: 53999,
       url: meta.browser?.runtime?.tabUrl ?? "",
       ref: "saved-conversation",
       chrome: fakeChrome,
+      finish,
     }));
 
     const updateSession = vi.fn(async () => {});
@@ -104,6 +106,7 @@ describe("harvestSessionBrowserOutput recovery fallback", () => {
     // Default closeAfterRecover is false — Chrome stays alive for the user.
     expect(fakeChrome.kill).not.toHaveBeenCalled();
     expect(fakeChrome.process.unref).toHaveBeenCalledTimes(1);
+    expect(finish).toHaveBeenCalledWith("completed", { ensureSentinel: true });
   });
 
   test("does not recover when recoverIfMissing is false; surfaces the original error", async () => {
@@ -143,12 +146,14 @@ describe("harvestSessionBrowserOutput recovery fallback", () => {
       )
       .mockResolvedValueOnce(completedHarvest);
 
+    const finish = vi.fn(async () => undefined);
     const recoverConversationTab = vi.fn(async () => ({
       host: "127.0.0.1",
       port: 53998,
       url: "https://chatgpt.com/c/saved-conversation",
       ref: "saved-conversation",
       chrome: { kill: vi.fn() },
+      finish,
     }));
 
     vi.doMock("../../src/browser/liveTabs.js", () => ({
@@ -172,6 +177,7 @@ describe("harvestSessionBrowserOutput recovery fallback", () => {
 
     expect(recoverConversationTab).toHaveBeenCalledTimes(1);
     expect(harvestChatGptTab).toHaveBeenCalledTimes(2);
+    expect(finish).toHaveBeenCalledWith("completed", { ensureSentinel: true });
   });
 
   test("closes the recovered Chrome when closeAfterRecover is true", async () => {
@@ -180,6 +186,7 @@ describe("harvestSessionBrowserOutput recovery fallback", () => {
       .mockRejectedValueOnce(new Error("No ChatGPT tab matched"))
       .mockResolvedValueOnce(completedHarvest);
     const fakeChrome = { kill: vi.fn(), process: { unref: vi.fn() } };
+    const finish = vi.fn(async () => undefined);
     vi.doMock("../../src/browser/liveTabs.js", () => ({
       collectChatGptTabs: vi.fn(),
       DEFAULT_REMOTE_CHROME_HOST: "127.0.0.1",
@@ -196,6 +203,7 @@ describe("harvestSessionBrowserOutput recovery fallback", () => {
         url: "https://chatgpt.com/c/saved-conversation",
         ref: "saved-conversation",
         chrome: fakeChrome,
+        finish,
       })),
     }));
     vi.doMock("../../src/sessionStore.js", () => ({
@@ -209,6 +217,7 @@ describe("harvestSessionBrowserOutput recovery fallback", () => {
     });
     expect(fakeChrome.kill).toHaveBeenCalledTimes(1);
     expect(fakeChrome.process.unref).not.toHaveBeenCalled();
+    expect(finish).toHaveBeenCalledWith("completed", { ensureSentinel: false });
   });
 
   test("does not recover an explicit browser tab override", async () => {

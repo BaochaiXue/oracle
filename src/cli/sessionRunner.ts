@@ -1243,6 +1243,12 @@ async function autoReattachUntilComplete({
       };
       const result = await resumeBrowserSession(runtime, reattachConfig, logger, {
         promptPreview: sessionMeta.promptPreview,
+        sessionId: sessionMeta.id,
+        persistRuntime: async (nextRuntime) => {
+          await sessionStore.updateSession(sessionMeta.id, {
+            browser: { ...browserMetadata, runtime: nextRuntime },
+          });
+        },
       });
       captureSucceeded = true;
       const responseRuntime = result.runtime ?? runtime;

@@ -113,13 +113,17 @@ const GEMINI_CDP_COOKIE_URLS = [
 async function loadGeminiCookiesFromCDP(
   browserConfig: BrowserRunOptions["config"],
   log?: BrowserLogger,
+  runContext?: Pick<BrowserRunOptions, "sessionId" | "runtimeHintCb">,
 ): Promise<GeminiCookieLoadResult> {
   const session = await openGeminiBrowserSession({
     browserConfig,
     keepBrowserDefault: false,
     purpose: "Gemini manual-login cookie extraction (no keychain)",
     log,
+    sessionId: runContext?.sessionId,
+    runtimeHintCb: runContext?.runtimeHintCb,
   });
+  let completed = false;
   try {
     const client = session.client;
     const { Network, Page } = client;
@@ -128,6 +132,7 @@ async function loadGeminiCookiesFromCDP(
 
     log?.("[gemini-web] Navigating to gemini.google.com for sign-in/cookie capture...");
     await Page.navigate({ url: "https://gemini.google.com" });
+    await session.updateTabUrl("https://gemini.google.com");
     await delay(2_000);
 
     const pollTimeoutMs = 5 * 60_000;
@@ -142,6 +147,7 @@ async function loadGeminiCookiesFromCDP(
 
       if (hasRequiredGeminiCookies(cookieMap)) {
         log?.(`[gemini-web] Extracted ${Object.keys(cookieMap).length} Gemini cookie(s) via CDP.`);
+        completed = true;
         return { cookieMap, warnings: [] };
       }
 
@@ -158,7 +164,7 @@ async function loadGeminiCookiesFromCDP(
 
     throw new Error("Timed out waiting for Google sign-in (5 minutes). Please sign in and retry.");
   } finally {
-    await session.close();
+    await session.close({ disposition: completed ? "completed" : "recoverable" });
   }
 }
 
@@ -166,13 +172,24 @@ async function runGeminiDeepThinkViaBrowser(
   prompt: string,
   browserConfig: BrowserRunOptions["config"],
   log?: BrowserLogger,
-): Promise<{ text: string; thoughts: string | null }> {
+  runContext?: Pick<BrowserRunOptions, "sessionId" | "runtimeHintCb">,
+): Promise<{
+  text: string;
+  thoughts: string | null;
+  chromePort: number;
+  userDataDir: string;
+  chromeTargetId?: string;
+  tabUrl: string;
+}> {
   const session = await openGeminiBrowserSession({
     browserConfig,
     keepBrowserDefault: true,
     purpose: "Gemini Deep Think",
     log,
+    sessionId: runContext?.sessionId,
+    runtimeHintCb: runContext?.runtimeHintCb,
   });
+  let completed = false;
   try {
     const client = session.client;
     const { Runtime, Page } = client;
@@ -196,6 +213,7 @@ async function runGeminiDeepThinkViaBrowser(
 
     log?.("[gemini-web] Navigating to gemini.google.com...");
     await Page.navigate({ url: "https://gemini.google.com/app" });
+    await session.updateTabUrl("https://gemini.google.com/app");
     await delay(3_000);
 
     const domResult = await runProviderDomFlow(geminiDeepThinkDomProvider, {
@@ -210,9 +228,16 @@ async function runGeminiDeepThinkViaBrowser(
     });
 
     log?.(`[gemini-web] Deep Think response received (${domResult.text.length} chars).`);
-    return domResult;
+    completed = true;
+    return {
+      ...domResult,
+      chromePort: session.port,
+      userDataDir: session.profileDir,
+      chromeTargetId: session.targetId,
+      tabUrl: "https://gemini.google.com/app",
+    };
   } finally {
-    await session.close();
+    await session.close({ disposition: completed ? "completed" : "recoverable" });
   }
 }
 
@@ -302,6 +327,7 @@ async function loadGeminiCookies(
   browserConfig: BrowserRunOptions["config"],
   log?: BrowserLogger,
   options?: { preferManualNoKeychain?: boolean },
+  runContext?: Pick<BrowserRunOptions, "sessionId" | "runtimeHintCb">,
 ): Promise<GeminiCookieLoadResult> {
   const inlineResult = await loadGeminiCookiesFromInline(browserConfig, log);
   const hasInlineRequired = hasRequiredGeminiCookies(inlineResult.cookieMap);
@@ -313,7 +339,7 @@ async function loadGeminiCookies(
     Boolean(browserConfig?.manualLogin) || Boolean(options?.preferManualNoKeychain);
   if (manualNoKeychain) {
     log?.("[gemini-web] Using manual-login cookie extraction path (no keychain cookie read).");
-    const cdpResult = await loadGeminiCookiesFromCDP(browserConfig, log);
+    const cdpResult = await loadGeminiCookiesFromCDP(browserConfig, log, runContext);
     return {
       cookieMap: { ...cdpResult.cookieMap, ...inlineResult.cookieMap },
       warnings: [...inlineResult.warnings, ...cdpResult.warnings],
@@ -369,7 +395,10 @@ export function createGeminiWebExecutor(
       mode: "dom",
       execute: async () => {
         log?.("[gemini-web] Using browser DOM automation for Deep Think.");
-        const browserResult = await runGeminiDeepThinkViaBrowser(prompt, runOptions.config, log);
+        const browserResult = await runGeminiDeepThinkViaBrowser(prompt, runOptions.config, log, {
+          sessionId: runOptions.sessionId,
+          runtimeHintCb: runOptions.runtimeHintCb,
+        });
         const tookMs = Date.now() - startTime;
         let answerMarkdown = browserResult.text;
         if (geminiOptions.showThoughts && browserResult.thoughts) {
@@ -382,6 +411,14 @@ export function createGeminiWebExecutor(
           tookMs,
           answerTokens: estimateTokenCount(browserResult.text),
           answerChars: browserResult.text.length,
+          browserTransport: "cdp",
+          chromePort: browserResult.chromePort,
+          chromeHost: "127.0.0.1",
+          userDataDir: browserResult.userDataDir,
+          chromeTargetId: browserResult.chromeTargetId,
+          tabUrl: browserResult.tabUrl,
+          browserDisposition: "completed",
+          controllerPid: process.pid,
         };
       },
     };
@@ -390,9 +427,17 @@ export function createGeminiWebExecutor(
       mode: "http",
       execute: async () => {
         const useNoKeychainPath = Boolean(runOptions.config?.manualLogin);
-        const cookieResult = await loadGeminiCookies(runOptions.config, log, {
-          preferManualNoKeychain: useNoKeychainPath,
-        });
+        const cookieResult = await loadGeminiCookies(
+          runOptions.config,
+          log,
+          {
+            preferManualNoKeychain: useNoKeychainPath,
+          },
+          {
+            sessionId: runOptions.sessionId,
+            runtimeHintCb: runOptions.runtimeHintCb,
+          },
+        );
         if (!hasRequiredGeminiCookies(cookieResult.cookieMap)) {
           throw new Error(formatGeminiCookieError(cookieResult.warnings));
         }

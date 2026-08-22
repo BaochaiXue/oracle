@@ -1010,7 +1010,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
   let modelSelectionEvidence: BrowserModelSelectionEvidence | undefined;
   let tabLease: BrowserTabLease | null = null;
   let conversationUrlMonitor: ConversationUrlMonitor | null = null;
-  const emitRuntimeHint = async (): Promise<void> => {
+  const emitRuntimeHint = async (strict = false): Promise<void> => {
     if (!chrome?.port) {
       return;
     }
@@ -1043,6 +1043,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger(`Failed to persist runtime hint: ${message}`);
+      if (strict) throw error;
     }
   };
   const markPromptDispatched = async (): Promise<void> => {
@@ -1148,13 +1149,20 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     logger(`Created temporary Chrome profile at ${userDataDir}`);
   }
 
-  if (manualLogin) {
+  try {
     tabLease = await acquireBrowserTabLease(userDataDir, {
       maxConcurrentTabs: config.maxConcurrentTabs,
       timeoutMs: config.timeoutMs,
       logger,
       sessionId: options.sessionId,
+      ownerKind: "chatgpt",
+      purpose: "browser-run",
     });
+  } catch (error) {
+    if (!manualLogin) {
+      await rm(userDataDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+    throw error;
   }
 
   let acquiredChrome: { chrome: BrowserChrome; reusedChrome: LaunchedChrome | null };
@@ -1186,15 +1194,19 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
   const { chrome, reusedChrome } = acquiredChrome;
   const chromeHost = (chrome as unknown as { host?: string }).host ?? "127.0.0.1";
   if (manualLogin && chrome.port) {
-    await reconcileOwnedBrowserTargets({
+    const startupReconciliation = await reconcileOwnedBrowserTargets({
       profileDir: userDataDir,
       host: chromeHost,
       port: chrome.port,
       logger,
-    }).catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      logger(`[browser] Cold-start tab reconciliation deferred: ${message}`);
     });
+    reconcileNeeded = startupReconciliation.status !== "complete";
+    if (reconcileNeeded) {
+      logger(
+        `[browser] Cold-start target reconciliation ${startupReconciliation.status}; retry receipt is durable.`,
+      );
+      await emitRuntimeHint();
+    }
   }
   const recordResponseTiming = (answer: string, capturedAt = new Date()): void => {
     if (!proTimingRequired) return;
@@ -1283,6 +1295,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         });
         client = connection.client;
         isolatedTargetId = connection.targetId ?? null;
+        lastTargetId = connection.targetId ?? undefined;
+        lastUrl = connection.targetId ? "about:blank" : lastUrl;
         ownsTarget = true;
       }
       if (tabLease && isolatedTargetId) {
@@ -1290,7 +1304,10 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           chromeHost,
           chromePort: chrome.port,
           chromeTargetId: isolatedTargetId,
+          tabUrl: lastUrl,
+          ownsTarget,
         });
+        await emitRuntimeHint(true);
       }
     } catch (error) {
       const hint = describeDevtoolsFirewallHint(chromeHost, chrome.port);
@@ -2652,33 +2669,37 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       usingCopiedProfile,
     });
     let terminatedRecordedChrome = false;
-    const closeOwnedRunTarget = async () => {
-      if (!shouldCloseOwnedRunTarget || !isolatedTargetId || !chrome?.port) {
-        return;
-      }
-      const safeToClose =
-        !effectiveKeepBrowser ||
-        Boolean(
-          await ensureChromePageTargetAfterClose(chrome.port, isolatedTargetId, logger, chromeHost),
-        );
-      if (!safeToClose) {
-        logger(
-          `[browser] Leaving completed browser tab open because Chrome has no replacement page target.`,
-        );
-        return;
-      }
-      const closeConfirmed = await closeTab(chrome.port, isolatedTargetId, logger, chromeHost);
-      if (!closeConfirmed) {
-        reconcileNeeded = true;
-        await emitRuntimeHint();
-        logger(`[browser] Tab close remains unconfirmed; cold-start reconciliation will retry it.`);
-      }
-    };
     if (tabLease) {
       const handle = tabLease;
+      if (isolatedTargetId && ownsTarget) {
+        await handle.setTargetDisposition(
+          shouldCloseOwnedRunTarget || browserDisposition === "abandoned"
+            ? "terminal"
+            : "recoverable",
+          {
+            tabUrl: lastUrl,
+            recoveryKind,
+            recoveryExpiresAt,
+          },
+        );
+      }
       tabLease = null;
       const onRelease = async ({ isLastLease }: { isLastLease: boolean }) => {
-        await closeOwnedRunTarget();
+        const releaseReconciliation = await reconcileOwnedBrowserTargets({
+          profileDir: userDataDir,
+          host: chromeHost,
+          port: chrome.port,
+          logger,
+          ensureSentinel: keepBrowserOpen,
+        });
+        if (releaseReconciliation.status !== "complete") {
+          reconcileNeeded = true;
+          keepBrowserOpen = true;
+          await emitRuntimeHint();
+          logger(
+            `[browser] Final target reconciliation ${releaseReconciliation.status}; leaving Chrome available for startup retry.`,
+          );
+        }
         if (keepBrowserOpen || !manualLogin) {
           return;
         }
@@ -2716,16 +2737,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
             keepBrowserOpen = true;
             logger("[browser] A new ChatGPT tab lease appeared; leaving shared Chrome running.");
           } else {
-            const reconciliation = await reconcileOwnedBrowserTargets({
-              profileDir: userDataDir,
-              host: chromeHost,
-              port: chrome.port,
-              logger,
-            }).catch((error) => {
-              const message = error instanceof Error ? error.message : String(error);
-              logger(`[browser] Final recovery-hold check failed: ${message}`);
-              return null;
-            });
+            const reconciliation = releaseReconciliation;
             if (
               !reconciliation ||
               reconciliation.protectedTargetIds.length > 0 ||
@@ -2755,14 +2767,14 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       try {
         await handle.release({ onRelease });
       } catch (error) {
+        reconcileNeeded = true;
         keepBrowserOpen = true;
+        await emitRuntimeHint();
         const message = error instanceof Error ? error.message : String(error);
         logger(
           `[browser] Final tab cleanup failed; leaving Chrome running for reconciliation: ${message}`,
         );
       }
-    } else {
-      await closeOwnedRunTarget();
     }
     removeDialogHandler?.();
     removeTerminationHooks?.();
@@ -3266,6 +3278,8 @@ async function runRemoteBrowserMode(
         sessionId: options.sessionId,
         chromeHost: host,
         chromePort: port,
+        ownerKind: "chatgpt",
+        purpose: "remote-browser-run",
       });
     }
     if (config.browserTabRef) {
@@ -3302,6 +3316,7 @@ async function runRemoteBrowserMode(
         chromeHost: host,
         chromePort: port,
         chromeTargetId: remoteTargetId,
+        ownsTarget,
       });
     }
     await emitRuntimeHint();

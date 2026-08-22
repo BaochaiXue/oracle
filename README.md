@@ -293,8 +293,28 @@ The normal direct-CDP lifecycle is deterministic:
 6. A completed run closes its owned target; an incomplete run retains only its
    exact target under a bounded recovery hold. With `while-needed`, the last
    lease drains Chrome only when no recovery or unowned meaningful page remains.
-   Cold-start reconciliation uses stored ownership receipts, never a first-tab
-   fallback or a URL-wide sweep.
+   Cold-start and final-release reconciliation use stored ownership receipts,
+   revalidate each target immediately before closing it, and coalesce duplicate
+   blank pages to at most one sentinel. Ordinary reconciliation never closes an
+   untracked ChatGPT conversation or uses a first-tab/URL-wide conversation
+   sweep.
+
+Inspect the exact running dedicated profile without changing it:
+
+```bash
+oracle browser reconcile-tabs --plan
+```
+
+`--apply` closes only terminal Oracle-owned targets and duplicate blank pages;
+active leases plus running, detached, partial, stalled, or otherwise recoverable
+sessions survive. An operator may add `--include-untracked-chatgpt` to purge
+historical untracked ChatGPT pages, but only for the exact local Chrome for
+Testing profile Oracle verifies. The command refuses attach-running, remote,
+everyday Chrome, and mismatched profiles. If apply-time evidence changes, the
+target is skipped. Receipts are written to
+`<profile>/oracle-tab-reconciliation.json` with `complete`, `partial`, or
+`failed` status; failed work is retried on the next dedicated-profile
+startup/reuse.
 
 Up to three ChatGPT tabs may share the dedicated profile by default. Startup and
 composer mutation are separately locked so parallel agents do not race one

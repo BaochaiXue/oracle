@@ -1,11 +1,17 @@
 import type { LaunchedChrome } from "chrome-launcher";
-import type { SessionMetadata } from "../sessionStore.js";
+import { sessionStore, type SessionMetadata } from "../sessionStore.js";
 import type { BrowserLogger } from "./types.js";
 import { isAnswerNowPlaceholderText } from "./actions/assistantResponse.js";
 import { resolveBrowserConfig } from "./config.js";
-import { acquireManualLoginChromeForRun, isImageOnlyUiChromeText } from "./index.js";
+import {
+  acquireManualLoginChromeForRun,
+  isImageOnlyUiChromeText,
+  type BrowserChrome,
+} from "./index.js";
 import { isRecoverableChatGptConversationUrl } from "./reattachability.js";
 import { harvestChatGptTab, openChatGptTarget } from "./liveTabs.js";
+import { acquireBrowserTabLease } from "./tabLeaseRegistry.js";
+import { reconcileBrowserTargets } from "./lifecycleReconciler.js";
 
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
 const READY_POLL_MS = 1_000;
@@ -16,11 +22,21 @@ export interface RecoveredConversation {
   url: string;
   ref: string;
   chrome: LaunchedChrome | null;
+  finish: (
+    disposition: "completed" | "recoverable",
+    options?: { ensureSentinel?: boolean },
+  ) => Promise<void>;
 }
 
 export interface RecoveryEndpoint {
   host: string;
   port: number;
+}
+
+export interface RecoveryOwnershipDeps {
+  acquireLease?: typeof acquireBrowserTabLease;
+  reconcileTargets?: typeof reconcileBrowserTargets;
+  persistRuntime?: typeof sessionStore.updateSession;
 }
 
 /**
@@ -137,6 +153,7 @@ export async function recoverConversationTab(
     readyTimeoutMs?: number;
     waitForReady?: boolean;
   } = {},
+  deps: RecoveryOwnershipDeps = {},
 ): Promise<RecoveredConversation> {
   const url = resolveRecoveryUrl(meta);
   if (!url) {
@@ -157,7 +174,13 @@ export async function recoverConversationTab(
       if (waitForReady) {
         await waitForRecoveredConversationReady(options.existingEndpoint, targetId, readyTimeoutMs);
       }
-      return { ...options.existingEndpoint, url, ref: targetId, chrome: null };
+      return {
+        ...options.existingEndpoint,
+        url,
+        ref: targetId,
+        chrome: null,
+        finish: async () => undefined,
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger(`[browser] Recovery: existing Chrome could not reopen the conversation (${message}).`);
@@ -171,24 +194,160 @@ export async function recoverConversationTab(
     `[browser] Recovery: relaunching Chrome with profile ${userDataDir} and navigating to ${url}`,
   );
 
-  const { chrome } = await acquireManualLoginChromeForRun(userDataDir, config, logger, meta.id, {});
+  let lease = await (deps.acquireLease ?? acquireBrowserTabLease)(userDataDir, {
+    maxConcurrentTabs: config.maxConcurrentTabs,
+    timeoutMs: config.timeoutMs,
+    logger,
+    sessionId: meta.id,
+    ownerKind: "recovery",
+    purpose: "conversation-recovery",
+  });
+  let chrome: BrowserChrome;
+  try {
+    ({ chrome } = await acquireManualLoginChromeForRun(userDataDir, config, logger, meta.id, {}));
+  } catch (error) {
+    await lease.release();
+    throw error;
+  }
   const host = chrome.host ?? "127.0.0.1";
   const port = chrome.port;
 
+  let recoveredTargetId: string | undefined;
   try {
     const targetId = await openChatGptTarget({ host, port, url });
+    recoveredTargetId = targetId;
+    await lease.update({
+      chromeHost: host,
+      chromePort: port,
+      chromeTargetId: targetId,
+      tabUrl: url,
+      ownsTarget: true,
+    });
+    await (deps.persistRuntime ?? sessionStore.updateSession.bind(sessionStore))(meta.id, {
+      browser: {
+        ...(meta.browser ?? {}),
+        runtime: {
+          ...(meta.browser?.runtime ?? {}),
+          browserTransport: "cdp",
+          chromePid: chrome.pid,
+          chromePort: port,
+          chromeHost: host,
+          userDataDir,
+          chromeTargetId: targetId,
+          tabUrl: url,
+          browserDisposition: "active",
+          recoveryKind: undefined,
+          recoveryExpiresAt: undefined,
+          reconcileNeeded: undefined,
+          controllerPid: process.pid,
+        },
+      },
+    });
     if (waitForReady) {
       await waitForRecoveredConversationReady({ host, port }, targetId, readyTimeoutMs);
     }
 
     logger(`[browser] Recovery: Chrome listening on ${host}:${port}; tab loaded.`);
 
-    return { host, port, url, ref: targetId, chrome };
+    let finished = false;
+    const finish: RecoveredConversation["finish"] = async (disposition, finishOptions = {}) => {
+      if (finished) return;
+      finished = true;
+      const recoveryExpiresAt =
+        disposition === "recoverable"
+          ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+          : undefined;
+      await lease.setTargetDisposition(disposition === "completed" ? "terminal" : "recoverable", {
+        tabUrl: url,
+        recoveryKind: disposition === "recoverable" ? "awaiting-response" : undefined,
+        recoveryExpiresAt,
+      });
+      await (deps.persistRuntime ?? sessionStore.updateSession.bind(sessionStore))(meta.id, {
+        browser: {
+          ...(meta.browser ?? {}),
+          runtime: {
+            ...(meta.browser?.runtime ?? {}),
+            browserTransport: "cdp",
+            chromePid: chrome.pid,
+            chromePort: port,
+            chromeHost: host,
+            userDataDir,
+            chromeTargetId: targetId,
+            tabUrl: url,
+            browserDisposition: disposition,
+            recoveryKind: disposition === "recoverable" ? "awaiting-response" : undefined,
+            recoveryExpiresAt,
+            reconcileNeeded: undefined,
+            controllerPid: process.pid,
+          },
+        },
+      });
+      const handle = lease;
+      let reconciliationFailed = false;
+      let releaseError: unknown;
+      try {
+        await handle.release({
+          onRelease: async () => {
+            const receipt = await (deps.reconcileTargets ?? reconcileBrowserTargets)({
+              profileDir: userDataDir,
+              host,
+              port,
+              logger,
+              apply: true,
+              ensureSentinel:
+                disposition === "recoverable" || finishOptions.ensureSentinel === true,
+            });
+            reconciliationFailed = receipt.status !== "complete";
+          },
+        });
+      } catch (error) {
+        reconciliationFailed = true;
+        releaseError = error;
+      }
+      if (reconciliationFailed) {
+        await (deps.persistRuntime ?? sessionStore.updateSession.bind(sessionStore))(meta.id, {
+          browser: {
+            ...(meta.browser ?? {}),
+            runtime: {
+              ...(meta.browser?.runtime ?? {}),
+              browserTransport: "cdp",
+              chromePid: chrome.pid,
+              chromePort: port,
+              chromeHost: host,
+              userDataDir,
+              chromeTargetId: targetId,
+              tabUrl: url,
+              browserDisposition: disposition,
+              recoveryKind: disposition === "recoverable" ? "awaiting-response" : undefined,
+              recoveryExpiresAt,
+              reconcileNeeded: true,
+              controllerPid: process.pid,
+            },
+          },
+        });
+      }
+      if (releaseError) throw releaseError;
+    };
+
+    return { host, port, url, ref: targetId, chrome, finish };
   } catch (error) {
+    let ownershipCleanupError: unknown;
+    try {
+      if (recoveredTargetId) await lease.setTargetDisposition("terminal");
+      await lease.release();
+    } catch (cleanupError) {
+      ownershipCleanupError = cleanupError;
+    }
     try {
       chrome.kill();
     } catch {
       // best-effort cleanup
+    }
+    if (ownershipCleanupError) {
+      throw new AggregateError(
+        [error, ownershipCleanupError],
+        "Recovery target setup and ownership cleanup both failed.",
+      );
     }
     throw error;
   }

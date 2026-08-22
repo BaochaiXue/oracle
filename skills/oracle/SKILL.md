@@ -195,7 +195,16 @@ derives the HTTP timeout unless `--http-timeout` is supplied.
   genuinely new identical run is intended.
 - Direct CDP defaults to `browserLifetime:"while-needed"`. Successful owned
   tabs close by exact receipt; recoverable tabs receive bounded holds; unknown
-  meaningful pages are preserved. `persistent` is an explicit always-on mode.
+  meaningful pages are preserved. Startup/final-release reconciliation closes
+  terminal owned targets, coalesces blank sentinels, and reports a durable
+  `complete`, `partial`, or `failed` receipt without holding the lease registry
+  during CDP work. `persistent` is an explicit always-on mode.
+- Diagnose retained tabs with `oracle browser reconcile-tabs --plan`. Apply
+  ordinary owned/blank cleanup with `--apply`; add
+  `--include-untracked-chatgpt` only when the operator explicitly intends to
+  purge historical ChatGPT pages from Oracle's verified exact local Chrome for
+  Testing profile. Never use that mode for attach-running, remote, everyday, or
+  another Chrome profile.
 - For direct-CDP Pro runs, trust is turn-scoped. The active turn must have its
   own dispatch/elapsed/workload receipt, a verified commit, and a normalized
   prompt digest bound to the exact committed user-turn index. Reattach accepts

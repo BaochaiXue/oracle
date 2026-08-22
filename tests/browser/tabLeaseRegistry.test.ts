@@ -6,6 +6,7 @@ import {
   acquireBrowserTabLease,
   hasOtherActiveBrowserTabLeases,
   normalizeMaxConcurrentTabs,
+  readBrowserTargetRegistry,
 } from "../../src/browser/tabLeaseRegistry.js";
 
 describe("tabLeaseRegistry", () => {
@@ -52,7 +53,7 @@ describe("tabLeaseRegistry", () => {
       await new Promise((resolve) => setTimeout(resolve, 75));
       expect(resolved).toBe(false);
       expect(logger).toHaveBeenCalledWith(
-        expect.stringContaining("Waiting for ChatGPT browser slot"),
+        expect.stringContaining("Waiting for Oracle browser target slot"),
       );
 
       await first.release();
@@ -224,6 +225,52 @@ describe("tabLeaseRegistry", () => {
         await readFile(path.join(dir, "oracle-tab-leases.json"), "utf8"),
       ) as { leases: unknown[] };
       expect(registry.leases).toEqual([]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("durably registers target ownership together with its active lease", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "oracle-target-ownership-"));
+    try {
+      const lease = await acquireBrowserTabLease(dir, {
+        maxConcurrentTabs: 1,
+        timeoutMs: 500,
+        sessionId: "gemini-session",
+        ownerKind: "gemini",
+        purpose: "deep-think",
+      });
+      await lease.update({
+        chromeHost: "127.0.0.1",
+        chromePort: 9333,
+        chromeTargetId: "gemini-target",
+        tabUrl: "https://gemini.google.com/app",
+        ownsTarget: true,
+      });
+
+      let snapshot = await readBrowserTargetRegistry(dir);
+      expect(snapshot.leases[0]).toMatchObject({
+        chromeTargetId: "gemini-target",
+        ownerKind: "gemini",
+      });
+      expect(snapshot.targets).toEqual([
+        expect.objectContaining({
+          targetId: "gemini-target",
+          ownerKind: "gemini",
+          disposition: "active",
+          sessionId: "gemini-session",
+        }),
+      ]);
+
+      await lease.setTargetDisposition("recoverable", { recoveryKind: "awaiting-response" });
+      await lease.release();
+      snapshot = await readBrowserTargetRegistry(dir);
+      expect(snapshot.leases).toEqual([]);
+      expect(snapshot.targets[0]).toMatchObject({
+        targetId: "gemini-target",
+        disposition: "recoverable",
+        recoveryKind: "awaiting-response",
+      });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

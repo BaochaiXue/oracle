@@ -3,7 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import type { LaunchedChrome } from "chrome-launcher";
 import {
-  closeTab,
   connectWithNewTab,
   launchChrome,
   positionChromeWindowOffscreen,
@@ -22,6 +21,7 @@ import {
   hasOtherActiveBrowserTabLeases,
   type BrowserTabLease,
 } from "./tabLeaseRegistry.js";
+import { reconcileBrowserTargets } from "./lifecycleReconciler.js";
 import {
   acquireProfileRunLock,
   cleanupStaleProfileState,
@@ -116,13 +116,20 @@ export async function runBrowserProjectSources(
   }
 
   let tabLease: BrowserTabLease | null = null;
-  if (manualLogin) {
+  try {
     tabLease = await acquireBrowserTabLease(userDataDir, {
       maxConcurrentTabs: config.maxConcurrentTabs,
       timeoutMs: config.timeoutMs,
       logger,
       sessionId: "project-sources",
+      ownerKind: "project-sources",
+      purpose: `project-sources-${operation}`,
     });
+  } catch (error) {
+    if (!manualLogin) {
+      await rm(userDataDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+    throw error;
   }
 
   let chrome: BrowserChrome | null = null;
@@ -144,6 +151,21 @@ export async function runBrowserProjectSources(
     chrome = acquired.chrome;
     reusedChrome = acquired.reusedChrome;
     const chromeHost = chrome.host ?? "127.0.0.1";
+    if (manualLogin) {
+      const startupReceipt = await reconcileBrowserTargets({
+        profileDir: userDataDir,
+        host: chromeHost,
+        port: chrome.port,
+        logger,
+        apply: true,
+        ensureSentinel: effectiveKeepBrowser,
+      });
+      if (startupReceipt.status !== "complete") {
+        logger(
+          `[browser] Project Sources startup reconciliation ${startupReceipt.status}; retry receipt is durable.`,
+        );
+      }
+    }
     if (tabLease) {
       await tabLease.update({ chromeHost, chromePort: chrome.port });
     }
@@ -175,6 +197,7 @@ export async function runBrowserProjectSources(
         chromePort: chrome.port,
         chromeTargetId: isolatedTargetId,
         tabUrl: projectUrl,
+        ownsTarget: true,
       });
     }
 
@@ -262,18 +285,39 @@ export async function runBrowserProjectSources(
     } catch {
       // ignore close failures
     }
-    if (completed && isolatedTargetId && chrome?.port) {
-      await closeTab(chrome.port, isolatedTargetId, logger, chromeHost).catch(() => undefined);
-    }
-
     let keepBrowserOpen = effectiveKeepBrowser;
     let terminatedRecordedChrome = false;
     if (tabLease) {
       const handle = tabLease;
+      if (isolatedTargetId) {
+        await handle.setTargetDisposition(completed ? "terminal" : "recoverable", {
+          tabUrl: projectUrl,
+          recoveryKind: completed ? undefined : "manual-intervention",
+          recoveryExpiresAt: completed
+            ? undefined
+            : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        });
+      }
       tabLease = null;
       try {
         await handle.release({
           onRelease: async ({ isLastLease }) => {
+            if (!chrome?.port) return;
+            const receipt = await reconcileBrowserTargets({
+              profileDir: userDataDir,
+              host: chromeHost,
+              port: chrome.port,
+              logger,
+              apply: true,
+              ensureSentinel: keepBrowserOpen || !completed,
+            });
+            if (receipt.status !== "complete") {
+              keepBrowserOpen = true;
+              logger(
+                `[browser] Project Sources final reconciliation ${receipt.status}; leaving Chrome available for startup retry.`,
+              );
+              return;
+            }
             if (keepBrowserOpen) return;
             if (!isLastLease) {
               keepBrowserOpen = true;
@@ -313,8 +357,11 @@ export async function runBrowserProjectSources(
             }
           },
         });
-      } catch {
+      } catch (error) {
         keepBrowserOpen = true;
+        logger(
+          `[browser] Project Sources final target reconciliation failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
     if (!keepBrowserOpen && chrome) {

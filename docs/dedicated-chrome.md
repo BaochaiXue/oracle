@@ -280,7 +280,40 @@ For a normal Pro consultation Oracle:
 10. captures Markdown and local artifacts;
 11. closes its owned target after a completed run, retains that target when the
     run is incomplete so it can be recovered, and leaves the shared dedicated
-    Chrome process running by default. It never sweeps unrelated blank tabs.
+    Chrome process running by default. Final-release and startup reconciliation
+    close terminal owned targets and coalesce duplicate blank pages, while
+    preserving untracked ChatGPT conversations during ordinary operation.
+
+## Target reconciliation
+
+The operator command is plan-only unless `--apply` is explicit:
+
+```bash
+oracle browser reconcile-tabs --plan
+oracle browser reconcile-tabs --apply
+oracle browser reconcile-tabs --apply --include-untracked-chatgpt
+```
+
+The ordinary apply policy closes terminal Oracle-owned targets and duplicate
+`about:blank`, `chrome://newtab/`, or `chrome://new-tab-page/` targets, keeping
+at most one deterministic sentinel if Chrome still needs a page. It preserves
+active leases, running controllers, and detached, stalled, partial, or otherwise
+recoverable sessions. It also preserves every untracked ChatGPT page.
+
+`--include-untracked-chatgpt` is an explicit historical-tab purge. It is accepted
+only after Oracle proves that the live loopback DevTools process owns the exact
+configured dedicated profile and is the configured Chrome for Testing binary.
+It is never applied to `--browser-attach-running`, remote Chrome, everyday
+Chrome, or another profile.
+
+Apply re-reads the live target, active leases, durable session state, controller
+liveness, and ownership evidence immediately before each close. A changed URL,
+type, lease, ownership, or session classification causes a skip rather than a
+stale close. The durable receipt at
+`<profile>/oracle-tab-reconciliation.json` reports `complete`, `partial`, or
+`failed` plus preserved, closed, skipped, and failed target IDs. Failed cleanup
+does not invalidate lease release or hold the lease-registry lock; startup/reuse
+retries it.
 
 If CDP disconnects after submission, the stored runtime contains the profile,
 port/browser endpoint, target, conversation receipt, and dispatch time. A

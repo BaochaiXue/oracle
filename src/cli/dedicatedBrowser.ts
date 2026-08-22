@@ -8,7 +8,10 @@ import {
   positionChromeWindowOffscreen,
 } from "../browser/chromeLifecycle.js";
 import { resolveBrowserConfig } from "../browser/config.js";
-import { resolveDedicatedBrowserExecutable } from "../browser/dedicatedBrowserBinary.js";
+import {
+  assertDedicatedBrowserProcessIdentity,
+  resolveDedicatedBrowserExecutable,
+} from "../browser/dedicatedBrowserBinary.js";
 import {
   assertManualLoginProfileReadyForRun,
   ensureDedicatedBrowserProfileDirectory,
@@ -26,6 +29,10 @@ import {
 } from "../browser/profileState.js";
 import type { BrowserLogger, ChromeClient } from "../browser/types.js";
 import { delay } from "../browser/utils.js";
+import {
+  reconcileBrowserTargets,
+  type BrowserTargetReconciliationReceipt,
+} from "../browser/lifecycleReconciler.js";
 
 export interface DedicatedBrowserSetupOptions {
   profileDir: string;
@@ -39,6 +46,16 @@ export interface DedicatedBrowserSetupOptions {
 export interface DedicatedBrowserSmokeOptions extends DedicatedBrowserSetupOptions {
   port: number;
   visible?: boolean;
+}
+
+export interface DedicatedBrowserReconcileOptions {
+  profileDir: string;
+  port?: number;
+  chromePath?: string;
+  apply?: boolean;
+  includeUntrackedChatgpt?: boolean;
+  json?: boolean;
+  verbose?: boolean;
 }
 
 interface DedicatedBrowserSmokeCycle {
@@ -275,6 +292,69 @@ export async function runDedicatedBrowserSmoke(
     promptSubmitted: false,
     cycles,
   };
+}
+
+export async function runDedicatedBrowserReconcile(
+  options: DedicatedBrowserReconcileOptions,
+): Promise<BrowserTargetReconciliationReceipt> {
+  const logger = createLogger(options.verbose);
+  const running = await findRunningChromeForProfile(options.profileDir);
+  if (!running?.port) {
+    throw new Error(
+      `No running Chrome DevTools process owns the exact profile ${options.profileDir}. ` +
+        "This command never targets attach-running, remote, everyday, or another Chrome profile.",
+    );
+  }
+  if (options.port && options.port !== running.port) {
+    throw new Error(
+      `Profile ${options.profileDir} is running on DevTools port ${running.port}, not requested port ${options.port}.`,
+    );
+  }
+  const executablePath = await resolveDedicatedBrowserExecutable(options.chromePath);
+  if (!executablePath) {
+    throw new Error(
+      "No configured Chrome for Testing executable was found; refusing browser target reconciliation.",
+    );
+  }
+  await assertDedicatedBrowserProcessIdentity(running.pid, executablePath);
+  return reconcileBrowserTargets({
+    profileDir: options.profileDir,
+    host: "127.0.0.1",
+    port: running.port,
+    logger,
+    apply: options.apply === true,
+    includeUntrackedChatgpt: options.includeUntrackedChatgpt === true,
+    ensureSentinel: true,
+  });
+}
+
+export function printDedicatedBrowserReconcileResult(
+  result: BrowserTargetReconciliationReceipt,
+  json = false,
+): void {
+  if (json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  const lines = [
+    `Oracle browser target reconciliation ${result.mode} (${result.status}).`,
+    `Profile: ${result.profileDir}`,
+    `Endpoint: ${result.host}:${result.port}`,
+    `Preserve: ${result.preservedTargetIds.join(", ") || "none"}`,
+    `Close terminal owned: ${result.terminalOwnedTargetIds.join(", ") || "none"}`,
+    `Close duplicate blank: ${result.duplicateBlankTargetIds.join(", ") || "none"}`,
+    `Untracked ChatGPT: ${result.untrackedChatgptTargetIds.join(", ") || "none"}`,
+  ];
+  if (result.mode === "apply") {
+    lines.push(
+      `Closed: ${result.closedTargetIds.join(", ") || "none"}`,
+      `Skipped after revalidation: ${result.skippedTargetIds.join(", ") || "none"}`,
+      `Failed: ${result.failedTargetIds.join(", ") || "none"}`,
+    );
+  } else {
+    lines.push("No targets were changed. Pass --apply to execute this exact-profile policy.");
+  }
+  process.stdout.write(`${lines.join("\n")}\n`);
 }
 
 export function printDedicatedBrowserSetupResult(

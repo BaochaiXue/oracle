@@ -6,7 +6,6 @@ import { mkdtemp } from "node:fs/promises";
 const {
   launchChrome,
   connectWithNewTab,
-  closeTab,
   killChrome,
   resolveBrowserConfig,
   readDevToolsPort,
@@ -15,10 +14,11 @@ const {
   cleanupStaleProfileState,
   verifyDevToolsReachable,
   delay,
+  acquireBrowserTabLease,
+  reconcileBrowserTargets,
 } = vi.hoisted(() => ({
   launchChrome: vi.fn(),
   connectWithNewTab: vi.fn(),
-  closeTab: vi.fn(async () => undefined),
   killChrome: vi.fn(async () => undefined),
   resolveBrowserConfig: vi.fn((input: unknown) => input),
   readDevToolsPort: vi.fn(async () => null),
@@ -27,6 +27,14 @@ const {
   cleanupStaleProfileState: vi.fn(async () => undefined),
   verifyDevToolsReachable: vi.fn(async () => ({ ok: false, error: "unreachable" })),
   delay: vi.fn(async () => undefined),
+  acquireBrowserTabLease: vi.fn(),
+  reconcileBrowserTargets: vi.fn(async () => ({
+    status: "complete",
+    preservedTargetIds: [],
+    closedTargetIds: [],
+    skippedTargetIds: [],
+    failedTargetIds: [],
+  })),
 }));
 
 const runGeminiWebWithFallback = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({
@@ -75,7 +83,6 @@ vi.mock("@steipete/sweet-cookie", () => ({ getCookies }));
 vi.mock("../../src/browser/chromeLifecycle.js", () => ({
   launchChrome,
   connectWithNewTab,
-  closeTab,
 }));
 vi.mock("../../src/browser/config.js", () => ({
   resolveBrowserConfig,
@@ -90,6 +97,10 @@ vi.mock("../../src/browser/profileState.js", () => ({
 vi.mock("../../src/browser/utils.js", () => ({
   delay,
 }));
+vi.mock("../../src/browser/tabLeaseRegistry.js", () => ({
+  acquireBrowserTabLease,
+}));
+vi.mock("../../src/browser/lifecycleReconciler.js", () => ({ reconcileBrowserTargets }));
 
 function requiredGeminiCookies() {
   return [
@@ -119,7 +130,6 @@ describe("gemini-web executor", () => {
     getCookies.mockClear();
     launchChrome.mockReset();
     connectWithNewTab.mockReset();
-    closeTab.mockClear();
     resolveBrowserConfig.mockClear();
     readDevToolsPort.mockReset();
     writeDevToolsActivePort.mockClear();
@@ -128,6 +138,8 @@ describe("gemini-web executor", () => {
     verifyDevToolsReachable.mockReset();
     delay.mockClear();
     killChrome.mockClear();
+    acquireBrowserTabLease.mockReset();
+    reconcileBrowserTargets.mockClear();
 
     launchChrome.mockResolvedValue({
       port: 9222,
@@ -197,6 +209,14 @@ describe("gemini-web executor", () => {
     });
     readDevToolsPort.mockResolvedValue(null);
     verifyDevToolsReachable.mockResolvedValue({ ok: false, error: "unreachable" });
+    acquireBrowserTabLease.mockResolvedValue({
+      id: "lease-1",
+      update: vi.fn(async () => undefined),
+      setTargetDisposition: vi.fn(async () => undefined),
+      release: vi.fn(async (options?: { onRelease?: () => Promise<void> }) =>
+        options?.onRelease?.(),
+      ),
+    });
   });
 
   afterEach(() => {
@@ -360,7 +380,9 @@ describe("gemini-web executor", () => {
     expect(getCookies).not.toHaveBeenCalled();
     expect(launchChrome).toHaveBeenCalled();
     expect(connectWithNewTab).toHaveBeenCalled();
-    expect(closeTab).toHaveBeenCalled();
+    expect(reconcileBrowserTargets).toHaveBeenLastCalledWith(
+      expect.objectContaining({ apply: true, ensureSentinel: false }),
+    );
     expect(runGeminiWebWithFallback).not.toHaveBeenCalled();
   });
 
@@ -383,7 +405,7 @@ describe("gemini-web executor", () => {
     );
   });
 
-  it("keeps the launched browser alive when Deep Think uses the keep-browser default", async () => {
+  it("keeps Chrome alive but closes the completed Deep Think target", async () => {
     const { createGeminiWebExecutor } = await import("../../src/gemini-web/executor.js");
     const exec = createGeminiWebExecutor({});
     await exec({
@@ -393,7 +415,9 @@ describe("gemini-web executor", () => {
       log: () => {},
     });
 
-    expect(closeTab).not.toHaveBeenCalled();
+    expect(reconcileBrowserTargets).toHaveBeenLastCalledWith(
+      expect.objectContaining({ apply: true, ensureSentinel: true }),
+    );
     expect(killChrome).not.toHaveBeenCalled();
   });
 });

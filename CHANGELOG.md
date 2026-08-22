@@ -18,6 +18,16 @@
   recovery holds, and unowned meaningful pages are preserved. Failed close
   confirmation records reconciliation work without spawning another blank tab;
   cold start retries exact owned cleanup and never falls back to the first page.
+- Dedicated browser targets: register ChatGPT, Project Sources, Gemini, recovery,
+  and sentinel targets in one durable ownership registry. Completed sessions
+  close their exact targets, including `keepBrowser:true` Gemini runs, while
+  recoverable work remains attachable. Startup and final lease release reconcile
+  terminal owned targets and duplicate blanks outside the lease-registry lock,
+  revalidate every close against current CDP/session/lease evidence, and persist
+  observable `complete`, `partial`, or `failed` receipts for retry. Add the
+  plan-first `oracle browser reconcile-tabs` operator command; untracked ChatGPT
+  pages remain untouched unless the exact dedicated Chrome for Testing profile
+  is explicitly applied with `--include-untracked-chatgpt`.
 
 - Browser: accept valid fast Pro answers for tiny workloads instead of treating
   every sub-minute response as untrusted. Direct CDP and OpenCLI retain the
@@ -42,8 +52,8 @@
   External keystrokes therefore fail closed instead of being submitted with the
   prompt. The persistent dedicated profile uses a while-needed shared Chrome
   process by default; completed runs close only their own target, failed runs
-  retain their recoverable target, and no URL-based blank-tab sweep can remove
-  manually opened or concurrently generating tabs.
+  retain their recoverable target, and apply-time revalidation prevents a URL
+  sweep from removing manually opened or concurrently generating conversations.
 - macOS dedicated browser: add an explicit, user-config-only mock-keychain mode
   and apply it consistently to setup, two-cold-start smoke, normal runs, and
   reattach. This avoids recurring Chrome Safe Storage password dialogs for an

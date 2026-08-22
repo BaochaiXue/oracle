@@ -6,27 +6,34 @@ import { mkdtemp, rm } from "node:fs/promises";
 const {
   launchChrome,
   connectWithNewTab,
-  closeTab,
   readDevToolsPort,
   writeDevToolsActivePort,
   writeChromePid,
   cleanupStaleProfileState,
   verifyDevToolsReachable,
+  acquireBrowserTabLease,
+  reconcileBrowserTargets,
 } = vi.hoisted(() => ({
   launchChrome: vi.fn(),
   connectWithNewTab: vi.fn(),
-  closeTab: vi.fn(async () => undefined),
   readDevToolsPort: vi.fn(async () => null),
   writeDevToolsActivePort: vi.fn(async () => undefined),
   writeChromePid: vi.fn(async () => undefined),
   cleanupStaleProfileState: vi.fn(async () => undefined),
   verifyDevToolsReachable: vi.fn(async () => ({ ok: false, error: "unreachable" })),
+  acquireBrowserTabLease: vi.fn(),
+  reconcileBrowserTargets: vi.fn(async () => ({
+    status: "complete",
+    preservedTargetIds: [],
+    closedTargetIds: [],
+    skippedTargetIds: [],
+    failedTargetIds: [],
+  })),
 }));
 
 vi.mock("../../src/browser/chromeLifecycle.js", () => ({
   launchChrome,
   connectWithNewTab,
-  closeTab,
 }));
 
 vi.mock("../../src/browser/profileState.js", () => ({
@@ -36,6 +43,13 @@ vi.mock("../../src/browser/profileState.js", () => ({
   cleanupStaleProfileState,
   verifyDevToolsReachable,
 }));
+
+vi.mock("../../src/browser/tabLeaseRegistry.js", () => ({
+  DEFAULT_MAX_CONCURRENT_CHATGPT_TABS: 3,
+  normalizeMaxConcurrentTabs: (value: unknown) => Number(value ?? 3),
+  acquireBrowserTabLease,
+}));
+vi.mock("../../src/browser/lifecycleReconciler.js", () => ({ reconcileBrowserTargets }));
 
 describe("openGeminiBrowserSession", () => {
   const originalProfileDir = process.env.ORACLE_BROWSER_PROFILE_DIR;
@@ -47,12 +61,13 @@ describe("openGeminiBrowserSession", () => {
 
     launchChrome.mockReset();
     connectWithNewTab.mockReset();
-    closeTab.mockClear();
     readDevToolsPort.mockReset();
     writeDevToolsActivePort.mockClear();
     writeChromePid.mockClear();
     cleanupStaleProfileState.mockClear();
     verifyDevToolsReachable.mockReset();
+    acquireBrowserTabLease.mockReset();
+    reconcileBrowserTargets.mockClear();
 
     launchChrome.mockResolvedValue({
       port: 9222,
@@ -67,6 +82,15 @@ describe("openGeminiBrowserSession", () => {
     });
     readDevToolsPort.mockResolvedValue(null);
     verifyDevToolsReachable.mockResolvedValue({ ok: false, error: "unreachable" });
+    acquireBrowserTabLease.mockResolvedValue({
+      id: "lease-1",
+      update: vi.fn(async () => undefined),
+      setTargetDisposition: vi.fn(async () => undefined),
+      release: vi.fn(
+        async (options?: { onRelease?: (state: { isLastLease: boolean }) => Promise<void> }) =>
+          options?.onRelease?.({ isLastLease: true }),
+      ),
+    });
   });
 
   afterEach(async () => {
@@ -149,5 +173,48 @@ describe("openGeminiBrowserSession", () => {
       expect.any(Function),
     );
     homedirSpy.mockRestore();
+  });
+
+  it("closes a completed Gemini target while keepBrowser retains the Chrome process", async () => {
+    const { openGeminiBrowserSession } =
+      await import("../../src/gemini-web/browserSessionManager.js");
+    const session = await openGeminiBrowserSession({
+      browserConfig: { manualLoginProfileDir: tempRoot, keepBrowser: true },
+      keepBrowserDefault: true,
+      purpose: "deep-think",
+      sessionId: "gemini-run",
+    });
+    await session.close({ disposition: "completed" });
+
+    expect(reconcileBrowserTargets).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        profileDir: tempRoot,
+        port: 9222,
+        apply: true,
+        ensureSentinel: true,
+      }),
+    );
+    expect(launchChrome.mock.results[0]?.value).toBeDefined();
+    expect(acquireBrowserTabLease).toHaveBeenCalledWith(
+      tempRoot,
+      expect.objectContaining({ ownerKind: "gemini", sessionId: "gemini-run" }),
+    );
+  });
+
+  it("retains an incomplete Gemini target for recovery", async () => {
+    const { openGeminiBrowserSession } =
+      await import("../../src/gemini-web/browserSessionManager.js");
+    const session = await openGeminiBrowserSession({
+      browserConfig: { manualLoginProfileDir: tempRoot, keepBrowser: false },
+      keepBrowserDefault: false,
+      purpose: "deep-think",
+      sessionId: "gemini-run",
+    });
+    await session.close({ disposition: "recoverable" });
+
+    expect(reconcileBrowserTargets).toHaveBeenLastCalledWith(
+      expect.objectContaining({ apply: true, ensureSentinel: true }),
+    );
+    expect(cleanupStaleProfileState).not.toHaveBeenCalled();
   });
 });

@@ -28,10 +28,46 @@ const readyHarvest = {
   state: "completed",
 };
 const logger = (_message: string) => {};
+const leaseUpdate = vi.fn(async () => undefined);
+const setTargetDisposition = vi.fn(async () => undefined);
+const leaseRelease = vi.fn(
+  async (options?: { onRelease?: (state: { isLastLease: boolean }) => Promise<void> }) =>
+    options?.onRelease?.({ isLastLease: true }),
+);
+const acquireLease = vi.fn(async (): Promise<any> => ({
+  id: "recovery-lease",
+  update: leaseUpdate,
+  setTargetDisposition,
+  release: leaseRelease,
+}));
+const reconcileTargets = vi.fn(async (): Promise<any> => ({
+  status: "complete",
+  preservedTargetIds: [],
+  closedTargetIds: [],
+  skippedTargetIds: [],
+  failedTargetIds: [],
+}));
+const ownershipDeps = {
+  acquireLease,
+  reconcileTargets,
+  persistRuntime: vi.fn(
+    async (sessionId: string, updates: Partial<SessionMetadata>) =>
+      ({
+        id: sessionId,
+        ...updates,
+      }) as SessionMetadata,
+  ),
+};
 
 describe("recoverConversationTab flow", () => {
   beforeEach(() => {
     vi.resetModules();
+    leaseUpdate.mockClear();
+    setTargetDisposition.mockClear();
+    leaseRelease.mockClear();
+    acquireLease.mockClear();
+    reconcileTargets.mockClear();
+    ownershipDeps.persistRuntime.mockClear();
   });
 
   test("opens the saved URL in an existing Chrome endpoint before launching another profile", async () => {
@@ -51,10 +87,15 @@ describe("recoverConversationTab flow", () => {
     }));
 
     const { recoverConversationTab } = await import("../../src/browser/recoverConversation.js");
-    const recovered = await recoverConversationTab(meta, logger, {
-      existingEndpoint: { host: "127.0.0.1", port: 9222 },
-      readyTimeoutMs: 1,
-    });
+    const recovered = await recoverConversationTab(
+      meta,
+      logger,
+      {
+        existingEndpoint: { host: "127.0.0.1", port: 9222 },
+        readyTimeoutMs: 1,
+      },
+      ownershipDeps,
+    );
 
     expect(openChatGptTarget).toHaveBeenCalledWith({
       host: "127.0.0.1",
@@ -92,10 +133,15 @@ describe("recoverConversationTab flow", () => {
     }));
 
     const { recoverConversationTab } = await import("../../src/browser/recoverConversation.js");
-    const recovered = await recoverConversationTab(meta, logger, {
-      existingEndpoint: { host: "127.0.0.1", port: 9222 },
-      readyTimeoutMs: 1,
-    });
+    const recovered = await recoverConversationTab(
+      meta,
+      logger,
+      {
+        existingEndpoint: { host: "127.0.0.1", port: 9222 },
+        readyTimeoutMs: 1,
+      },
+      ownershipDeps,
+    );
 
     expect(acquireManualLoginChromeForRun).toHaveBeenCalledWith(
       "/tmp/recover-profile",
@@ -111,6 +157,15 @@ describe("recoverConversationTab flow", () => {
     });
     expect(recovered.ref).toBe("target-2");
     expect(recovered.chrome).toBe(chrome);
+    expect(leaseUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ chromeTargetId: "target-2", ownsTarget: true }),
+    );
+
+    await recovered.finish("completed", { ensureSentinel: true });
+    expect(setTargetDisposition).toHaveBeenCalledWith("terminal", expect.any(Object));
+    expect(reconcileTargets).toHaveBeenCalledWith(
+      expect.objectContaining({ apply: true, ensureSentinel: true }),
+    );
   });
 
   test("does not require a local profile when reopening through a recorded endpoint", async () => {
@@ -172,10 +227,15 @@ describe("recoverConversationTab flow", () => {
 
     const { recoverConversationTab } = await import("../../src/browser/recoverConversation.js");
     await expect(
-      recoverConversationTab(meta, logger, {
-        existingEndpoint: { host: "127.0.0.1", port: 9222 },
-        readyTimeoutMs: 0,
-      }),
+      recoverConversationTab(
+        meta,
+        logger,
+        {
+          existingEndpoint: { host: "127.0.0.1", port: 9222 },
+          readyTimeoutMs: 0,
+        },
+        ownershipDeps,
+      ),
     ).rejects.toThrow(/did not become ready/);
 
     expect(chrome.kill).toHaveBeenCalledTimes(1);
@@ -201,9 +261,14 @@ describe("recoverConversationTab flow", () => {
 
     const { recoverConversationTab } = await import("../../src/browser/recoverConversation.js");
     await expect(
-      recoverConversationTab(meta, logger, {
-        readyTimeoutMs: 1,
-      }),
+      recoverConversationTab(
+        meta,
+        logger,
+        {
+          readyTimeoutMs: 1,
+        },
+        ownershipDeps,
+      ),
     ).rejects.toThrow(/CDP.New failed/);
 
     expect(chrome.kill).toHaveBeenCalledTimes(1);

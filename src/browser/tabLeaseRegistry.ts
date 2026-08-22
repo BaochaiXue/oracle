@@ -1,6 +1,6 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import type { BrowserLogger } from "./types.js";
 import { isProcessAlive } from "./profileState.js";
 import { delay } from "./utils.js";
@@ -20,6 +20,35 @@ export interface BrowserTabLeaseRecord {
   chromePort?: number;
   chromeTargetId?: string;
   tabUrl?: string;
+  /** True only when Oracle created this exact target; attached/manual targets remain false. */
+  ownsTarget?: boolean;
+  ownerKind: BrowserTargetOwnerKind;
+  purpose: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type BrowserTargetOwnerKind =
+  | "chatgpt"
+  | "project-sources"
+  | "gemini"
+  | "recovery"
+  | "sentinel";
+
+export type BrowserOwnedTargetDisposition = "active" | "recoverable" | "terminal" | "sentinel";
+
+export interface BrowserOwnedTargetRecord {
+  targetId: string;
+  ownerKind: BrowserTargetOwnerKind;
+  purpose: string;
+  disposition: BrowserOwnedTargetDisposition;
+  sessionId?: string;
+  chromeHost?: string;
+  chromePort?: number;
+  tabUrl?: string;
+  controllerPid?: number;
+  recoveryKind?: string;
+  recoveryExpiresAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -30,11 +59,16 @@ export interface BrowserTabLease {
     onRelease?: (context: { isLastLease: boolean }) => Promise<void>;
   }) => Promise<void>;
   update: (patch: Partial<BrowserTabLeaseRecord>) => Promise<void>;
+  setTargetDisposition: (
+    disposition: BrowserOwnedTargetDisposition,
+    patch?: Pick<BrowserOwnedTargetRecord, "tabUrl" | "recoveryKind" | "recoveryExpiresAt">,
+  ) => Promise<void>;
 }
 
-interface BrowserTabLeaseRegistryFile {
-  version: 1;
+export interface BrowserTargetRegistryFile {
+  version: 2;
   leases: BrowserTabLeaseRecord[];
+  targets: BrowserOwnedTargetRecord[];
 }
 
 interface BrowserTabLeaseDeps {
@@ -65,6 +99,8 @@ export async function acquireBrowserTabLease(
     chromeHost?: string;
     chromePort?: number;
     staleMs?: number;
+    ownerKind?: BrowserTargetOwnerKind;
+    purpose?: string;
   },
   deps: BrowserTabLeaseDeps = {},
 ): Promise<BrowserTabLease> {
@@ -89,7 +125,7 @@ export async function acquireBrowserTabLease(
       });
       if (active.length >= maxConcurrentTabs) {
         if (active.length !== registry.leases.length) {
-          await writeRegistry(profileDir, { version: 1, leases: active });
+          await writeRegistry(profileDir, { ...registry, leases: active });
         }
         return null;
       }
@@ -100,29 +136,33 @@ export async function acquireBrowserTabLease(
         sessionId: options.sessionId,
         chromeHost: options.chromeHost,
         chromePort: options.chromePort,
+        ownerKind: options.ownerKind ?? "chatgpt",
+        purpose: options.purpose ?? "browser-run",
         createdAt: timestamp,
         updatedAt: timestamp,
       };
-      await writeRegistry(profileDir, { version: 1, leases: [...active, lease] });
+      await writeRegistry(profileDir, { ...registry, version: 2, leases: [...active, lease] });
       return lease;
     });
 
     if (acquired) {
       options.logger?.(
-        `[browser] Acquired ChatGPT browser slot ${leaseId.slice(0, 8)} (${maxConcurrentTabs} max).`,
+        `[browser] Acquired Oracle browser target slot ${leaseId.slice(0, 8)} (${maxConcurrentTabs} max).`,
       );
       return {
         id: leaseId,
         release: async (releaseOptions) =>
           releaseBrowserTabLease(profileDir, leaseId, options.logger, releaseOptions),
         update: async (patch) => updateBrowserTabLease(profileDir, leaseId, patch),
+        setTargetDisposition: async (disposition, patch) =>
+          setBrowserLeaseTargetDisposition(profileDir, leaseId, disposition, patch),
       };
     }
 
     const elapsed = now() - startedAt;
     if (!warned || now() - lastHeartbeatAt >= 30_000) {
       options.logger?.(
-        `[browser] Waiting for ChatGPT browser slot (${maxConcurrentTabs} max, ${Math.round(elapsed / 1000)}s elapsed).`,
+        `[browser] Waiting for Oracle browser target slot (${maxConcurrentTabs} max, ${Math.round(elapsed / 1000)}s elapsed).`,
       );
       warned = true;
       lastHeartbeatAt = now();
@@ -143,12 +183,60 @@ export async function updateBrowserTabLease(
 ): Promise<void> {
   await withRegistryLock(profileDir, async () => {
     const registry = await readRegistry(profileDir);
-    const leases = registry.leases.map((lease) =>
-      lease.id === leaseId
-        ? { ...lease, ...patch, id: lease.id, updatedAt: new Date().toISOString() }
-        : lease,
-    );
-    await writeRegistry(profileDir, { version: 1, leases });
+    const timestamp = new Date().toISOString();
+    let updatedLease: BrowserTabLeaseRecord | undefined;
+    const leases = registry.leases.map((lease) => {
+      if (lease.id !== leaseId) return lease;
+      updatedLease = { ...lease, ...patch, id: lease.id, updatedAt: timestamp };
+      return updatedLease;
+    });
+    let targets = registry.targets;
+    if (updatedLease?.chromeTargetId && updatedLease.ownsTarget === true) {
+      targets = upsertOwnedTarget(targets, {
+        targetId: updatedLease.chromeTargetId,
+        ownerKind: updatedLease.ownerKind,
+        purpose: updatedLease.purpose,
+        disposition: "active",
+        sessionId: updatedLease.sessionId,
+        chromeHost: updatedLease.chromeHost,
+        chromePort: updatedLease.chromePort,
+        tabUrl: updatedLease.tabUrl,
+        controllerPid: updatedLease.pid,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    }
+    await writeRegistry(profileDir, { version: 2, leases, targets });
+  });
+}
+
+export async function setBrowserLeaseTargetDisposition(
+  profileDir: string,
+  leaseId: string,
+  disposition: BrowserOwnedTargetDisposition,
+  patch: Pick<BrowserOwnedTargetRecord, "tabUrl" | "recoveryKind" | "recoveryExpiresAt"> = {},
+): Promise<void> {
+  await withRegistryLock(profileDir, async () => {
+    const registry = await readRegistry(profileDir);
+    const lease = registry.leases.find((candidate) => candidate.id === leaseId);
+    if (!lease?.chromeTargetId) return;
+    const timestamp = new Date().toISOString();
+    const targets = upsertOwnedTarget(registry.targets, {
+      targetId: lease.chromeTargetId,
+      ownerKind: lease.ownerKind,
+      purpose: lease.purpose,
+      disposition,
+      sessionId: lease.sessionId,
+      chromeHost: lease.chromeHost,
+      chromePort: lease.chromePort,
+      tabUrl: patch.tabUrl ?? lease.tabUrl,
+      controllerPid: lease.pid,
+      recoveryKind: patch.recoveryKind,
+      recoveryExpiresAt: patch.recoveryExpiresAt,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    await writeRegistry(profileDir, { ...registry, targets });
   });
 }
 
@@ -166,10 +254,10 @@ export async function releaseBrowserTabLease(
       isProcessAlive,
     });
     const leases = active.filter((lease) => lease.id !== leaseId);
-    await writeRegistry(profileDir, { version: 1, leases });
+    await writeRegistry(profileDir, { ...registry, leases });
     return leases.length === 0;
   });
-  logger?.(`[browser] Released ChatGPT browser slot ${leaseId.slice(0, 8)}.`);
+  logger?.(`[browser] Released Oracle browser target slot ${leaseId.slice(0, 8)}.`);
   await options.onRelease?.({ isLastLease });
 }
 
@@ -192,7 +280,7 @@ export async function hasOtherActiveBrowserTabLeases(
       isProcessAlive: options.isProcessAlive ?? isProcessAlive,
     });
     if (active.length !== registry.leases.length) {
-      await writeRegistry(profileDir, { version: 1, leases: active });
+      await writeRegistry(profileDir, { ...registry, leases: active });
     }
     return active.some((lease) => lease.id !== leaseId);
   });
@@ -223,28 +311,40 @@ async function withRegistryLock<T>(profileDir: string, callback: () => Promise<T
   }
 }
 
-async function readRegistry(profileDir: string): Promise<BrowserTabLeaseRegistryFile> {
+async function readRegistry(profileDir: string): Promise<BrowserTargetRegistryFile> {
   try {
     const raw = await readFile(registryPath(profileDir), "utf8");
-    const parsed = JSON.parse(raw) as BrowserTabLeaseRegistryFile;
+    const parsed = JSON.parse(raw) as Partial<BrowserTargetRegistryFile> & {
+      version?: number;
+      leases?: unknown[];
+      targets?: unknown[];
+    };
     if (!Array.isArray(parsed.leases)) {
-      return { version: 1, leases: [] };
+      return { version: 2, leases: [], targets: [] };
     }
     return {
-      version: 1,
-      leases: parsed.leases.filter(isLeaseRecord),
+      version: 2,
+      leases: parsed.leases.filter(isLeaseRecord).map((lease) => ({
+        ...lease,
+        ownerKind: lease.ownerKind ?? "chatgpt",
+        purpose: lease.purpose ?? "browser-run",
+      })),
+      targets: Array.isArray(parsed.targets) ? parsed.targets.filter(isOwnedTargetRecord) : [],
     };
   } catch {
-    return { version: 1, leases: [] };
+    return { version: 2, leases: [], targets: [] };
   }
 }
 
 async function writeRegistry(
   profileDir: string,
-  registry: BrowserTabLeaseRegistryFile,
+  registry: BrowserTargetRegistryFile,
 ): Promise<void> {
   await mkdir(profileDir, { recursive: true });
-  await writeFile(registryPath(profileDir), `${JSON.stringify(registry, null, 2)}\n`, "utf8");
+  const destination = registryPath(profileDir);
+  const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(registry, null, 2)}\n`, "utf8");
+  await rename(temporary, destination);
 }
 
 function registryPath(profileDir: string): string {
@@ -276,4 +376,64 @@ function isLeaseRecord(value: unknown): value is BrowserTabLeaseRecord {
     typeof record.createdAt === "string" &&
     typeof record.updatedAt === "string"
   );
+}
+
+function isOwnedTargetRecord(value: unknown): value is BrowserOwnedTargetRecord {
+  if (!value || typeof value !== "object") return false;
+  const record = value as BrowserOwnedTargetRecord;
+  return (
+    typeof record.targetId === "string" &&
+    typeof record.ownerKind === "string" &&
+    typeof record.purpose === "string" &&
+    typeof record.disposition === "string" &&
+    typeof record.createdAt === "string" &&
+    typeof record.updatedAt === "string"
+  );
+}
+
+function upsertOwnedTarget(
+  targets: BrowserOwnedTargetRecord[],
+  next: BrowserOwnedTargetRecord,
+): BrowserOwnedTargetRecord[] {
+  const existing = targets.find((target) => target.targetId === next.targetId);
+  const record = existing ? { ...existing, ...next, createdAt: existing.createdAt } : next;
+  return [...targets.filter((target) => target.targetId !== next.targetId), record];
+}
+
+export async function readBrowserTargetRegistry(
+  profileDir: string,
+): Promise<BrowserTargetRegistryFile> {
+  return withRegistryLock(profileDir, () => readRegistry(profileDir));
+}
+
+export async function registerBrowserOwnedTarget(
+  profileDir: string,
+  input: Omit<BrowserOwnedTargetRecord, "createdAt" | "updatedAt"> & {
+    createdAt?: string;
+    updatedAt?: string;
+  },
+): Promise<void> {
+  await withRegistryLock(profileDir, async () => {
+    const registry = await readRegistry(profileDir);
+    const timestamp = new Date().toISOString();
+    const targets = upsertOwnedTarget(registry.targets, {
+      ...input,
+      createdAt: input.createdAt ?? timestamp,
+      updatedAt: input.updatedAt ?? timestamp,
+    });
+    await writeRegistry(profileDir, { ...registry, targets });
+  });
+}
+
+export async function removeBrowserOwnedTarget(
+  profileDir: string,
+  targetId: string,
+): Promise<void> {
+  await withRegistryLock(profileDir, async () => {
+    const registry = await readRegistry(profileDir);
+    const targets = registry.targets.filter((target) => target.targetId !== targetId);
+    if (targets.length !== registry.targets.length) {
+      await writeRegistry(profileDir, { ...registry, targets });
+    }
+  });
 }

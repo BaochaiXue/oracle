@@ -80,11 +80,12 @@ See [OpenAI / Azure / OpenRouter](openai-endpoints.md) and [OpenRouter](openrout
 
 Profile lifecycle commands:
 
-| Command                                                                                        | Purpose                                                                                                                                                 |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `oracle browser install [--cache-dir …] [--no-write-config] [--json]`                          | Install or resume official stable Chrome for Testing and persist its separate executable identity after validation.                                     |
-| `oracle browser setup [--profile-dir …] [--chrome-path …] [--use-mock-keychain]`               | Open Chrome for Testing for sign-in and wait for the whole browser to close; no CDP/prompt. The macOS mock-keychain option is persisted to user config. |
-| `oracle browser smoke [--profile-dir …] [--port …] [--visible] [--use-mock-keychain] [--json]` | Cold-start and attach twice with the same profile; verify login without submitting a prompt.                                                            |
+| Command                                                                                        | Purpose                                                                                                                                                                          |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `oracle browser install [--cache-dir …] [--no-write-config] [--json]`                          | Install or resume official stable Chrome for Testing and persist its separate executable identity after validation.                                                              |
+| `oracle browser setup [--profile-dir …] [--chrome-path …] [--use-mock-keychain]`               | Open Chrome for Testing for sign-in and wait for the whole browser to close; no CDP/prompt. The macOS mock-keychain option is persisted to user config.                          |
+| `oracle browser smoke [--profile-dir …] [--port …] [--visible] [--use-mock-keychain] [--json]` | Cold-start and attach twice with the same profile; verify login without submitting a prompt.                                                                                     |
+| `oracle browser reconcile-tabs [--plan\|--apply] [--include-untracked-chatgpt] [--json]`       | Plan by default; reconcile terminal owned and duplicate blank targets only in the verified exact dedicated profile. Untracked ChatGPT cleanup requires explicit apply + include. |
 
 | Flag                                                                           | Purpose                                                                                                                      |
 | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |

@@ -338,7 +338,15 @@ export async function attachSession(
           }) as unknown as BrowserLogger,
           { verbose: true },
         ),
-        { promptPreview: metadata.promptPreview },
+        {
+          promptPreview: metadata.promptPreview,
+          sessionId,
+          persistRuntime: async (nextRuntime) => {
+            await sessionStore.updateSession(sessionId, {
+              browser: { ...(metadata?.browser ?? {}), runtime: nextRuntime },
+            });
+          },
+        },
       );
       const responseRuntime = result.runtime ?? runtime;
       const outputTokens = estimateTokenCount(result.answerMarkdown);
