@@ -92,7 +92,7 @@ export async function openGeminiBrowserSession(
       port: activePort,
       logger: log ?? (() => {}),
       apply: true,
-      ensureSentinel: keepBrowser,
+      ensureSentinel: true,
     });
     if (startupReceipt.status !== "complete") {
       log?.(

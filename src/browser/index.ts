@@ -1199,6 +1199,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       host: chromeHost,
       port: chrome.port,
       logger,
+      ensureSentinel: true,
     });
     reconcileNeeded = startupReconciliation.status !== "complete";
     if (reconcileNeeded) {

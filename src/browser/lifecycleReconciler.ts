@@ -272,9 +272,10 @@ export function planOwnedTargetReconciliation(input: {
   const availableBlankIds = blankIds
     .filter((id) => !protectedIds.has(id) && !closeIds.has(id))
     .sort();
-  const sentinelTargetId = nonBlankSurvivorExists
-    ? undefined
-    : (protectedBlankIds[0] ?? availableBlankIds[0]);
+  const sentinelTargetId =
+    input.ensureSentinel && !nonBlankSurvivorExists
+      ? (protectedBlankIds[0] ?? availableBlankIds[0])
+      : undefined;
   const duplicateBlankTargetIds = blankIds.filter(
     (id) => id !== sentinelTargetId && !protectedIds.has(id),
   );

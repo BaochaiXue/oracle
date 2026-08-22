@@ -158,7 +158,7 @@ export async function runBrowserProjectSources(
         port: chrome.port,
         logger,
         apply: true,
-        ensureSentinel: effectiveKeepBrowser,
+        ensureSentinel: true,
       });
       if (startupReceipt.status !== "complete") {
         logger(

@@ -214,6 +214,19 @@ export async function recoverConversationTab(
 
   let recoveredTargetId: string | undefined;
   try {
+    const startupReceipt = await (deps.reconcileTargets ?? reconcileBrowserTargets)({
+      profileDir: userDataDir,
+      host,
+      port,
+      logger,
+      apply: true,
+      ensureSentinel: true,
+    });
+    if (startupReceipt.status !== "complete") {
+      logger(
+        `[browser] Recovery startup reconciliation ${startupReceipt.status}; retry remains durable.`,
+      );
+    }
     const targetId = await openChatGptTarget({ host, port, url });
     recoveredTargetId = targetId;
     await lease.update({

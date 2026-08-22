@@ -362,7 +362,7 @@ async function resumeBrowserSessionViaNewChrome(
     port: chrome.port,
     logger,
     apply: true,
-    ensureSentinel: Boolean(resolved.keepBrowser),
+    ensureSentinel: true,
   });
   if (startupReceipt.status !== "complete") {
     logger(

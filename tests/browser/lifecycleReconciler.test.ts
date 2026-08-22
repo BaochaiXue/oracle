@@ -282,6 +282,30 @@ describe("generic target reconciliation", () => {
     expect(plan.protectedTargetIds).toEqual([]);
   });
 
+  test("closes the final blank when process lifetime does not require a sentinel", () => {
+    const plan = planOwnedTargetReconciliation({
+      profileDir: profile,
+      sessions: [],
+      registry: registry([
+        {
+          targetId: "idle-sentinel",
+          ownerKind: "sentinel",
+          purpose: "persistent-browser-sentinel",
+          disposition: "sentinel",
+          controllerPid: process.pid,
+          createdAt: "2026-08-22T00:00:00.000Z",
+          updatedAt: "2026-08-22T00:00:00.000Z",
+        },
+      ]),
+      targets: [{ targetId: "idle-sentinel", type: "page", url: "about:blank" }],
+      ensureSentinel: false,
+    });
+
+    expect(plan.sentinelTargetId).toBeUndefined();
+    expect(plan.closeTargetIds).toEqual(["idle-sentinel"]);
+    expect(plan.needsSentinel).toBe(false);
+  });
+
   test("revalidates URL, type, leases, ownership, and session state immediately before close", async () => {
     let targets = [
       { targetId: "url-change", type: "page", url: "https://chatgpt.com/c/old" },
