@@ -279,7 +279,6 @@ export function planOwnedTargetReconciliation(input: {
     (id) => id !== sentinelTargetId && !protectedIds.has(id),
   );
   for (const id of duplicateBlankTargetIds) closeIds.add(id);
-  if (sentinelTargetId) protectedIds.add(sentinelTargetId);
 
   const preservedTargetIds = pages
     .map((target) => targetId(target) as string)

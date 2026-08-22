@@ -279,6 +279,7 @@ describe("generic target reconciliation", () => {
     expect(plan.sentinelTargetId).toBe("sentinel-a");
     expect(plan.closeTargetIds).toEqual(["sentinel-b"]);
     expect(plan.preservedTargetIds).toEqual(["sentinel-a"]);
+    expect(plan.protectedTargetIds).toEqual([]);
   });
 
   test("revalidates URL, type, leases, ownership, and session state immediately before close", async () => {
