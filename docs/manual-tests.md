@@ -35,7 +35,21 @@ oracle browser smoke --json
 Expect `coldStarts:2`, `transport:"direct-cdp"`, authenticated/ready receipts
 for both cycles, and `promptSubmitted:false`. The profile and requested port
 must be idle before the test. No debugging consent click and no ChatGPT
-conversation should be created.
+conversation should be created. After the next cold start, neither smoke-owned
+ChatGPT page may return through Chrome session restore.
+
+For macOS focus-sensitive launcher changes, leave a non-Chrome app frontmost and
+sample the frontmost process throughout cold launch, target creation, navigation,
+Send, capture, and cleanup. The probe must not activate or restore another app.
+Expect no dedicated Chrome PID in the timeline. Confirm the launched command uses
+`--no-startup-window`, and that the created page uses `focus:false`.
+
+For owned-target lifecycle changes, run three tiny successful consultations and
+then two concurrently. Inventory CDP page targets before and after each batch.
+Every terminal run target must disappear while active/recoverable and pre-existing
+control tabs survive. Also force a post-capture timing/admission rejection and
+confirm it closes the terminal owned target without deleting the saved answer or
+stopping a retained shared Chrome process.
 
 ### Multi-Model CLI fan-out
 

@@ -214,10 +214,27 @@ export function planOwnedTargetReconciliation(input: {
     const exactReceipts = receipts.filter(({ runtime }) =>
       runtimeMatchesExactTarget(runtime, target),
     );
+    const conversationId = extractStableConversationIdFromUrl(target.url ?? "");
+    const durableConversationOwners = conversationId
+      ? registry.targets.filter(
+          (record) =>
+            Boolean(record.sessionId) &&
+            extractStableConversationIdFromUrl(record.tabUrl ?? "") === conversationId,
+        )
+      : [];
     const owned = ownedById.get(id);
     const terminalBySession = exactReceipts.some(({ session, runtime }) =>
       isTerminalSession(session, runtime),
     );
+    const terminalByDurableConversationOwnership = durableConversationOwners.some((record) => {
+      const ownerReceipt = receipts.find(
+        ({ session, runtime }) =>
+          session.id === record.sessionId &&
+          runtime.conversationId === conversationId &&
+          isTerminalSession(session, runtime),
+      );
+      return Boolean(ownerReceipt && record.disposition === "terminal");
+    });
     const ownedRecoveryExpiry = Date.parse(owned?.recoveryExpiresAt ?? "");
     const ownedRecoveryIsLive = Boolean(
       owned?.disposition === "recoverable" &&
@@ -248,7 +265,7 @@ export function planOwnedTargetReconciliation(input: {
           Number.isFinite(ownedRecoveryExpiry) &&
           ownedRecoveryExpiry <= nowMs)),
     );
-    if (terminalBySession || terminalByOwnedRecord) {
+    if (terminalBySession || terminalByOwnedRecord || terminalByDurableConversationOwnership) {
       terminalOwnedIds.add(id);
       continue;
     }
@@ -516,6 +533,23 @@ export async function reconcileBrowserTargets(
         if (await closeTarget(input.port, id, input.logger, input.host)) {
           closedTargetIds.push(id);
           await removeOwned(input.profileDir, id);
+          const closedConversationId = extractStableConversationIdFromUrl(
+            plan.targetSnapshots[id]?.url ?? "",
+          );
+          if (closedConversationId) {
+            const latestRegistry = await readRegistry();
+            const staleEvidenceIds = latestRegistry.targets
+              .filter(
+                (record) =>
+                  record.targetId !== id &&
+                  record.disposition === "terminal" &&
+                  extractStableConversationIdFromUrl(record.tabUrl ?? "") === closedConversationId,
+              )
+              .map((record) => record.targetId);
+            for (const staleEvidenceId of staleEvidenceIds) {
+              await removeOwned(input.profileDir, staleEvidenceId);
+            }
+          }
         } else {
           failedTargetIds.push(id);
         }

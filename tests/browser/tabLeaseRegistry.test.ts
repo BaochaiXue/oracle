@@ -275,4 +275,34 @@ describe("tabLeaseRegistry", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  test("refuses to replace the exact target identity of an owned lease", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "oracle-target-identity-"));
+    try {
+      const lease = await acquireBrowserTabLease(dir, {
+        maxConcurrentTabs: 1,
+        timeoutMs: 500,
+        sessionId: "stable-target-session",
+      });
+      await lease.update({
+        chromeTargetId: "created-cdp-target",
+        tabUrl: "about:blank",
+        ownsTarget: true,
+      });
+
+      await expect(
+        lease.update({
+          chromeTargetId: "session-scoped-target-info-id",
+          tabUrl: "https://chatgpt.com/c/stable",
+        }),
+      ).rejects.toThrow(/owned target identity/i);
+
+      const snapshot = await readBrowserTargetRegistry(dir);
+      expect(snapshot.leases[0]?.chromeTargetId).toBe("created-cdp-target");
+      expect(snapshot.targets.map((target) => target.targetId)).toEqual(["created-cdp-target"]);
+      await lease.release();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

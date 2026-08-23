@@ -134,7 +134,7 @@ describe("browser run target cleanup", () => {
   test("closes the owned completed tab while keeping browser lifetime independent", () => {
     expect(
       __test__.shouldCloseOwnedRunTargetAfterRun({
-        runStatus: "complete",
+        browserTurnState: "terminal",
         ownsTarget: true,
       }),
     ).toBe(true);
@@ -143,7 +143,7 @@ describe("browser run target cleanup", () => {
   test("closes a completed service-owned tab while keeping shared Chrome alive", () => {
     expect(
       __test__.shouldCloseOwnedRunTargetAfterRun({
-        runStatus: "complete",
+        browserTurnState: "terminal",
         ownsTarget: true,
         closeOwnedTabOnComplete: true,
       }),
@@ -153,14 +153,14 @@ describe("browser run target cleanup", () => {
   test("does not close attached or incomplete targets", () => {
     expect(
       __test__.shouldCloseOwnedRunTargetAfterRun({
-        runStatus: "complete",
+        browserTurnState: "terminal",
         ownsTarget: false,
         closeOwnedTabOnComplete: true,
       }),
     ).toBe(false);
     expect(
       __test__.shouldCloseOwnedRunTargetAfterRun({
-        runStatus: "attempted",
+        browserTurnState: "active",
         ownsTarget: true,
         closeOwnedTabOnComplete: true,
       }),
@@ -170,9 +170,37 @@ describe("browser run target cleanup", () => {
   test("allows an explicit caller to preserve its owned completed target", () => {
     expect(
       __test__.shouldCloseOwnedRunTargetAfterRun({
-        runStatus: "complete",
+        browserTurnState: "terminal",
         ownsTarget: true,
         closeOwnedTabOnComplete: false,
+      }),
+    ).toBe(false);
+  });
+
+  test("closes a terminal captured turn even when later result admission rejects it", () => {
+    expect(
+      __test__.shouldCloseOwnedRunTargetAfterRun({
+        browserTurnState: "terminal",
+        answerCaptured: true,
+        resultAdmitted: false,
+        ownsTarget: true,
+      }),
+    ).toBe(true);
+  });
+
+  test("preserves active and recoverable incomplete turns", () => {
+    expect(
+      __test__.shouldCloseOwnedRunTargetAfterRun({
+        browserTurnState: "active",
+        answerCaptured: false,
+        ownsTarget: true,
+      }),
+    ).toBe(false);
+    expect(
+      __test__.shouldCloseOwnedRunTargetAfterRun({
+        browserTurnState: "not-started",
+        answerCaptured: false,
+        ownsTarget: true,
       }),
     ).toBe(false);
   });

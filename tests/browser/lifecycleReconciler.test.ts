@@ -84,6 +84,97 @@ describe("planOwnedTargetReconciliation", () => {
     expect(plan.untrackedChatgptTargetIds).toContain("done-target");
   });
 
+  test("reclaims a restored terminal tab only with durable Oracle conversation ownership", () => {
+    const plan = planOwnedTargetReconciliation({
+      profileDir: profile,
+      nowMs: Date.parse("2026-08-22T01:00:00.000Z"),
+      sessions: [
+        session("restored", "completed", {
+          chromeTargetId: "stale-session-scoped-id",
+          conversationId: "done-conv",
+          browserDisposition: "completed",
+        }),
+      ],
+      registry: registry([
+        {
+          targetId: "stale-session-scoped-id",
+          ownerKind: "chatgpt",
+          purpose: "browser-run",
+          disposition: "terminal",
+          sessionId: "restored",
+          tabUrl: "https://chatgpt.com/c/done-conv",
+          createdAt: "2026-08-22T00:00:00.000Z",
+          updatedAt: "2026-08-22T00:01:00.000Z",
+        },
+      ]),
+      targets: [
+        {
+          targetId: "restored-live-target-id",
+          type: "page",
+          url: "https://chatgpt.com/c/done-conv",
+        },
+        {
+          targetId: "manual-same-host",
+          type: "page",
+          url: "https://chatgpt.com/c/manual-conversation",
+        },
+      ],
+    });
+
+    expect(plan.terminalOwnedTargetIds).toEqual(["restored-live-target-id"]);
+    expect(plan.closeTargetIds).toEqual(["restored-live-target-id"]);
+    expect(plan.untrackedChatgptTargetIds).toEqual(["manual-same-host"]);
+  });
+
+  test("removes stale ownership evidence after closing its restored terminal tab", async () => {
+    const currentRegistry = registry([
+      {
+        targetId: "stale-session-scoped-id",
+        ownerKind: "chatgpt",
+        purpose: "browser-run",
+        disposition: "terminal",
+        sessionId: "restored",
+        tabUrl: "https://chatgpt.com/c/done-conv",
+        createdAt: "2026-08-22T00:00:00.000Z",
+        updatedAt: "2026-08-22T00:01:00.000Z",
+      },
+    ]);
+    const removeOwnedTarget = vi.fn(async () => undefined);
+    const receipt = await reconcileBrowserTargets(
+      {
+        profileDir: profile,
+        host: "127.0.0.1",
+        port: 9333,
+        apply: true,
+        logger: () => {},
+      },
+      {
+        listTargets: async () => [
+          {
+            targetId: "restored-live-target-id",
+            type: "page",
+            url: "https://chatgpt.com/c/done-conv",
+          },
+        ],
+        listSessions: async () => [
+          session("restored", "completed", {
+            chromeTargetId: "stale-session-scoped-id",
+            conversationId: "done-conv",
+            browserDisposition: "completed",
+          }),
+        ],
+        readRegistry: async () => currentRegistry,
+        closeTarget: async () => true,
+        removeOwnedTarget,
+        writeReceipt: async () => {},
+      },
+    );
+
+    expect(receipt.closedTargetIds).toEqual(["restored-live-target-id"]);
+    expect(removeOwnedTarget).toHaveBeenCalledWith(profile, "restored-live-target-id");
+    expect(removeOwnedTarget).toHaveBeenCalledWith(profile, "stale-session-scoped-id");
+  });
+
   test("expires recovery holds and never uses a first-page fallback", () => {
     const plan = planOwnedTargetReconciliation({
       profileDir: profile,

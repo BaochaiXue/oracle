@@ -168,7 +168,8 @@ assert profile is not already in use
   → verify authenticated session
   → verify composer ready
   → record host/port/pid and promptSubmitted=false
-  → close CDP client and owned Chrome
+  → close and confirm the exact smoke-owned target
+  → close the CDP client and owned Chrome
   → wait until DevTools endpoint is gone
   → repeat from a cold process
 ```
@@ -178,7 +179,8 @@ shutdown: the custom profile exists, its ChatGPT login is reusable, and a fresh
 CDP client can attach without borrowing personal Chrome state. The command
 refuses to run when the profile is already active or the requested port already
 serves another DevTools endpoint; it never kills an unresolved browser process
-to make the test pass.
+to make the test pass. It also fails if exact target closure cannot be confirmed,
+preventing smoke pages from returning through Chrome session restore.
 
 Use `--visible` to observe both validation cycles. On macOS the default smoke
 keeps Chrome headful but off-screen so the page remains fully rendered.
@@ -237,8 +239,10 @@ Important fields:
 - `hideWindow:false` keeps normal headful Chrome visible and manually
   inspectable, actively restoring remembered off-screen bounds to an on-screen
   position once without overriding a later user-positioned window. On macOS, a
-  cold start goes through LaunchServices with background-open semantics. New
-  targets become the current Chrome tab but use `focus:false`, so Oracle never
+  cold start goes through LaunchServices with background-open semantics and
+  `--no-startup-window`; Oracle then creates the first real page with
+  `focus:false`, so neither operation activates Chrome. New targets become the
+  current Chrome tab without
   activates the Chrome window or takes the operator's keyboard focus. Page-side focus
   emulation supports trusted input without changing OS focus. `true` remains an
   off-screen opt-in with reduced observability and no practical manual takeover.
@@ -267,7 +271,8 @@ For a normal Pro consultation Oracle:
 2. acquires a tab lease for the dedicated profile;
 3. discovers a reachable Chrome already using that exact profile or launches
    one new process;
-4. creates and records an owned target without activating the browser window;
+4. creates and records an owned target without activating the browser window,
+   preserving the exact creation-time CDP target ID for its full lifetime;
 5. verifies ChatGPT login, model `GPT-5.6 Sol`, and reasoning tier `Pro`;
 6. re-reads the visible composer and refuses to send if its exact contents were
    changed after Oracle populated it;
@@ -278,8 +283,9 @@ For a normal Pro consultation Oracle:
 9. waits in the browser worker for completion instead of spawning repeated
    command/tab polls;
 10. captures Markdown and local artifacts;
-11. closes its owned target after a completed run, retains that target when the
-    run is incomplete so it can be recovered, and leaves the shared dedicated
+11. closes its owned target after the browser turn is terminal, including when
+    later evidence/admission rejects the captured result; retains that target
+    only when the browser turn is genuinely incomplete/recoverable; and leaves the shared dedicated
     Chrome process running by default. Final-release and startup reconciliation
     close terminal owned targets and coalesce duplicate blank pages, while
     preserving untracked ChatGPT conversations during ordinary operation.

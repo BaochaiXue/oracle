@@ -3,7 +3,8 @@ import type { LaunchedChrome } from "chrome-launcher";
 import { Launcher } from "chrome-launcher";
 import { CHATGPT_URL } from "../browser/constants.js";
 import {
-  connectToChrome,
+  closeTab,
+  connectWithNewTab,
   launchChrome,
   positionChromeWindowOffscreen,
 } from "../browser/chromeLifecycle.js";
@@ -245,9 +246,18 @@ export async function runDedicatedBrowserSmoke(
     const startedAt = Date.now();
     let chrome: LaunchedChrome | null = null;
     let client: ChromeClient | null = null;
+    let targetId: string | undefined;
+    let cycleError: unknown;
     try {
       chrome = await launchChrome(config, options.profileDir, logger);
-      client = await connectToChrome(chrome.port, logger, "127.0.0.1");
+      const connection = await connectWithNewTab(chrome.port, logger, "about:blank", "127.0.0.1", {
+        fallbackToDefault: false,
+        retries: 6,
+        retryDelayMs: 250,
+        preserveWindowFocus: true,
+      });
+      client = connection.client;
+      targetId = connection.targetId;
       await enablePage(client);
       if (!options.visible) {
         await positionChromeWindowOffscreen(client, logger);
@@ -273,12 +283,37 @@ export async function runDedicatedBrowserSmoke(
         promptSubmitted: false,
         elapsedMs: Date.now() - startedAt,
       });
-    } finally {
-      if (chrome) {
-        await closeLaunchedChrome(chrome, client, options.profileDir, logger);
+    } catch (error) {
+      cycleError = error;
+    }
+
+    if (chrome) {
+      if (!targetId) {
+        cycleError ??= new Error(
+          "Dedicated browser smoke created a target without an exact target ID.",
+        );
       } else {
-        await client?.close().catch(() => undefined);
+        try {
+          const targetClosed = await closeTab(chrome.port, targetId, logger, "127.0.0.1");
+          if (!targetClosed) {
+            cycleError ??= new Error(
+              `Dedicated browser smoke could not confirm closure of owned target ${targetId}.`,
+            );
+          }
+        } catch (error) {
+          cycleError ??= error;
+        }
       }
+      try {
+        await closeLaunchedChrome(chrome, client, options.profileDir, logger);
+      } catch (error) {
+        cycleError ??= error;
+      }
+    } else {
+      await client?.close().catch(() => undefined);
+    }
+    if (cycleError) {
+      throw cycleError;
     }
   }
 

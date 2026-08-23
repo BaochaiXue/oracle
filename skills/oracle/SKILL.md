@@ -29,8 +29,9 @@ Recommended defaults:
 - Window: visible while needed and never activated for submission; the isolated
   profile persists, while Chrome drains after the last ordinary run unless
   active/recoverable work or an unowned meaningful page remains. macOS cold
-  starts use LaunchServices background-open semantics, new tabs use
-  `focus:false`, and page-side focus emulation supports trusted input
+  starts use LaunchServices background-open semantics plus
+  `--no-startup-window`, new tabs use `focus:false`, and page-side focus
+  emulation supports trusted input without changing the frontmost app
 - Base Sol: `--model gpt-5.6-sol`
 - Base Sol maximum reasoning: `--browser-thinking-time extra-high` (Extra High)
 - Explicit Pro effort on GPT-5.6 Sol: `--browser-thinking-time pro` (fails closed if Pro cannot be confirmed)
@@ -182,8 +183,10 @@ derives the HTTP timeout unless `--http-timeout` is supplied.
 - Use `--slug "<3-5 words>"` for readable session IDs.
 - If a run times out, reattach; do not re-run it. Use `--force` only when a
   genuinely new identical run is intended.
-- Direct CDP defaults to `browserLifetime:"while-needed"`. Successful owned
-  tabs close by exact receipt; recoverable tabs receive bounded holds; unknown
+- Direct CDP defaults to `browserLifetime:"while-needed"`. The creation-time
+  CDP target ID is immutable ownership evidence. Browser-terminal owned tabs
+  close even when later evidence admission rejects the captured result;
+  recoverable incomplete tabs receive bounded holds; unknown
   meaningful pages are preserved. Startup/final-release reconciliation closes
   terminal owned targets, coalesces blank sentinels, and reports a durable
   `complete`, `partial`, or `failed` receipt without holding the lease registry

@@ -25,6 +25,7 @@ describe("local browser target producer ownership", () => {
       /acquireBrowserTabLease[\s\S]*openChatGptTarget[\s\S]*ownsTarget: true/,
     );
     expect(reconciler).toMatch(/createChromePageTarget[\s\S]*registerOwned/);
+    expect(chatgpt).not.toMatch(/lastTargetId\s*=\s*info\?\.targetInfo\?\.targetId/);
   });
 
   test("Gemini implementation and canonical routing are absent from the fork", async () => {
@@ -50,7 +51,7 @@ describe("local browser target producer ownership", () => {
     expect(remoteBody).not.toContain("reconcileOwnedBrowserTargets(");
   });
 
-  test("setup and smoke use bounded process ownership instead of durable run targets", async () => {
+  test("setup is manual-only and smoke closes its exact bounded target before shutdown", async () => {
     const dedicatedBrowser = await source("src/cli/dedicatedBrowser.ts");
     const setupStart = dedicatedBrowser.indexOf("export async function runDedicatedBrowserSetup");
     const smokeStart = dedicatedBrowser.indexOf("export async function runDedicatedBrowserSmoke");
@@ -62,8 +63,11 @@ describe("local browser target producer ownership", () => {
 
     expect(setupBody).not.toContain("--remote-debugging-port");
     expect(setupBody).not.toContain("connectWithNewTab(");
-    expect(smokeBody).toContain("connectToChrome(");
+    expect(smokeBody).toContain("connectWithNewTab(");
+    expect(smokeBody).toContain("preserveWindowFocus: true");
+    expect(smokeBody).toContain("targetId = connection.targetId");
+    expect(smokeBody).toContain("closeTab(chrome.port, targetId");
+    expect(smokeBody).toContain("could not confirm closure of owned target");
     expect(smokeBody).toContain("closeLaunchedChrome(");
-    expect(smokeBody).not.toContain("connectWithNewTab(");
   });
 });

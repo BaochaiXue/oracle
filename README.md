@@ -140,9 +140,11 @@ oracle browser smoke
 
 The smoke performs two real cold starts against the same profile. Each cycle
 connects over `127.0.0.1`, verifies that ChatGPT is authenticated and the
-composer is ready, submits no prompt, closes Chrome, and waits for the endpoint
-to disappear before the second cycle. A passing result is direct evidence that
-the persisted login and unattended CDP attachment work after restart.
+composer is ready, submits no prompt, closes and confirms its exact owned target,
+then closes Chrome and waits for the endpoint to disappear before the second
+cycle. A passing result is direct evidence that the persisted login and
+unattended CDP attachment work after restart without adding session-restored
+ChatGPT tabs.
 
 On macOS, `--use-mock-keychain` is the explicit unattended-mode tradeoff. It
 prevents Chrome for Testing from repeatedly requesting access to the everyday
@@ -193,10 +195,14 @@ deliberately explicit macOS configuration looks like this:
 above is illustrative. `hideWindow:false` keeps normal macOS runs visible and
 human-observable, restoring only a previously hidden persistent window without
 overriding a later user-positioned window. A cold start uses macOS LaunchServices
-background-open semantics so the first visible window also leaves the active app
-alone. `browserLifetime:"while-needed"` keeps the shared dedicated Chrome only
+background-open semantics without a startup window; the first real page is then
+created by CDP with `focus:false`, so neither launch nor target creation changes
+the active app. `browserLifetime:"while-needed"` keeps the shared dedicated Chrome only
 while an active lease, unexpired recovery hold, or unowned meaningful page
-needs it. Completed Oracle tabs close by exact target/conversation receipts and
+needs it. The CDP target ID returned at creation remains the ownership identity;
+session-scoped target-info values cannot replace it. A terminal browser turn
+closes that exact owned target even if later timing/evidence admission rejects
+the captured result. Completed Oracle tabs close by exact target/conversation receipts and
 the last ordinary run drains Chrome. `persistent` is the explicit always-on
 choice; legacy `keepBrowser:true|false` maps to `persistent|ephemeral`. Oracle opens targets with CDP
 `Target.createTarget({background:false, focus:false})` and uses page-side focus

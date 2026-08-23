@@ -138,6 +138,12 @@ describe("persistent-profile launch flags", () => {
     expect(__macLaunchTest__.resolveMacAppBundle("/usr/bin/chromium")).toBeNull();
   });
 
+  test("starts visible persistent Chrome without manufacturing an activating startup window", async () => {
+    const { __macLaunchTest__ } = await import("../../src/browser/chromeLifecycle.js");
+
+    expect(__macLaunchTest__.backgroundStartingUrl).toBe("--no-startup-window");
+  });
+
   test("keeps long Pro turns live without dropping persistent-profile safeguards", async () => {
     const { buildChromeFlagsForTest, resolveChromeLaunchOptionsForTest } =
       await import("../../src/browser/chromeLifecycle.js");

@@ -12,6 +12,8 @@ import {
 import { delay } from "./utils.js";
 import { isWsl, resolveWslChromeLaunchRoute } from "./wslHost.js";
 
+const MAC_BACKGROUND_STARTING_URL = "--no-startup-window";
+
 export async function launchChrome(
   config: ResolvedBrowserConfig,
   userDataDir: string,
@@ -44,7 +46,7 @@ export async function launchChrome(
     persistentProfile,
   );
   const shouldLaunchWithoutActivation =
-    process.platform === "darwin" && persistentProfile && !config.headless && !config.hideWindow;
+    process.platform === "darwin" && persistentProfile && !config.headless;
   const launcher = usePatchedLauncher
     ? await launchWithCustomHost({
         chromeFlags: launchOptions.chromeFlags,
@@ -112,6 +114,12 @@ async function launchVisibleChromeWithoutMacActivation({
     {
       chromePath,
       chromeFlags,
+      // chrome-launcher otherwise appends about:blank. On macOS that startup
+      // window can activate Chrome (or the user's everyday Chrome sharing the
+      // same app identity) even when LaunchServices was invoked with `open -g`.
+      // Start the DevTools process without a window; Oracle creates the first
+      // real target below through Target.createTarget({ focus: false }).
+      startingUrl: MAC_BACKGROUND_STARTING_URL,
       userDataDir,
       handleSIGINT: false,
       port: requestedPort,
@@ -194,7 +202,10 @@ function resolveMacAppBundle(chromePath: string): string | null {
 }
 
 // biome-ignore lint/style/useNamingConvention: test-only export used in vitest suite
-export const __macLaunchTest__ = { resolveMacAppBundle };
+export const __macLaunchTest__ = {
+  backgroundStartingUrl: MAC_BACKGROUND_STARTING_URL,
+  resolveMacAppBundle,
+};
 
 export async function positionChromeWindowOffscreen(
   client: ChromeClient,

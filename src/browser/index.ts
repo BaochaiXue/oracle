@@ -936,12 +936,14 @@ async function closeRemoteConnectionAfterRun(options: {
 }
 
 function shouldCloseOwnedRunTargetAfterRun(options: {
-  runStatus: "attempted" | "complete";
+  browserTurnState: "not-started" | "active" | "terminal";
+  answerCaptured?: boolean;
+  resultAdmitted?: boolean;
   ownsTarget: boolean;
   closeOwnedTabOnComplete?: boolean;
 }): boolean {
   return (
-    options.runStatus === "complete" &&
+    options.browserTurnState === "terminal" &&
     options.ownsTarget &&
     options.closeOwnedTabOnComplete !== false
   );
@@ -1001,6 +1003,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
   let lastTargetId: string | undefined;
   let lastUrl: string | undefined;
   let promptSubmitted = false;
+  let browserTurnState: "not-started" | "active" | "terminal" = "not-started";
+  let answerCaptured = false;
   let browserDisposition: BrowserRuntimeMetadata["browserDisposition"] = "active";
   let recoveryKind: BrowserRuntimeMetadata["recoveryKind"];
   let recoveryExpiresAt: string | undefined;
@@ -1047,6 +1051,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     }
   };
   const markPromptDispatched = async (): Promise<void> => {
+    browserTurnState = "active";
+    answerCaptured = false;
     if (proTimingRequired) {
       proTimingRuntime = markProPromptDispatched(proTimingRuntime);
     }
@@ -1543,15 +1549,6 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     );
     const captureRuntimeSnapshot = async () => {
       try {
-        if (client?.Target?.getTargetInfo) {
-          const info = await client.Target.getTargetInfo({});
-          lastTargetId = info?.targetInfo?.targetId ?? lastTargetId;
-          lastUrl = info?.targetInfo?.url ?? lastUrl;
-        }
-      } catch {
-        // ignore
-      }
-      try {
         const { result } = await Runtime.evaluate({
           expression: "location.href",
           returnByValue: true,
@@ -1889,6 +1886,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           },
         ),
       );
+      browserTurnState = "terminal";
+      answerCaptured = true;
       recordResponseTiming(researchResult.text);
       await emitRuntimeHint();
       await updateConversationHint("post-deep-research", 15_000).catch(() => false);
@@ -2321,6 +2320,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
 
     const turns: BrowserConversationTurn[] = [];
     const initialTurn = await captureAssistantTurn(promptText, "Initial response");
+    browserTurnState = "terminal";
+    answerCaptured = true;
     recordResponseTiming(initialTurn.answerMarkdown || initialTurn.answerText);
     await emitRuntimeHint();
     turns.push(initialTurn);
@@ -2353,6 +2354,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         await releaseProfileLockIfHeld();
       }
       const turn = await captureAssistantTurn(followUpPrompt, `Follow-up ${index + 1}`);
+      browserTurnState = "terminal";
+      answerCaptured = true;
       recordResponseTiming(turn.answerMarkdown || turn.answerText);
       await emitRuntimeHint();
       turns.push({ ...turn, prompt: followUpPrompt });
@@ -2660,7 +2663,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     // tab accumulation across repeated runs. Keep the tab open on incomplete runs
     // so reattach can recover the response.
     const shouldCloseOwnedRunTarget = shouldCloseOwnedRunTargetAfterRun({
-      runStatus,
+      browserTurnState,
+      answerCaptured,
       ownsTarget,
       closeOwnedTabOnComplete: options.closeOwnedTabOnComplete,
     });
@@ -4223,7 +4227,7 @@ async function runRemoteBrowserMode(
     removeDialogHandler?.();
     const keepRemoteBrowser = Boolean(config.keepBrowser);
     const shouldCloseOwnedRemoteTarget = shouldCloseOwnedRunTargetAfterRun({
-      runStatus,
+      browserTurnState: runStatus === "complete" ? "terminal" : "active",
       ownsTarget,
       closeOwnedTabOnComplete: options.closeOwnedTabOnComplete,
     });

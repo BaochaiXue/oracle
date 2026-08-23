@@ -179,6 +179,17 @@ export async function updateBrowserTabLease(
   await withRegistryLock(profileDir, async () => {
     const registry = await readRegistry(profileDir);
     const timestamp = new Date().toISOString();
+    const currentLease = registry.leases.find((lease) => lease.id === leaseId);
+    if (
+      currentLease?.ownsTarget === true &&
+      currentLease.chromeTargetId &&
+      patch.chromeTargetId &&
+      patch.chromeTargetId !== currentLease.chromeTargetId
+    ) {
+      throw new Error(
+        `Refusing to replace owned target identity ${currentLease.chromeTargetId} with ${patch.chromeTargetId}.`,
+      );
+    }
     let updatedLease: BrowserTabLeaseRecord | undefined;
     const leases = registry.leases.map((lease) => {
       if (lease.id !== leaseId) return lease;
