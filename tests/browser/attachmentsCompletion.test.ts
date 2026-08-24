@@ -3,6 +3,7 @@ import {
   waitForAttachmentCompletion,
   waitForUserTurnAttachments,
 } from "../../src/browser/pageActions.js";
+import { buildCollisionRenamedAttachmentPattern } from "../../src/browser/actions/attachments.js";
 import type { ChromeClient } from "../../src/browser/types.js";
 
 const useFakeTime = () => {
@@ -13,6 +14,121 @@ const useFakeTime = () => {
 const useRealTime = () => {
   vi.useRealTimers();
 };
+
+describe("collision-renamed attachment names", () => {
+  test.each([
+    ["App.tsx", "App(5).tsx"],
+    ["App.tsx", "Remove file 1: App(5).tsx"],
+    ["types.ts", "types(20260824-201700).ts"],
+    ["types.ts", "Remove file 2: types(20260824-201700).ts"],
+    ["a+b.jpg", "Remove file 3: a+b(2).jpg"],
+  ])("matches %s to %s", (expectedName, actualName) => {
+    expect(buildCollisionRenamedAttachmentPattern(expectedName)?.test(actualName) ?? false).toBe(
+      true,
+    );
+  });
+
+  test.each([
+    ["App.tsx", "MyApp(5).tsx"],
+    ["App.tsx", "App(5).ts"],
+    ["App.tsx", "App.tsx.bak"],
+    ["types.ts", "mytypes(1).ts"],
+    ["types.ts", "typescript(1).ts"],
+    ["report.pdf", "my_report.pdf"],
+    ["attachments-bundle.txt", "not-attachments-bundle.txt"],
+  ])("does not match %s to %s", (expectedName, actualName) => {
+    expect(buildCollisionRenamedAttachmentPattern(expectedName)?.test(actualName) ?? false).toBe(
+      false,
+    );
+  });
+
+  test("waitForAttachmentCompletion resolves before timeout for seven files with two collision-renamed chips", async () => {
+    useFakeTime();
+    const expectedNames = [
+      "d3-human-surface-refoundation-prototype-brief.md",
+      "App.tsx",
+      "types.ts",
+      "compilePresentation.ts",
+      "compilePresentation.test.ts",
+      "ProgrammeTransect.tsx",
+      "prototype.css",
+    ];
+    const evaluate = vi.fn().mockResolvedValue({
+      result: {
+        value: {
+          state: "ready",
+          uploading: false,
+          filesAttached: true,
+          attachedNames: [
+            "d3-human-surface-refoundation-prototype-brief.md",
+            "Remove file 2: App(5).tsx",
+            "Remove file 3: types(20260824-201700).ts",
+            "compilePresentation.ts",
+            "compilePresentation.test.ts",
+            "ProgrammeTransect.tsx",
+            "prototype.css",
+          ],
+          inputNames: [],
+          fileCount: 0,
+        },
+      },
+    });
+    const runtime = {
+      evaluate,
+    } as unknown as ChromeClient["Runtime"];
+
+    try {
+      const promise = waitForAttachmentCompletion(runtime, 5_000, expectedNames);
+      const outcome = promise.then(
+        () => "resolved",
+        () => "rejected",
+      );
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(await outcome).toBe("resolved");
+      expect(evaluate.mock.calls.length).toBeLessThan(20);
+    } finally {
+      useRealTime();
+    }
+  });
+
+  test.each([
+    ["App.tsx", "MyApp(5).tsx"],
+    ["App.tsx", "App(5).ts"],
+    ["App.tsx", "App.tsx.bak"],
+    ["types.ts", "mytypes(1).ts"],
+    ["types.ts", "typescript(1).ts"],
+    ["report.pdf", "my_report.pdf"],
+    ["attachments-bundle.txt", "not-attachments-bundle.txt"],
+  ])("waitForAttachmentCompletion rejects %s near-match %s", async (expectedName, actualName) => {
+    useFakeTime();
+    const runtime = {
+      evaluate: vi.fn().mockResolvedValue({
+        result: {
+          value: {
+            state: "ready",
+            uploading: false,
+            filesAttached: true,
+            attachedNames: [actualName],
+            inputNames: [],
+            fileCount: 0,
+          },
+        },
+      }),
+    } as unknown as ChromeClient["Runtime"];
+
+    try {
+      const promise = waitForAttachmentCompletion(runtime, 3_000, [expectedName]);
+      const outcome = promise.then(
+        () => "resolved",
+        () => "rejected",
+      );
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(await outcome).toBe("rejected");
+    } finally {
+      useRealTime();
+    }
+  });
+});
 
 describe("attachment completion fallbacks", () => {
   test("waitForAttachmentCompletion resolves when ready file input contains expected name (no UI chip)", async () => {

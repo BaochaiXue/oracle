@@ -11,6 +11,10 @@
 
 ### Fixed
 
+- Browser attachments: recognize ChatGPT filenames collision-renamed with
+  numeric or timestamp suffixes across upload acknowledgement, completion, and
+  pre-send identity checks, including full `Remove file N: ...` chip labels,
+  without weakening fail-closed submission.
 - Direct CDP lifecycle: separate persistent profile identity from browser
   process lifetime. Dedicated Chrome now defaults to `while-needed`, releases
   tab leases before final drain, rechecks under the profile lock, and closes

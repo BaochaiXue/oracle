@@ -253,6 +253,90 @@ describe("prompt composer attachment expressions", () => {
     expect(evaluateAttachmentReadyExpression(["README.md"], document)).toBe(true);
   });
 
+  test.each([
+    ["App.tsx", "App(5).tsx"],
+    ["App.tsx", "Remove file 1: App(5).tsx"],
+    ["types.ts", "types(20260824-201700).ts"],
+    ["types.ts", "Remove file 2: types(20260824-201700).ts"],
+    ["a+b.jpg", "Remove file 3: a+b(2).jpg"],
+  ])("attachment ready check matches %s to %s", (expectedName, actualName) => {
+    const document = new FakeDocument([
+      new FakeElement("div", { "data-testid": "unified-composer" }, [
+        new FakeElement("div", { "data-testid": "attachment-chip" }, [
+          actualName.startsWith("Remove file")
+            ? new FakeElement("button", { "aria-label": actualName })
+            : new FakeElement("span", {}, [], actualName),
+        ]),
+      ]),
+    ]);
+
+    expect(evaluateAttachmentReadyExpression([expectedName], document)).toBe(true);
+  });
+
+  test.each([
+    ["App.tsx", "MyApp(5).tsx"],
+    ["App.tsx", "App(5).ts"],
+    ["App.tsx", "App.tsx.bak"],
+    ["types.ts", "mytypes(1).ts"],
+    ["types.ts", "typescript(1).ts"],
+    ["report.pdf", "my_report.pdf"],
+    ["attachments-bundle.txt", "not-attachments-bundle.txt"],
+  ])("attachment ready check does not match %s to %s", (expectedName, actualName) => {
+    const document = new FakeDocument([
+      new FakeElement("div", { "data-testid": "unified-composer" }, [
+        new FakeElement("div", { "data-testid": "attachment-chip" }, [
+          new FakeElement("span", {}, [], actualName),
+        ]),
+      ]),
+    ]);
+
+    expect(evaluateAttachmentReadyExpression([expectedName], document)).toBe(false);
+  });
+
+  test("attachment ready check recognizes seven files with two collision-renamed chips", () => {
+    const expectedNames = [
+      "d3-human-surface-refoundation-prototype-brief.md",
+      "App.tsx",
+      "types.ts",
+      "compilePresentation.ts",
+      "compilePresentation.test.ts",
+      "ProgrammeTransect.tsx",
+      "prototype.css",
+    ];
+    const actualNames = [
+      "d3-human-surface-refoundation-prototype-brief.md",
+      "App(5).tsx",
+      "types(20260824-201700).ts",
+      "compilePresentation.ts",
+      "compilePresentation.test.ts",
+      "ProgrammeTransect.tsx",
+      "prototype.css",
+    ];
+    const document = new FakeDocument([
+      new FakeElement(
+        "div",
+        { "data-testid": "unified-composer" },
+        actualNames.map(
+          (actualName, index) =>
+            new FakeElement("div", { "data-testid": "attachment-chip" }, [
+              new FakeElement("span", {}, [], actualName),
+              ...(index === 1
+                ? [new FakeElement("button", { "aria-label": "Remove file 2: App(5).tsx" })]
+                : index === 2
+                  ? [
+                      new FakeElement("button", {
+                        "aria-label": "Remove file 3: types(20260824-201700).ts",
+                      }),
+                    ]
+                  : []),
+            ]),
+        ),
+      ),
+    ]);
+
+    expect(evaluateAttachmentReadyExpression(expectedNames, document)).toBe(true);
+  });
+
   test("attachment ready check accepts generated bundle chips that expose only the bundle stem", () => {
     const document = new FakeDocument([
       new FakeElement("div", { "data-testid": "unified-composer" }, [
