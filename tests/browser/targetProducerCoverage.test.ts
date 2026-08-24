@@ -9,6 +9,29 @@ async function source(file: string): Promise<string> {
 }
 
 describe("local browser target producer ownership", () => {
+  test("Oracle exposes no ChatGPT conversation archive capability", async () => {
+    const activeSurfaces = await Promise.all([
+      source("bin/oracle-cli.ts"),
+      source("src/browser/index.ts"),
+      source("src/browser/config.ts"),
+      source("src/browser/types.ts"),
+      source("src/cli/browserConfig.ts"),
+      source("src/cli/browserDefaults.ts"),
+      source("src/cli/dryRun.ts"),
+      source("src/mcp/types.ts"),
+      source("src/mcp/tools/consult.ts"),
+      source("src/mcp/tools/chatgptImage.ts"),
+      source("skills/oracle/SKILL.md"),
+    ]);
+
+    await expect(
+      access(path.join(root, "src/browser/actions/archiveConversation.ts")),
+    ).rejects.toThrow();
+    expect(activeSurfaces.join("\n")).not.toMatch(
+      /browser-archive|browserArchive|archiveConversations|archiveChatGptConversation|maybeArchiveCompletedConversation/,
+    );
+  });
+
   test("every persistent local producer records ownership before handing off its target", async () => {
     const [chatgpt, projectSources, reattach, recovery, reconciler] = await Promise.all([
       source("src/browser/index.ts"),

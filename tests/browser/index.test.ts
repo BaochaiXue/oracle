@@ -7,7 +7,6 @@ import {
   classifyPreservedBrowserErrorForTest,
   formatBrowserTurnTranscript,
   isLocalChromeHostForTest,
-  maybeArchiveCompletedConversationForTest,
   redactBrowserConfigForDebugLogForTest,
   resolveRemoteTabLeaseProfileDirForTest,
   runBrowserMode,
@@ -632,32 +631,6 @@ describe("browser follow-ups", () => {
         config: { researchMode: "deep" },
       }),
     ).rejects.toThrow(/follow-ups are not supported with Deep Research/i);
-  });
-});
-
-describe("browser conversation archiving", () => {
-  test("does not attempt archive when required local artifacts were not saved", async () => {
-    const runtime = {
-      evaluate: vi.fn(),
-    };
-    const log = vi.fn();
-
-    await expect(
-      maybeArchiveCompletedConversationForTest({
-        Runtime: runtime as never,
-        logger: log as never,
-        config: resolveBrowserConfig({ archiveConversations: "always" }),
-        conversationUrl: "https://chatgpt.com/c/abc",
-        followUpCount: 0,
-        requiredArtifactsSaved: false,
-      }),
-    ).resolves.toMatchObject({
-      mode: "always",
-      attempted: false,
-      archived: false,
-      reason: "artifact-save-failed",
-    });
-    expect(runtime.evaluate).not.toHaveBeenCalled();
   });
 });
 

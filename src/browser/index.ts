@@ -11,7 +11,6 @@ import type {
   ChromeClient,
   BrowserAttachment,
   ResolvedBrowserConfig,
-  BrowserArchiveResult,
 } from "./types.js";
 import {
   launchChrome,
@@ -97,10 +96,6 @@ import { chatgptDomProvider } from "./providers/index.js";
 import { resolveAttachRunningConnection } from "./attachRunning.js";
 import { connectToExistingChatGptTab } from "./liveTabs.js";
 import { captureBrowserDiagnostics } from "./domDebug.js";
-import {
-  archiveChatGptConversation,
-  resolveBrowserArchiveDecision,
-} from "./actions/archiveConversation.js";
 import {
   assertManualLoginProfileReadyForRun,
   defaultManualLoginProfileDir,
@@ -732,71 +727,6 @@ export function formatBrowserTurnTranscript(turns: BrowserConversationTurn[]): {
     answerText: answerMarkdown,
     answerMarkdown,
   };
-}
-
-async function maybeArchiveCompletedConversation({
-  Runtime,
-  logger,
-  config,
-  conversationUrl,
-  followUpCount,
-  requiredArtifactsSaved,
-}: {
-  Runtime: ChromeClient["Runtime"];
-  logger: BrowserLogger;
-  config: ResolvedBrowserConfig;
-  conversationUrl?: string | null;
-  followUpCount: number;
-  requiredArtifactsSaved: boolean;
-}): Promise<BrowserArchiveResult> {
-  const decision = resolveBrowserArchiveDecision({
-    mode: config.archiveConversations,
-    chatgptUrl: config.chatgptUrl ?? config.url,
-    conversationUrl,
-    researchMode: config.researchMode,
-    followUpCount,
-  });
-  if (!decision.shouldArchive) {
-    logger(`[browser] ChatGPT archive skipped (${decision.reason}).`);
-    return {
-      mode: decision.mode,
-      attempted: false,
-      archived: false,
-      reason: decision.reason,
-      conversationUrl: conversationUrl ?? undefined,
-    };
-  }
-  if (!requiredArtifactsSaved) {
-    logger("[browser] ChatGPT archive skipped (artifact-save-failed).");
-    return {
-      mode: decision.mode,
-      attempted: false,
-      archived: false,
-      reason: "artifact-save-failed",
-      conversationUrl: conversationUrl ?? undefined,
-    };
-  }
-  return archiveChatGptConversation(Runtime, logger, {
-    mode: decision.mode,
-    conversationUrl,
-  }).catch((error) => {
-    const message = error instanceof Error ? error.message : String(error);
-    logger(`[browser] ChatGPT archive failed (${message}).`);
-    return {
-      mode: decision.mode,
-      attempted: true,
-      archived: false,
-      reason: "archive-failed",
-      conversationUrl: conversationUrl ?? undefined,
-      error: message,
-    };
-  });
-}
-
-export function maybeArchiveCompletedConversationForTest(
-  args: Parameters<typeof maybeArchiveCompletedConversation>[0],
-): Promise<BrowserArchiveResult> {
-  return maybeArchiveCompletedConversation(args);
 }
 
 type BrowserSubmissionResult = {
@@ -1917,20 +1847,11 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         logger,
       );
       const savedArtifacts = appendArtifacts(undefined, [reportArtifact, transcriptArtifact]);
-      const archive = await maybeArchiveCompletedConversation({
-        Runtime,
-        logger,
-        config,
-        conversationUrl: lastUrl,
-        followUpCount: 0,
-        requiredArtifactsSaved: Boolean(reportArtifact && transcriptArtifact),
-      });
       return {
         answerText: researchResult.text,
         answerMarkdown: researchResult.text,
         answerHtml: researchResult.html,
         artifacts: savedArtifacts,
-        archive,
         modelSelection: modelSelectionEvidence,
         tookMs: durationMs,
         answerTokens: tokens,
@@ -2438,17 +2359,6 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       logger,
     );
     const savedArtifacts = appendArtifacts(savedBrowserArtifacts, [transcriptArtifact]);
-    const archive = await maybeArchiveCompletedConversation({
-      Runtime,
-      logger,
-      config,
-      conversationUrl: lastUrl,
-      followUpCount: followUpPrompts.length,
-      requiredArtifactsSaved:
-        Boolean(transcriptArtifact) &&
-        imageArtifacts.savedImages.length === imageArtifacts.imageCount &&
-        fileArtifacts.savedFiles.length === fileArtifacts.fileCount,
-    });
     runStatus = "complete";
     browserDisposition = "completed";
     recoveryKind = undefined;
@@ -2466,7 +2376,6 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       savedImages: imageArtifacts.savedImages,
       downloadableFiles: fileArtifacts.files,
       savedFiles: fileArtifacts.savedFiles,
-      archive,
       modelSelection: modelSelectionEvidence,
       tookMs: durationMs,
       answerTokens,
@@ -3660,21 +3569,12 @@ async function runRemoteBrowserMode(
         logger,
       );
       const savedArtifacts = appendArtifacts(undefined, [reportArtifact, transcriptArtifact]);
-      const archive = await maybeArchiveCompletedConversation({
-        Runtime,
-        logger,
-        config,
-        conversationUrl: lastUrl,
-        followUpCount: 0,
-        requiredArtifactsSaved: Boolean(reportArtifact && transcriptArtifact),
-      });
       runStatus = "complete";
       return {
         answerText: researchResult.text,
         answerMarkdown: researchResult.text,
         answerHtml: researchResult.html,
         artifacts: savedArtifacts,
-        archive,
         modelSelection: modelSelectionEvidence,
         tookMs: durationMs,
         answerTokens: tokens,
@@ -4127,17 +4027,6 @@ async function runRemoteBrowserMode(
       logger,
     );
     const savedArtifacts = appendArtifacts(savedBrowserArtifacts, [transcriptArtifact]);
-    const archive = await maybeArchiveCompletedConversation({
-      Runtime,
-      logger,
-      config,
-      conversationUrl: lastUrl,
-      followUpCount: followUpPrompts.length,
-      requiredArtifactsSaved:
-        Boolean(transcriptArtifact) &&
-        imageArtifacts.savedImages.length === imageArtifacts.imageCount &&
-        fileArtifacts.savedFiles.length === fileArtifacts.fileCount,
-    });
     const durationMs = Date.now() - startedAt;
     const answerChars = answerText.length;
     const answerTokens = estimateTokenCount(answerMarkdown);
@@ -4167,7 +4056,6 @@ async function runRemoteBrowserMode(
       savedImages: imageArtifacts.savedImages,
       downloadableFiles: fileArtifacts.files,
       savedFiles: fileArtifacts.savedFiles,
-      archive,
       modelSelection: modelSelectionEvidence,
       controllerPid: process.pid,
     };

@@ -5,8 +5,6 @@ import type { WriteStream } from "node:fs";
 import { randomUUID } from "node:crypto";
 import net from "node:net";
 import type {
-  BrowserArchiveMode,
-  BrowserArchiveResult,
   BrowserDisposition,
   BrowserModelStrategy,
   BrowserRecoveryKind,
@@ -103,8 +101,6 @@ export interface BrowserSessionConfig {
   thinkingTime?: ThinkingTimeLevel;
   /** Browser-only research mode. "deep" activates ChatGPT Deep Research. */
   researchMode?: BrowserResearchMode;
-  /** Archive completed ChatGPT conversations after local artifacts are saved. */
-  archiveConversations?: BrowserArchiveMode;
   /** Browser-only: existing ChatGPT conversation URL to resume before submitting. */
   resumeConversationUrl?: string | null;
 }
@@ -212,7 +208,6 @@ export interface BrowserMetadata {
   config?: BrowserSessionConfig;
   runtime?: BrowserRuntimeMetadata;
   harvest?: BrowserHarvestMetadata;
-  archive?: BrowserArchiveResult;
   modelSelection?: BrowserModelSelectionEvidence;
   warnings?: BrowserRunWarning[];
 }

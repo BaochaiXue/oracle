@@ -207,10 +207,10 @@ derives the HTTP timeout unless `--http-timeout` is supplied.
 - Attachment bytes are established before each Pro dispatch, including
   fallback submissions. A missing size is read from the local file; it is never
   counted as zero.
-- ChatGPT conversations remain visible by default for inspection and manual
-  follow-up. Use `--browser-archive auto` to opt into archiving successful
-  ordinary one-shots, or `--browser-archive always` for explicit
-  archive-all-on-success behavior.
+- Oracle has no ChatGPT conversation-archive capability. Conversations remain
+  visible for inspection, recovery, provenance, and manual follow-up. Browser
+  target cleanup may close Oracle-owned Chrome targets; it must never archive
+  or delete the corresponding ChatGPT account conversation.
 
 ## Prompt template
 

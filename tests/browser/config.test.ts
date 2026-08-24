@@ -46,7 +46,6 @@ describe("resolveBrowserConfig", () => {
     expect(resolved.attachmentTimeoutMs).toBe(45_000);
     expect(resolved.maxConcurrentTabs).toBe(3);
     expect(resolved.researchMode).toBe("off");
-    expect(resolved.archiveConversations).toBe("never");
   });
 
   test("does not apply dedicated-profile defaults to OpenCLI", () => {
@@ -86,18 +85,6 @@ describe("resolveBrowserConfig", () => {
     ).toBe(true);
   });
 
-  test("preserves explicit archive policy overrides", () => {
-    expect(resolveBrowserConfig({ archiveConversations: "auto" }).archiveConversations).toBe(
-      "auto",
-    );
-    expect(resolveBrowserConfig({ archiveConversations: "always" }).archiveConversations).toBe(
-      "always",
-    );
-    expect(resolveBrowserConfig({ archiveConversations: "never" }).archiveConversations).toBe(
-      "never",
-    );
-  });
-
   test("treats explicit inline cookies as an ephemeral compatibility path", () => {
     const resolved = resolveBrowserConfig({
       inlineCookies: [{ name: "session", value: "redacted", domain: "chatgpt.com" }],
@@ -124,7 +111,6 @@ describe("resolveBrowserConfig", () => {
       debug: true,
       maxConcurrentTabs: 5,
       researchMode: "deep",
-      archiveConversations: "never",
     });
     expect(resolved.url).toBe("https://example.com/");
     expect(resolved.timeoutMs).toBe(123);
@@ -140,7 +126,6 @@ describe("resolveBrowserConfig", () => {
     expect(resolved.debug).toBe(true);
     expect(resolved.maxConcurrentTabs).toBe(5);
     expect(resolved.researchMode).toBe("deep");
-    expect(resolved.archiveConversations).toBe("never");
   });
 
   test("allows temporary chat URLs when desiredModel is Pro", () => {

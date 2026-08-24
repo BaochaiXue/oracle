@@ -95,15 +95,13 @@ Put a project-level config at `.oracle/config.json` inside any project folder:
   browser: {
     chatgptUrl: "https://chatgpt.com/g/g-p-example/project",
     modelStrategy: "current",
-    archiveConversations: "never",
   },
 }
 ```
 
-`browser.archiveConversations` defaults to `"never"`, preserving the original
-ChatGPT conversation for inspection and manual follow-up. Set it to `"auto"`
-to archive successful ordinary one-shot chats after local artifacts are saved,
-or `"always"` to archive every successful browser conversation.
+Oracle does not expose a conversation-archive setting or action. Browser runs
+leave their ChatGPT account conversations visible; owned-target cleanup only
+closes Oracle's Chrome target after terminal work.
 
 Oracle discovers every `.oracle/config.json` from the current directory upward
 until your home directory, then applies them from parent to child after the user

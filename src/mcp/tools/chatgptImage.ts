@@ -52,12 +52,6 @@ const chatGptImageInputShape = {
     .enum(["select", "current", "ignore"])
     .optional()
     .describe("Model picker strategy. Mirrors the consult tool and CLI browser flag."),
-  browserArchive: z
-    .enum(["auto", "always", "never"])
-    .optional()
-    .describe(
-      'Control ChatGPT conversation archiving after local artifacts are saved. Defaults to "never".',
-    ),
   browserKeepBrowser: z
     .boolean()
     .optional()
@@ -115,7 +109,6 @@ export function buildChatGptImageConsultInput(input: ChatGptImageInput): Consult
     browserAttachments,
     browserThinkingTime: input.browserThinkingTime,
     browserModelStrategy: input.browserModelStrategy,
-    browserArchive: input.browserArchive,
     browserKeepBrowser: input.browserKeepBrowser,
     generateImage: outputPath,
     dryRun: input.dryRun,

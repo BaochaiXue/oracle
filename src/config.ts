@@ -4,7 +4,6 @@ import path from "node:path";
 import JSON5 from "json5";
 import { getOracleHomeDir } from "./oracleHome.js";
 import type {
-  BrowserArchiveMode,
   BrowserLifetime,
   BrowserModelStrategy,
   BrowserResearchMode,
@@ -75,8 +74,6 @@ export interface BrowserConfigDefaults {
   thinkingTime?: ThinkingTimeLevel;
   /** Browser-only research mode. "deep" activates ChatGPT Deep Research. */
   researchMode?: BrowserResearchMode;
-  /** Archive completed ChatGPT conversations after local artifacts are saved. */
-  archiveConversations?: BrowserArchiveMode;
   /** Skip personal-cookie sync and reuse Oracle's persistent isolated Chrome profile. */
   manualLogin?: boolean;
   /** Dedicated profile directory override (also available via ORACLE_BROWSER_PROFILE_DIR). */
@@ -311,7 +308,6 @@ function sanitizeProjectConfig(config: UserConfig): UserConfig {
       "modelStrategy",
       "thinkingTime",
       "researchMode",
-      "archiveConversations",
       "manualLogin",
     ];
 

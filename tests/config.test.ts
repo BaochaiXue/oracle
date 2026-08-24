@@ -70,7 +70,7 @@ describe("loadUserConfig", () => {
           opencliPath: "/usr/local/bin/opencli",
           chatgptUrl: "https://chatgpt.com/",
           modelStrategy: "select",
-          archiveConversations: "auto",
+          maxConcurrentTabs: 2,
         },
       }`,
       "utf8",
@@ -97,7 +97,7 @@ describe("loadUserConfig", () => {
       `{
         engine: "browser",
         browser: {
-          archiveConversations: "never",
+          maxConcurrentTabs: 4,
         },
       }`,
       "utf8",
@@ -114,7 +114,7 @@ describe("loadUserConfig", () => {
         chatgptUrl: "https://chatgpt.com/g/g-p-root/project",
         modelStrategy: "current",
         attachmentTimeoutMs: 120000,
-        archiveConversations: "never",
+        maxConcurrentTabs: 4,
       },
     });
     expect(result.paths).toEqual([

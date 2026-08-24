@@ -87,9 +87,9 @@ describe("runDryRunSummary", () => {
     expect(
       log.mock.calls.some(([entry]) => String(entry).includes("Cookies: copy from Chrome")),
     ).toBe(true);
-    expect(
-      log.mock.calls.some(([entry]) => String(entry).includes("ChatGPT archive policy: never")),
-    ).toBe(true);
+    expect(log.mock.calls.some(([entry]) => /conversation archive/i.test(String(entry)))).toBe(
+      false,
+    );
   });
 
   test("describes the OpenCLI GPT-5.6 Pro lane without CDP guidance", async () => {

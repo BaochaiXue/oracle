@@ -94,7 +94,6 @@ export async function resolveBrowserFollowupReference(
       browserTabRef: null,
       resumeConversationUrl,
       researchMode: "off",
-      archiveConversations: "never",
     },
   };
 }

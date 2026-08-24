@@ -50,7 +50,6 @@ describe("browser follow-up resolution", () => {
           manualLoginProfileDir: "/tmp/oracle-profile",
           browserTabRef: "stale-tab",
           researchMode: "deep",
-          archiveConversations: "auto",
         },
         runtime: { conversationId: "resume-me" },
       },
@@ -66,7 +65,6 @@ describe("browser follow-up resolution", () => {
         manualLoginProfileDir: "/tmp/oracle-profile",
         browserTabRef: null,
         researchMode: "off",
-        archiveConversations: "never",
         resumeConversationUrl: "https://chatgpt.com/c/resume-me",
       },
     });

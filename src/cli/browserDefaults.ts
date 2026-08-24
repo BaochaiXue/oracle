@@ -4,7 +4,6 @@ import type { UserConfig } from "../config.js";
 import { normalizeThinkingTimeLevel } from "../oracle/thinkingTime.js";
 import type { ThinkingTimeLevel } from "../oracle/types.js";
 import type {
-  BrowserArchiveMode,
   BrowserLifetime,
   BrowserModelStrategy,
   BrowserResearchMode,
@@ -41,7 +40,6 @@ export interface BrowserDefaultsOptions {
   browserModelStrategy?: BrowserModelStrategy;
   browserThinkingTime?: ThinkingTimeLevel;
   browserResearch?: BrowserResearchMode;
-  browserArchive?: BrowserArchiveMode;
   browserManualLogin?: boolean;
   browserManualLoginProfileDir?: string | null;
 }
@@ -209,9 +207,6 @@ export function applyBrowserDefaultsFromConfig(
   }
   if (isUnset("browserResearch") && browser.researchMode !== undefined) {
     options.browserResearch = browser.researchMode;
-  }
-  if (isUnset("browserArchive") && browser.archiveConversations !== undefined) {
-    options.browserArchive = browser.archiveConversations;
   }
   if (
     !attachRunningRequested &&

@@ -126,7 +126,6 @@ async function runBrowserDryRun(
   logBrowserControlPlan(resolvedBrowserConfig, log, "dry-run");
   logBrowserFollowUpSummary(runOptions.browserFollowUps, log, "dry-run");
   logBrowserCookieStrategy(resolvedBrowserConfig, log, "dry-run");
-  logBrowserArchivePolicy(resolvedBrowserConfig, log, "dry-run");
   logBrowserFileSummary(artifacts, log, "dry-run");
 }
 
@@ -157,15 +156,6 @@ function logBrowserCookieStrategy(
   }
   const plan = buildCookiePlan(browserConfig);
   log(chalk.bold(`[${label}] ${plan.description}`));
-}
-
-function logBrowserArchivePolicy(
-  browserConfig: BrowserSessionConfig | undefined,
-  log: (message: string) => void,
-  label: string,
-) {
-  const mode = browserConfig?.archiveConversations ?? "never";
-  log(chalk.dim(`[${label}] ChatGPT archive policy: ${mode}.`));
 }
 
 function logBrowserFileSummary(

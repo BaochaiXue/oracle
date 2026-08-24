@@ -14,7 +14,6 @@ export type CookieParam = Protocol.Network.CookieParam;
 export type BrowserModelStrategy = "select" | "current" | "ignore";
 export type BrowserTransport = "cdp" | "opencli";
 export type BrowserResearchMode = "off" | "deep";
-export type BrowserArchiveMode = "auto" | "always" | "never";
 export type BrowserLifetime = "ephemeral" | "while-needed" | "persistent";
 export type BrowserDisposition = "active" | "recoverable" | "completed" | "abandoned";
 export type BrowserRecoveryKind = "awaiting-response" | "draft-retained" | "manual-intervention";
@@ -131,8 +130,6 @@ export interface BrowserAutomationConfig {
   thinkingTime?: ThinkingTimeLevel;
   /** Browser-only research mode. "deep" activates ChatGPT Deep Research. */
   researchMode?: BrowserResearchMode;
-  /** Archive completed ChatGPT conversations after local artifacts are saved. */
-  archiveConversations?: BrowserArchiveMode;
   /** Existing ChatGPT conversation URL to open before submitting the prompt. */
   resumeConversationUrl?: string | null;
 }
@@ -170,15 +167,6 @@ export interface BrowserRunOptions {
   ) => void | Promise<void>;
 }
 
-export interface BrowserArchiveResult {
-  mode: BrowserArchiveMode;
-  attempted: boolean;
-  archived: boolean;
-  reason?: string;
-  conversationUrl?: string;
-  error?: string;
-}
-
 export interface BrowserRunResult {
   answerText: string;
   answerMarkdown: string;
@@ -188,7 +176,6 @@ export interface BrowserRunResult {
   savedImages?: SavedBrowserImage[];
   downloadableFiles?: BrowserDownloadableFile[];
   savedFiles?: SavedBrowserFile[];
-  archive?: BrowserArchiveResult;
   modelSelection?: BrowserModelSelectionEvidence;
   warnings?: BrowserRunWarning[];
   tookMs: number;
@@ -268,5 +255,4 @@ export type ResolvedBrowserConfig = Required<
   copyProfileSource?: string | null;
   maxConcurrentTabs: number;
   researchMode: BrowserResearchMode;
-  archiveConversations: BrowserArchiveMode;
 };

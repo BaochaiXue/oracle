@@ -103,12 +103,6 @@ const consultInputShape = {
     .enum(["deep"])
     .optional()
     .describe("Browser-only: activate ChatGPT Deep Research mode for broad web research."),
-  browserArchive: z
-    .enum(["auto", "always", "never"])
-    .optional()
-    .describe(
-      'Browser-only: control ChatGPT conversation archiving after local artifacts are saved. Defaults to "never"; "auto" archives successful non-project one-shots only.',
-    ),
   browserFollowUps: z
     .array(z.string())
     .optional()
@@ -322,7 +316,6 @@ export function buildConsultBrowserConfig({
   browserThinkingTime,
   browserModelStrategy,
   browserResearchMode,
-  browserArchive,
   browserKeepBrowser,
 }: {
   userConfig: UserConfig;
@@ -333,7 +326,6 @@ export function buildConsultBrowserConfig({
   browserThinkingTime?: ThinkingTimeLevel;
   browserModelStrategy?: BrowserModelStrategy;
   browserResearchMode?: "deep";
-  browserArchive?: "auto" | "always" | "never";
   browserKeepBrowser?: boolean;
 }): BrowserSessionConfig {
   const configuredBrowser = userConfig.browser ?? {};
@@ -378,7 +370,6 @@ export function buildConsultBrowserConfig({
     thinkingTime: browserThinkingTime ?? configuredThinkingTime ?? undefined,
     modelStrategy: browserModelStrategy ?? configuredBrowser.modelStrategy,
     researchMode: browserResearchMode ?? configuredBrowser.researchMode,
-    archiveConversations: browserArchive ?? configuredBrowser.archiveConversations,
     desiredModel: desiredModelLabel || mapModelToBrowserLabel(runModel),
   };
 }
@@ -536,7 +527,6 @@ export async function runConsultTool(
     browserThinkingTime,
     browserModelStrategy,
     browserResearchMode,
-    browserArchive,
     browserFollowUps,
     browserKeepBrowser,
     generateImage,
@@ -603,7 +593,6 @@ export async function runConsultTool(
       browserThinkingTime,
       browserModelStrategy,
       browserResearchMode,
-      browserArchive,
       browserKeepBrowser,
     });
   }

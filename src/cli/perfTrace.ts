@@ -39,7 +39,6 @@ const VALUE_FLAGS = new Set([
   "--azure-deployment",
   "--azure-endpoint",
   "--base-url",
-  "--browser-archive",
   "--browser-attachments",
   "--browser-auto-reattach-delay",
   "--browser-auto-reattach-interval",

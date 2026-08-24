@@ -832,12 +832,6 @@ program
   )
   .addOption(
     new Option(
-      "--browser-archive <mode>",
-      "Control ChatGPT conversation archiving after local artifacts are saved (default never preserves conversations; auto archives successful non-project one-shots only).",
-    ).choices(["auto", "always", "never"]),
-  )
-  .addOption(
-    new Option(
       "--browser-follow-up <prompt>",
       "Submit an additional prompt in the same ChatGPT browser conversation after the initial answer; repeat for multi-turn consults.",
     )

@@ -9,7 +9,6 @@ import { normalizeChatgptUrl } from "../browser/utils.js";
 import { parseDuration } from "../duration.js";
 import { normalizeBrowserModelStrategy } from "../browser/modelStrategy.js";
 import type {
-  BrowserArchiveMode,
   BrowserLifetime,
   BrowserModelStrategy,
   BrowserResearchMode,
@@ -86,7 +85,6 @@ export interface BrowserFlagOptions {
   /** Thinking time intensity: 'light', 'standard', 'extended', 'extra-high', 'pro', 'heavy' */
   browserThinkingTime?: ThinkingTimeLevel;
   browserResearch?: BrowserResearchMode;
-  browserArchive?: BrowserArchiveMode;
   browserModelLabel?: string;
   browserModelStrategy?: BrowserModelStrategy;
   browserAllowCookieErrors?: boolean;
@@ -321,7 +319,6 @@ export async function buildBrowserConfig(
     browserTabRef: options.browserTab ?? undefined,
     thinkingTime,
     researchMode: options.browserResearch === "deep" ? "deep" : "off",
-    archiveConversations: options.browserArchive,
   };
 }
 
