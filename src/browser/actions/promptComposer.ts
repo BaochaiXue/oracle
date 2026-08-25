@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { ChromeClient, BrowserLogger } from "../types.js";
 import {
   INPUT_SELECTORS,
@@ -24,6 +25,7 @@ const ENTER_KEY_EVENT = {
 } as const;
 const ENTER_KEY_TEXT = "\r";
 const RETAINED_DRAFT_RETRY_DELAY_MS = 2_000;
+const SUBMISSION_DOCUMENT_TOKEN_PROPERTY = "__oracleSubmissionDocumentToken";
 
 // Input.insertText gives ProseMirror plain text, but ProseMirror renders each
 // line as a direct block. HTMLElement.innerText inserts an extra newline
@@ -204,9 +206,30 @@ export async function submitPrompt(
     });
   }
 
+  const preDispatchBaseline =
+    typeof deps.baselineTurns === "number" &&
+    Number.isFinite(deps.baselineTurns) &&
+    deps.baselineTurns >= 0
+      ? Math.floor(deps.baselineTurns)
+      : null;
+  const retainedDraftRecoveryEligible =
+    preDispatchBaseline !== null &&
+    !deps.attachmentNames?.length &&
+    typeof deps.isSubmissionOwner === "function";
+  const submissionDocumentToken = retainedDraftRecoveryEligible ? randomUUID() : null;
   const promptLength = prompt.length;
   const postVerification = await runtime.evaluate({
     expression: `(() => {
+      const submissionDocumentToken = ${JSON.stringify(submissionDocumentToken)};
+      const submissionDocumentTokenProperty = ${JSON.stringify(SUBMISSION_DOCUMENT_TOKEN_PROPERTY)};
+      if (submissionDocumentToken) {
+        Object.defineProperty(document, submissionDocumentTokenProperty, {
+          configurable: true,
+          enumerable: false,
+          value: submissionDocumentToken,
+          writable: true,
+        });
+      }
       const editor = document.querySelector(${primarySelectorLiteral});
       const fallback = document.querySelector(${fallbackSelectorLiteral});
       const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
@@ -225,6 +248,9 @@ export async function submitPrompt(
         fallbackValue: fallback?.value ?? '',
         activeValue: readComposerValue(active),
         href: typeof location === 'object' && location.href ? location.href : '',
+        documentTokenStored:
+          !submissionDocumentToken ||
+          document[submissionDocumentTokenProperty] === submissionDocumentToken,
       };
     })()`,
     returnByValue: true,
@@ -233,6 +259,8 @@ export async function submitPrompt(
   const observedFallback = postVerification.result?.value?.fallbackValue ?? "";
   const observedActive = postVerification.result?.value?.activeValue ?? "";
   const submissionOwnerHref = postVerification.result?.value?.href ?? "";
+  const submissionDocumentTokenStored =
+    postVerification.result?.value?.documentTokenStored === true;
   const observedComposer = observedActive || observedEditor || observedFallback;
   const observedLength = Math.max(
     observedEditor.length,
@@ -303,15 +331,20 @@ export async function submitPrompt(
     prompt,
     commitTimeoutMs,
     logger,
-    deps.baselineTurns ?? undefined,
+    preDispatchBaseline ?? undefined,
     deps.onPromptCommitPending,
-    clicked && !deps.attachmentNames?.length && deps.isSubmissionOwner && submissionOwnerHref
-      ? (baseline) =>
+    clicked &&
+      retainedDraftRecoveryEligible &&
+      submissionOwnerHref &&
+      submissionDocumentToken &&
+      submissionDocumentTokenStored
+      ? () =>
           attemptRetainedDraftPageRetry({
             Runtime: runtime,
             prompt,
-            baseline,
+            baseline: preDispatchBaseline,
             submissionOwnerHref,
+            submissionDocumentToken,
             isSubmissionOwner: deps.isSubmissionOwner!,
           })
       : undefined,
@@ -854,12 +887,14 @@ async function attemptRetainedDraftPageRetry({
   prompt,
   baseline,
   submissionOwnerHref,
+  submissionDocumentToken,
   isSubmissionOwner,
 }: {
   Runtime: ChromeClient["Runtime"];
   prompt: string;
   baseline: number;
   submissionOwnerHref: string;
+  submissionDocumentToken: string;
   isSubmissionOwner: () => Promise<boolean> | boolean;
 }): Promise<RetainedDraftRetryResult> {
   let ownerConfirmed = false;
@@ -875,6 +910,8 @@ async function attemptRetainedDraftPageRetry({
   const script = `(() => {
     const expectedPrompt = ${JSON.stringify(prompt)};
     const expectedOwnerHref = ${JSON.stringify(submissionOwnerHref)};
+    const expectedDocumentToken = ${JSON.stringify(submissionDocumentToken)};
+    const submissionDocumentTokenProperty = ${JSON.stringify(SUBMISSION_DOCUMENT_TOKEN_PROPERTY)};
     const baseline = ${JSON.stringify(baseline)};
     const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
     const sendSelectors = ${JSON.stringify(SEND_BUTTON_SELECTORS)};
@@ -954,6 +991,8 @@ async function attemptRetainedDraftPageRetry({
     const draftRetained = !composerCleared;
     const ownerMatched =
       normalizeOwner(location.href) === normalizeOwner(expectedOwnerHref);
+    const documentTokenMatched =
+      document[submissionDocumentTokenProperty] === expectedDocumentToken;
     const gate = {
       submissionCommitted,
       draftRetained,
@@ -965,6 +1004,7 @@ async function attemptRetainedDraftPageRetry({
       baselineKnown: baseline >= 0,
       baselineUnchanged: baseline >= 0 && turnsCount === baseline,
       ownerMatched,
+      documentTokenMatched,
       turnsCount,
     };
     const allowed =
@@ -977,7 +1017,8 @@ async function attemptRetainedDraftPageRetry({
       gate.assistantVisible === false &&
       gate.baselineKnown === true &&
       gate.baselineUnchanged === true &&
-      gate.ownerMatched === true;
+      gate.ownerMatched === true &&
+      gate.documentTokenMatched === true;
     if (!allowed) return { status: 'blocked', reason: 'gate-closed', gate };
     const candidates = sendSelectors.flatMap((selector) =>
       Array.from(document.querySelectorAll(selector)),
@@ -1095,7 +1136,7 @@ async function verifyPromptCommitted(
   logger?: BrowserLogger,
   baselineTurns?: number,
   onCommitPending?: () => Promise<void> | void,
-  retryRetainedDraft?: (baseline: number) => Promise<RetainedDraftRetryResult>,
+  retryRetainedDraft?: () => Promise<RetainedDraftRetryResult>,
 ): Promise<{ turnsCount: number | null; userTurnIndex: number | null }> {
   const deadline = Date.now() + timeoutMs;
   const retainedDraftRetryAt = Date.now() + RETAINED_DRAFT_RETRY_DELAY_MS;
@@ -1244,7 +1285,7 @@ async function verifyPromptCommitted(
     }
     if (retryRetainedDraft && !retainedDraftRetryDecided && Date.now() >= retainedDraftRetryAt) {
       retainedDraftRetryDecided = true;
-      const retry = await retryRetainedDraft(baselineLiteral);
+      const retry = await retryRetainedDraft();
       logger?.(
         `Retained-draft Send retry decision: ${retry.status}${
           retry.reason ? ` (${retry.reason})` : ""
@@ -1355,5 +1396,6 @@ export const __test__ = {
   attemptSendButton,
   composerValueReaderSource: COMPOSER_VALUE_READER_SOURCE,
   sendButtonTimeoutMs,
+  submissionDocumentTokenProperty: SUBMISSION_DOCUMENT_TOKEN_PROPERTY,
   verifyPromptCommitted,
 };

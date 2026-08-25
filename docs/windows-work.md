@@ -20,6 +20,9 @@ Future Windows gotchas belong here. Update this doc when you learn something new
   retry, one exact user turn, a cleared composer, and a captured Pro response;
   a first click released 1.7 seconds late was observed by the atomic retry gate,
   which cancelled the second dispatch and again produced exactly one user turn.
+  Retry authorization must capture a finite turn baseline and per-document token
+  before the nominal Send; post-dispatch fallback counts remain observation-only,
+  and a same-target reload or replacement document fails the owner gate closed.
   Windows is the reproduction environment, not a proven platform-specific root
   cause.
 - The historical `Session with given id not found.` run was emitted by
