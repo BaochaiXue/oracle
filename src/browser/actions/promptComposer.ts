@@ -23,6 +23,7 @@ const ENTER_KEY_EVENT = {
   nativeVirtualKeyCode: 13,
 } as const;
 const ENTER_KEY_TEXT = "\r";
+const RETAINED_DRAFT_RETRY_DELAY_MS = 2_000;
 
 // Input.insertText gives ProseMirror plain text, but ProseMirror renders each
 // line as a direct block. HTMLElement.innerText inserts an extra newline
@@ -61,6 +62,14 @@ export interface AttachmentReadyExpectation {
 
 type AttachmentReadyInput = string | AttachmentReadyExpectation;
 
+type RetainedDraftRetryStatus = "dispatched" | "blocked" | "unavailable";
+
+interface RetainedDraftRetryResult {
+  status: RetainedDraftRetryStatus;
+  reason?: string;
+  gate?: Record<string, unknown>;
+}
+
 export async function submitPrompt(
   deps: {
     runtime: ChromeClient["Runtime"];
@@ -75,6 +84,7 @@ export async function submitPrompt(
       committedUserTurnIndex: number | null,
     ) => Promise<void> | void;
     onPromptCommitPending?: () => Promise<void> | void;
+    isSubmissionOwner?: () => Promise<boolean> | boolean;
   },
   prompt: string,
   logger: BrowserLogger,
@@ -214,6 +224,7 @@ export async function submitPrompt(
         editorText: readComposerValue(editor),
         fallbackValue: fallback?.value ?? '',
         activeValue: readComposerValue(active),
+        href: typeof location === 'object' && location.href ? location.href : '',
       };
     })()`,
     returnByValue: true,
@@ -221,6 +232,7 @@ export async function submitPrompt(
   const observedEditor = postVerification.result?.value?.editorText ?? "";
   const observedFallback = postVerification.result?.value?.fallbackValue ?? "";
   const observedActive = postVerification.result?.value?.activeValue ?? "";
+  const submissionOwnerHref = postVerification.result?.value?.href ?? "";
   const observedComposer = observedActive || observedEditor || observedFallback;
   const observedLength = Math.max(
     observedEditor.length,
@@ -293,6 +305,16 @@ export async function submitPrompt(
     logger,
     deps.baselineTurns ?? undefined,
     deps.onPromptCommitPending,
+    clicked && !deps.attachmentNames?.length && deps.isSubmissionOwner && submissionOwnerHref
+      ? (baseline) =>
+          attemptRetainedDraftPageRetry({
+            Runtime: runtime,
+            prompt,
+            baseline,
+            submissionOwnerHref,
+            isSubmissionOwner: deps.isSubmissionOwner!,
+          })
+      : undefined,
   );
   await deps.onPromptCommitted?.(committed.turnsCount, committed.userTurnIndex);
   return committed.turnsCount;
@@ -827,6 +849,160 @@ async function attemptSendButton(
   return false;
 }
 
+async function attemptRetainedDraftPageRetry({
+  Runtime,
+  prompt,
+  baseline,
+  submissionOwnerHref,
+  isSubmissionOwner,
+}: {
+  Runtime: ChromeClient["Runtime"];
+  prompt: string;
+  baseline: number;
+  submissionOwnerHref: string;
+  isSubmissionOwner: () => Promise<boolean> | boolean;
+}): Promise<RetainedDraftRetryResult> {
+  let ownerConfirmed = false;
+  try {
+    ownerConfirmed = (await isSubmissionOwner()) === true;
+  } catch {
+    return { status: "blocked", reason: "target-owner-check-failed" };
+  }
+  if (!ownerConfirmed) {
+    return { status: "blocked", reason: "target-owner-mismatch" };
+  }
+
+  const script = `(() => {
+    const expectedPrompt = ${JSON.stringify(prompt)};
+    const expectedOwnerHref = ${JSON.stringify(submissionOwnerHref)};
+    const baseline = ${JSON.stringify(baseline)};
+    const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
+    const sendSelectors = ${JSON.stringify(SEND_BUTTON_SELECTORS)};
+    const stopSelector = ${JSON.stringify(STOP_BUTTON_SELECTOR)};
+    ${COMPOSER_VALUE_READER_SOURCE}
+    const normalizeComposer = (value) => String(value ?? '')
+      .replace(/\\r\\n?/g, '\\n')
+      .replace(/\\u00a0/g, ' ');
+    const normalizeTurn = (value) => {
+      let text = String(value ?? '').toLowerCase();
+      text = text.replace(/\`\`\`[^\\n]*\\n([\\s\\S]*?)\`\`\`/g, ' $1 ');
+      text = text.replace(/\`\`\`/g, ' ');
+      text = text.replace(/\`([^\`]*)\`/g, '$1');
+      return text.replace(/\\s+/g, ' ').trim();
+    };
+    const normalizeOwner = (value) => {
+      try {
+        const url = new URL(String(value ?? ''), location.href);
+        return url.origin + url.pathname.replace(/\\/$/, '');
+      } catch {
+        return '';
+      }
+    };
+    const isVisible = (node) => {
+      if (!(node instanceof HTMLElement)) return false;
+      const rect = node.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      const style = window.getComputedStyle(node);
+      return style.display !== 'none' && style.visibility !== 'hidden';
+    };
+    const isEnabled = (node) => {
+      if (!(node instanceof HTMLElement)) return false;
+      const style = window.getComputedStyle(node);
+      return !(
+        node.hasAttribute('disabled') ||
+        node.getAttribute('aria-disabled') === 'true' ||
+        node.getAttribute('data-disabled') === 'true' ||
+        style.pointerEvents === 'none' ||
+        style.display === 'none'
+      );
+    };
+    const roleOf = (node) => String(
+      node?.getAttribute?.('data-message-author-role') ||
+      node?.getAttribute?.('data-turn') ||
+      node?.dataset?.turn ||
+      node?.querySelector?.('[data-message-author-role], [data-turn]')?.getAttribute?.(
+        'data-message-author-role',
+      ) ||
+      node?.querySelector?.('[data-message-author-role], [data-turn]')?.getAttribute?.('data-turn') ||
+      '',
+    ).toLowerCase();
+    const articles = ${buildConversationTurnListExpression()};
+    const turnsCount = articles.length;
+    const newArticles = baseline >= 0 ? articles.slice(baseline) : articles;
+    const userMatched = normalizeTurn(expectedPrompt).length > 0 && newArticles.some((node) => {
+      if (roleOf(node) !== 'user') return false;
+      const roleNode = node?.getAttribute?.('data-message-author-role') === 'user' ||
+        node?.getAttribute?.('data-turn') === 'user'
+        ? node
+        : node?.querySelector?.('[data-message-author-role="user"], [data-turn="user"]');
+      const messageNode = roleNode?.querySelector?.('.whitespace-pre-wrap') || roleNode;
+      return normalizeTurn(messageNode?.innerText || messageNode?.textContent || '') ===
+        normalizeTurn(expectedPrompt);
+    });
+    const hasNewTurn = baseline >= 0 && turnsCount > baseline;
+    const submissionCommitted = hasNewTurn && userMatched;
+    const assistantVisible = baseline < 0 || newArticles.some((node) => roleOf(node) === 'assistant');
+    const stopVisible = Array.from(document.querySelectorAll(stopSelector)).some(isVisible);
+    const inputs = inputSelectors
+      .map((selector) => document.querySelector(selector))
+      .filter((node) => Boolean(node));
+    const active = inputs.find((node) => isVisible(node)) || inputs[0] || null;
+    const observed = readComposerValue(active);
+    const composerMatchesPrompt =
+      normalizeComposer(observed) === normalizeComposer(expectedPrompt);
+    const composerCleared = !String(observed).trim();
+    const draftRetained = !composerCleared;
+    const ownerMatched =
+      normalizeOwner(location.href) === normalizeOwner(expectedOwnerHref);
+    const gate = {
+      submissionCommitted,
+      draftRetained,
+      composerMatchesPrompt,
+      hasNewTurn,
+      userMatched,
+      stopVisible,
+      assistantVisible,
+      baselineKnown: baseline >= 0,
+      baselineUnchanged: baseline >= 0 && turnsCount === baseline,
+      ownerMatched,
+      turnsCount,
+    };
+    const allowed =
+      gate.submissionCommitted === false &&
+      gate.draftRetained === true &&
+      gate.composerMatchesPrompt === true &&
+      gate.hasNewTurn === false &&
+      gate.userMatched === false &&
+      gate.stopVisible === false &&
+      gate.assistantVisible === false &&
+      gate.baselineKnown === true &&
+      gate.baselineUnchanged === true &&
+      gate.ownerMatched === true;
+    if (!allowed) return { status: 'blocked', reason: 'gate-closed', gate };
+    const candidates = sendSelectors.flatMap((selector) =>
+      Array.from(document.querySelectorAll(selector)),
+    );
+    const button = candidates.find((node) => isVisible(node) && isEnabled(node)) || null;
+    if (!button) return { status: 'unavailable', reason: 'send-button-unavailable', gate };
+    button.click();
+    return { status: 'dispatched', gate };
+  })()`;
+  const result = await Runtime.evaluate({ expression: script, returnByValue: true }).catch(
+    () => null,
+  );
+  if (!result) {
+    return { status: "blocked", reason: "retry-evidence-unavailable" };
+  }
+  const value = result.result?.value as RetainedDraftRetryResult | undefined;
+  if (
+    !value ||
+    (value.status !== "dispatched" && value.status !== "blocked" && value.status !== "unavailable")
+  ) {
+    return { status: "blocked", reason: "retry-evidence-unavailable" };
+  }
+  return value;
+}
+
 async function assertComposerUnchanged(
   Runtime: ChromeClient["Runtime"],
   expectedPrompt: string,
@@ -919,8 +1095,10 @@ async function verifyPromptCommitted(
   logger?: BrowserLogger,
   baselineTurns?: number,
   onCommitPending?: () => Promise<void> | void,
+  retryRetainedDraft?: (baseline: number) => Promise<RetainedDraftRetryResult>,
 ): Promise<{ turnsCount: number | null; userTurnIndex: number | null }> {
   const deadline = Date.now() + timeoutMs;
+  const retainedDraftRetryAt = Date.now() + RETAINED_DRAFT_RETRY_DELAY_MS;
   const encodedPrompt = JSON.stringify(prompt.trim());
   const primarySelectorLiteral = JSON.stringify(PROMPT_PRIMARY_SELECTOR);
   const fallbackSelectorLiteral = JSON.stringify(PROMPT_FALLBACK_SELECTOR);
@@ -1030,7 +1208,7 @@ async function verifyPromptCommitted(
 	      lastMatched,
 	      lastUserTurnAvailable: userTurnTexts.length > 0,
 	      hasNewTurn,
-	      stopVisible,
+      stopVisible,
       assistantVisible,
       composerCleared,
       inConversation,
@@ -1044,6 +1222,7 @@ async function verifyPromptCommitted(
 
   let lastProbe: CommitProbeState | undefined;
   let nextPendingCheckAt = 0;
+  let retainedDraftRetryDecided = false;
   while (Date.now() < deadline) {
     const { result } = await Runtime.evaluate({ expression: script, returnByValue: true });
     const info = result.value as CommitProbeState | undefined;
@@ -1062,6 +1241,16 @@ async function verifyPromptCommitted(
             ? userTurnIndex
             : null,
       };
+    }
+    if (retryRetainedDraft && !retainedDraftRetryDecided && Date.now() >= retainedDraftRetryAt) {
+      retainedDraftRetryDecided = true;
+      const retry = await retryRetainedDraft(baselineLiteral);
+      logger?.(
+        `Retained-draft Send retry decision: ${retry.status}${
+          retry.reason ? ` (${retry.reason})` : ""
+        }`,
+      );
+      continue;
     }
     if (onCommitPending && Date.now() >= nextPendingCheckAt) {
       nextPendingCheckAt = Date.now() + 500;
@@ -1162,6 +1351,7 @@ function normalizeComposerText(value: string): string {
 
 // biome-ignore lint/style/useNamingConvention: test-only export used in vitest suite
 export const __test__ = {
+  attemptRetainedDraftPageRetry,
   attemptSendButton,
   composerValueReaderSource: COMPOSER_VALUE_READER_SOURCE,
   sendButtonTimeoutMs,

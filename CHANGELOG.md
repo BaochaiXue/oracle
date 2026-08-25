@@ -11,6 +11,10 @@
 
 ### Fixed
 
+- Direct CDP submission recovery: after a nominal Send leaves the exact prompt
+  staged with no new turn or streaming evidence, revalidate the original target
+  and page state atomically before issuing at most one page-side Send click.
+  Delayed first commits cancel recovery, and this path never falls back to Enter.
 - Direct CDP lifecycle: separate persistent profile identity from browser
   process lifetime. Dedicated Chrome now defaults to `while-needed`, releases
   tab leases before final drain, rechecks under the profile lock, and closes

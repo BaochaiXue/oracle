@@ -1663,6 +1663,12 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         );
       }
       let baselineTurns = await readConversationTurnCount(Runtime, logger);
+      const submissionTargetId = lastTargetId;
+      const isSubmissionOwner = async (): Promise<boolean> => {
+        if (!submissionTargetId || lastTargetId !== submissionTargetId) return false;
+        const { targetInfo } = await Target.getTargetInfo({ targetId: submissionTargetId });
+        return targetInfo.targetId === submissionTargetId && targetInfo.type === "page";
+      };
       // Learned: return baselineTurns so assistant polling can ignore earlier content.
       const providerState: Record<string, unknown> = {
         runtime: Runtime,
@@ -1697,6 +1703,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
             submissionCommitted: false,
             dispatchAttempted: true,
           }),
+        isSubmissionOwner,
       };
       const deepResearchTargetBaseline =
         deepResearch && client
@@ -3423,6 +3430,12 @@ async function runRemoteBrowserMode(
         );
       }
       let baselineTurns = await readConversationTurnCount(Runtime, logger);
+      const submissionTargetId = remoteTargetId;
+      const isSubmissionOwner = async (): Promise<boolean> => {
+        if (!submissionTargetId || remoteTargetId !== submissionTargetId) return false;
+        const { targetInfo } = await Target.getTargetInfo({ targetId: submissionTargetId });
+        return targetInfo.targetId === submissionTargetId && targetInfo.type === "page";
+      };
       const providerState: Record<string, unknown> = {
         runtime: Runtime,
         input: Input,
@@ -3456,6 +3469,7 @@ async function runRemoteBrowserMode(
             submissionCommitted: false,
             dispatchAttempted: true,
           }),
+        isSubmissionOwner,
       };
       const deepResearchTargetBaseline =
         deepResearch && client
