@@ -9,6 +9,127 @@ import {
   CONVERSATION_TURN_SELECTOR,
 } from "../../src/browser/constants.js";
 
+class RetryGateFakeElement {
+  readonly dataset: Record<string, string> = {};
+  readonly childNodes: RetryGateFakeElement[] = [];
+  readonly children: RetryGateFakeElement[] = [];
+  readonly classList = { contains: () => false };
+  readonly click = vi.fn();
+  innerText = "";
+  textContent = "";
+
+  constructor(readonly attributes: Record<string, string> = {}) {}
+
+  getAttribute(name: string) {
+    return this.attributes[name] ?? null;
+  }
+
+  hasAttribute(name: string) {
+    return name in this.attributes;
+  }
+
+  getBoundingClientRect() {
+    return { width: 10, height: 10 };
+  }
+
+  querySelector(selector: string) {
+    return selector === ".whitespace-pre-wrap" ? this : null;
+  }
+}
+
+class RetryGateFakeTextArea extends RetryGateFakeElement {
+  value = "";
+}
+
+async function runRetainedDraftRetryGate({
+  baseline = 0,
+  composerValue = "hello",
+  currentDocumentToken = "document-token",
+  expectedDocumentToken = "document-token",
+  href = "https://chatgpt.com/",
+  stopVisible = false,
+  turns = [],
+  isSubmissionOwner = () => true,
+}: {
+  baseline?: number;
+  composerValue?: string;
+  currentDocumentToken?: string | null;
+  expectedDocumentToken?: string;
+  href?: string;
+  stopVisible?: boolean;
+  turns?: Array<{ role: "assistant" | "user"; text: string }>;
+  isSubmissionOwner?: () => boolean | Promise<boolean>;
+} = {}) {
+  const composer = new RetryGateFakeTextArea();
+  composer.value = composerValue;
+  const turnNodes = turns.map(({ role, text }) => {
+    const node = new RetryGateFakeElement({ "data-message-author-role": role });
+    node.innerText = text;
+    node.textContent = text;
+    return node;
+  });
+  const stopButton = new RetryGateFakeElement();
+  const sendButton = new RetryGateFakeElement();
+  const fakeDocument = {
+    querySelector: () => composer,
+    querySelectorAll: (selector: string) => {
+      if (selector === CONVERSATION_TURN_CONTAINER_SELECTOR) return turnNodes;
+      if (selector === CONVERSATION_TURN_SELECTOR) return turnNodes;
+      if (selector === '[data-testid="stop-button"]') return stopVisible ? [stopButton] : [];
+      if (selector.includes("send") || selector.includes('type="submit"')) {
+        return [sendButton];
+      }
+      return [];
+    },
+  };
+  if (currentDocumentToken !== null) {
+    Object.defineProperty(fakeDocument, promptComposer.submissionDocumentTokenProperty, {
+      value: currentDocumentToken,
+    });
+  }
+  const browserWindow = {
+    getComputedStyle: () => ({
+      display: "block",
+      visibility: "visible",
+      pointerEvents: "auto",
+    }),
+  };
+  const location = { href };
+  const runtime = {
+    evaluate: vi.fn(async ({ expression }: { expression: string }) => ({
+      result: {
+        value: Function(
+          "document",
+          "window",
+          "location",
+          "HTMLElement",
+          "HTMLTextAreaElement",
+          "Node",
+          "URL",
+          `return ${expression}`,
+        )(
+          fakeDocument,
+          browserWindow,
+          location,
+          RetryGateFakeElement,
+          RetryGateFakeTextArea,
+          { TEXT_NODE: 3 },
+          URL,
+        ),
+      },
+    })),
+  };
+  const result = await promptComposer.attemptRetainedDraftPageRetry({
+    Runtime: runtime as never,
+    prompt: "hello",
+    baseline,
+    submissionOwnerHref: href,
+    submissionDocumentToken: expectedDocumentToken,
+    isSubmissionOwner,
+  });
+  return { result, runtime, sendButton };
+}
+
 describe("promptComposer", () => {
   test("reconstructs exact multiline text from ProseMirror blocks", () => {
     class FakeNode {
@@ -612,6 +733,408 @@ describe("promptComposer", () => {
     );
 
     expect(actions).toEqual(["send-click"]);
+  });
+
+  test("retries one retained draft through an atomic page-side gate without Enter", async () => {
+    vi.useFakeTimers();
+    try {
+      let retryDispatched = false;
+      let retryChecks = 0;
+      const isSubmissionOwner = vi.fn(() => true);
+      const runtime = {
+        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+          if (expression.includes("document.readyState")) {
+            return { result: { value: { ready: true, composer: true, fileInput: false } } };
+          }
+          if (expression.includes("focused: true")) {
+            return { result: { value: { focused: true } } };
+          }
+          if (expression.includes("editorText")) {
+            return {
+              result: {
+                value: {
+                  editorText: "hello",
+                  fallbackValue: "",
+                  activeValue: "hello",
+                  href: "https://chatgpt.com/",
+                  documentTokenStored: true,
+                },
+              },
+            };
+          }
+          if (expression.includes("expectedOwnerHref")) {
+            retryChecks += 1;
+            retryDispatched = true;
+            return {
+              result: {
+                value: {
+                  status: "dispatched",
+                  gate: {
+                    submissionCommitted: false,
+                    draftRetained: true,
+                    composerMatchesPrompt: true,
+                    hasNewTurn: false,
+                    userMatched: false,
+                    stopVisible: false,
+                    assistantVisible: false,
+                    baselineKnown: true,
+                    baselineUnchanged: true,
+                    ownerMatched: true,
+                    documentTokenMatched: true,
+                  },
+                },
+              },
+            };
+          }
+          if (expression.includes("button.scrollIntoView")) {
+            return { result: { value: { status: "clicked" } } };
+          }
+          return {
+            result: {
+              value: retryDispatched
+                ? {
+                    baseline: 0,
+                    turnsCount: 2,
+                    userMatched: true,
+                    matchedUserTurnIndex: 0,
+                    lastMatched: true,
+                    hasNewTurn: true,
+                    stopVisible: true,
+                    assistantVisible: true,
+                    composerCleared: true,
+                    composerMatchesPrompt: false,
+                    inConversation: true,
+                  }
+                : {
+                    baseline: 0,
+                    turnsCount: 0,
+                    userMatched: false,
+                    matchedUserTurnIndex: null,
+                    lastMatched: false,
+                    hasNewTurn: false,
+                    stopVisible: false,
+                    assistantVisible: false,
+                    composerCleared: false,
+                    composerMatchesPrompt: true,
+                    inConversation: false,
+                  },
+            },
+          };
+        }),
+      };
+      const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
+      const logger = Object.assign(vi.fn(), { verbose: false });
+
+      const result = submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          baselineTurns: 0,
+          isSubmissionOwner,
+        },
+        "hello",
+        logger as never,
+      );
+      const assertion = expect(result).resolves.toBe(2);
+      await vi.advanceTimersByTimeAsync(3_000);
+      await assertion;
+
+      expect(isSubmissionOwner).toHaveBeenCalledTimes(1);
+      expect(retryChecks).toBe(1);
+      expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
+      expect(logger).toHaveBeenCalledWith("Retained-draft Send retry decision: dispatched");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("does not let a post-dispatch fallback count authorize retry", async () => {
+    vi.useFakeTimers();
+    try {
+      let commitProbes = 0;
+      let fallbackCountReads = 0;
+      let sendDispatched = false;
+      const isSubmissionOwner = vi.fn(() => true);
+      const runtime = {
+        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+          if (expression.includes("document.readyState")) {
+            return { result: { value: { ready: true, composer: true, fileInput: false } } };
+          }
+          if (expression.includes("focused: true")) {
+            return { result: { value: { focused: true } } };
+          }
+          if (expression.includes("editorText")) {
+            return {
+              result: {
+                value: {
+                  editorText: "hello",
+                  fallbackValue: "",
+                  activeValue: "hello",
+                  href: "https://chatgpt.com/",
+                  documentTokenStored: true,
+                },
+              },
+            };
+          }
+          if (expression.includes("button.scrollIntoView")) {
+            sendDispatched = true;
+            return { result: { value: { status: "clicked" } } };
+          }
+          if (expression.trimEnd().endsWith(").length")) {
+            fallbackCountReads += 1;
+            return { result: { value: 1 } };
+          }
+          commitProbes += 1;
+          const committed = commitProbes >= 25;
+          return {
+            result: {
+              value: {
+                baseline: 1,
+                turnsCount: committed ? 2 : 1,
+                userMatched: committed,
+                matchedUserTurnIndex: committed ? 1 : null,
+                lastMatched: committed,
+                hasNewTurn: committed,
+                stopVisible: committed,
+                assistantVisible: false,
+                composerCleared: committed,
+                inConversation: committed,
+                editorValue: committed ? "" : "hello",
+              },
+            },
+          };
+        }),
+      };
+      const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
+      const logger = Object.assign(vi.fn(), { verbose: false });
+
+      const result = submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          baselineTurns: null,
+          isSubmissionOwner,
+        },
+        "hello",
+        logger as never,
+      );
+      const assertion = expect(result).resolves.toBe(2);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await assertion;
+
+      expect(sendDispatched).toBe(true);
+      expect(fallbackCountReads).toBe(1);
+      expect(isSubmissionOwner).not.toHaveBeenCalled();
+      expect(runtime.evaluate).not.toHaveBeenCalledWith(
+        expect.objectContaining({ expression: expect.stringContaining("expectedDocumentToken") }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("excludes attachment submissions from retained-draft recovery", async () => {
+    let postVerificationExpression = "";
+    const isSubmissionOwner = vi.fn(() => true);
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("document.readyState")) {
+          return { result: { value: { ready: true, composer: true, fileInput: false } } };
+        }
+        if (expression.includes("focused: true")) {
+          return { result: { value: { focused: true } } };
+        }
+        if (expression.includes("editorText")) {
+          postVerificationExpression = expression;
+          return {
+            result: {
+              value: {
+                editorText: "hello",
+                fallbackValue: "",
+                activeValue: "hello",
+                href: "https://chatgpt.com/",
+                documentTokenStored: true,
+              },
+            },
+          };
+        }
+        if (expression.includes("button.scrollIntoView")) {
+          return { result: { value: { status: "clicked" } } };
+        }
+        if (expression.includes("const expected =")) {
+          return { result: { value: true } };
+        }
+        return {
+          result: {
+            value: {
+              baseline: 0,
+              turnsCount: 1,
+              userMatched: true,
+              matchedUserTurnIndex: 0,
+              lastMatched: true,
+              hasNewTurn: true,
+              stopVisible: true,
+              assistantVisible: false,
+              composerCleared: true,
+              inConversation: true,
+            },
+          },
+        };
+      }),
+    };
+    const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
+    const logger = Object.assign(vi.fn(), { verbose: false });
+
+    await expect(
+      submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          attachmentNames: ["oracle-attach-verify.txt"],
+          baselineTurns: 0,
+          isSubmissionOwner,
+        },
+        "hello",
+        logger as never,
+      ),
+    ).resolves.toBe(1);
+
+    expect(postVerificationExpression).toContain("const submissionDocumentToken = null");
+    expect(isSubmissionOwner).not.toHaveBeenCalled();
+    expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
+  });
+
+  test("dispatches at most one retained-draft retry while commit remains absent", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = {
+        evaluate: vi.fn(async () => ({
+          result: {
+            value: {
+              baseline: 0,
+              turnsCount: 0,
+              userMatched: false,
+              lastMatched: false,
+              hasNewTurn: false,
+              stopVisible: false,
+              assistantVisible: false,
+              composerCleared: false,
+              inConversation: false,
+              editorValue: "hello",
+            },
+          },
+        })),
+      };
+      const retry = vi.fn(async () => ({ status: "dispatched" as const }));
+
+      const promise = promptComposer.verifyPromptCommitted(
+        runtime as never,
+        "hello",
+        2_250,
+        undefined,
+        0,
+        undefined,
+        retry,
+      );
+      const assertion = expect(promise).rejects.toMatchObject({
+        details: expect.objectContaining({
+          code: "prompt-commit-timeout",
+          submissionCommitted: false,
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(2_500);
+      await assertion;
+
+      expect(retry).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("cancels the retry when the first click commits during the atomic recheck", async () => {
+    // This DOM is the delayed-first-click state visible at the recovery
+    // boundary: the original user turn and streaming signal have just appeared.
+    const { result, runtime, sendButton } = await runRetainedDraftRetryGate({
+      stopVisible: true,
+      turns: [{ role: "user", text: "hello" }],
+    });
+
+    expect(result).toMatchObject({
+      status: "blocked",
+      reason: "gate-closed",
+      gate: {
+        submissionCommitted: true,
+        hasNewTurn: true,
+        userMatched: true,
+        stopVisible: true,
+      },
+    });
+    expect(runtime.evaluate).toHaveBeenCalledTimes(1);
+    expect(sendButton.click).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ["unknown pre-dispatch baseline", { baseline: -1 }, "baselineKnown"],
+    [
+      "changed pre-dispatch baseline",
+      { turns: [{ role: "user" as const, text: "different" }] },
+      "baselineUnchanged",
+    ],
+    ["composer mismatch", { composerValue: "changed" }, "composerMatchesPrompt"],
+  ])("blocks retained-draft retry for %s", async (_label, scenario, deniedField) => {
+    const { result, sendButton } = await runRetainedDraftRetryGate(scenario);
+
+    expect(result).toMatchObject({
+      status: "blocked",
+      reason: "gate-closed",
+      gate: { [deniedField]: false },
+    });
+    expect(sendButton.click).not.toHaveBeenCalled();
+  });
+
+  test("blocks a same-target same-href replacement document", async () => {
+    const { result, sendButton } = await runRetainedDraftRetryGate({
+      currentDocumentToken: null,
+    });
+
+    expect(result).toMatchObject({
+      status: "blocked",
+      reason: "gate-closed",
+      gate: {
+        ownerMatched: true,
+        documentTokenMatched: false,
+      },
+    });
+    expect(sendButton.click).not.toHaveBeenCalled();
+  });
+
+  test("fails the retained-draft retry closed when target ownership changes", async () => {
+    const runtime = { evaluate: vi.fn() };
+
+    await expect(
+      promptComposer.attemptRetainedDraftPageRetry({
+        Runtime: runtime as never,
+        prompt: "hello",
+        baseline: 0,
+        submissionOwnerHref: "https://chatgpt.com/",
+        submissionDocumentToken: "document-token",
+        isSubmissionOwner: () => false,
+      }),
+    ).resolves.toEqual({ status: "blocked", reason: "target-owner-mismatch" });
+    expect(runtime.evaluate).not.toHaveBeenCalled();
+  });
+
+  test("fails the retained-draft retry closed when the owner probe errors", async () => {
+    const ownerError = new Error("owner probe unavailable");
+    const { result, runtime, sendButton } = await runRetainedDraftRetryGate({
+      isSubmissionOwner: () => {
+        throw ownerError;
+      },
+    });
+
+    expect(result).toEqual({ status: "blocked", reason: "target-owner-check-failed" });
+    expect(runtime.evaluate).not.toHaveBeenCalled();
+    expect(sendButton.click).not.toHaveBeenCalled();
   });
 
   test("refuses to send when external input mutates the composer", async () => {

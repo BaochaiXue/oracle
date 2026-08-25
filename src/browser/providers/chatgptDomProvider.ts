@@ -20,6 +20,7 @@ interface ChatgptDomProviderState {
     committedUserTurnIndex: number | null,
   ) => Promise<void> | void;
   onPromptCommitPending?: () => Promise<void> | void;
+  isSubmissionOwner?: () => Promise<boolean> | boolean;
 }
 
 function requireState(ctx: ProviderDomFlowContext): ChatgptDomProviderState {
@@ -52,6 +53,7 @@ async function submitPromptViaAdapter(ctx: ProviderDomFlowContext): Promise<void
       onPromptDispatched: state.onPromptDispatched,
       onPromptCommitted: state.onPromptCommitted,
       onPromptCommitPending: state.onPromptCommitPending,
+      isSubmissionOwner: state.isSubmissionOwner,
     },
     ctx.prompt,
     state.logger,
