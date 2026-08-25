@@ -193,7 +193,9 @@ describe("OpenCliBrowserTransport", () => {
     const artifactPath = result.artifacts?.[0]?.path;
     expect(artifactPath).toBeTruthy();
     expect(await fs.readFile(artifactPath!, "utf8")).toContain(privatePrompt);
-    expect((await fs.stat(artifactPath!)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await fs.stat(artifactPath!)).mode & 0o777).toBe(0o600);
+    }
   });
 
   it("opens the stored conversation explicitly for an Oracle follow-up", async () => {
