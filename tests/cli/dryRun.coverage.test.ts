@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import { runDryRunSummary, runBrowserPreview } from "../../src/cli/dryRun.js";
 import type { RunOracleOptions } from "../../src/oracle/types.js";
@@ -155,7 +156,7 @@ describe("runDryRunSummary", () => {
 
     const joined = log.mock.calls.flat().join("\n");
     expect(joined).toContain("Authentication: dedicated persistent Chrome profile");
-    expect(joined).toContain(".oracle/browser-profile");
+    expect(joined).toContain(path.join(".oracle", "browser-profile"));
     expect(joined).toContain("No files attached");
   });
 

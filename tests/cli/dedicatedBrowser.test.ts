@@ -96,17 +96,16 @@ describe("dedicated browser application identity", () => {
   });
 
   test("finds the containing app bundle from a macOS executable path", () => {
-    expect(
-      findContainingAppBundle(
-        "/tmp/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-      ),
-    ).toBe("/tmp/Google Chrome for Testing.app");
-    expect(findContainingAppBundle("/usr/bin/chromium")).toBeNull();
+    const appBundle = path.resolve("/tmp/Google Chrome for Testing.app");
+    const executable = path.join(appBundle, "Contents", "MacOS", "Google Chrome for Testing");
+    expect(findContainingAppBundle(executable)).toBe(appBundle);
+    expect(findContainingAppBundle(path.resolve("/usr/bin/chromium"))).toBeNull();
   });
 
   test("matches a running process only to the configured dedicated executable", () => {
-    const dedicatedExecutable =
-      "/tmp/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing";
+    const dedicatedExecutable = path.resolve(
+      "/tmp/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    );
     expect(
       browserCommandUsesExecutable(
         `${dedicatedExecutable} --remote-debugging-port=9333`,
@@ -115,7 +114,9 @@ describe("dedicated browser application identity", () => {
     ).toBe(true);
     expect(
       browserCommandUsesExecutable(
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --remote-debugging-port=9333",
+        `${path.resolve(
+          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        )} --remote-debugging-port=9333`,
         dedicatedExecutable,
       ),
     ).toBe(false);

@@ -82,7 +82,9 @@ describe("OpenCLI submit-file adapter core", () => {
       { event: "model-ready", operationRef, reportedModel: "Pro" },
       { event: "dispatch-intent", operationRef, attempt: 1 },
     ]);
-    expect((await fs.stat(journalPath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await fs.stat(journalPath)).mode & 0o777).toBe(0o600);
+    }
   });
 
   it("rejects payload mutation after Oracle authorization", async () => {
