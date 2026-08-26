@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { BrowserAutomationError } from "../../src/oracle/errors.js";
 import {
+  assertProResponseTimingReceiptChain,
   assertProResponseWorkloadTiming,
   beginProResponseTimingTurn,
   completeProResponseTimingTurn,
@@ -251,6 +252,9 @@ describe("Pro response timing", () => {
               dispatchAt: "2026-08-13T00:00:00.000Z",
               responseElapsedMs: 10_000,
               inputTokens: 20,
+              promptSha256: hashProPromptIdentity("hello"),
+              committedUserTurnIndex: 0,
+              commitVerification: "verified",
             }),
           ],
         }),
@@ -287,9 +291,109 @@ describe("Pro response timing", () => {
     });
 
     expect(runtime.proResponseTimingReceipts).toEqual([
-      expect.objectContaining({ turnIndex: 0, inputTokens: 4_096, responseElapsedMs: 90_000 }),
-      expect.objectContaining({ turnIndex: 1, inputTokens: 12, responseElapsedMs: 8_000 }),
+      expect.objectContaining({
+        turnIndex: 0,
+        inputTokens: 4_096,
+        responseElapsedMs: 90_000,
+        promptSha256: hashProPromptIdentity("initial review"),
+        committedUserTurnIndex: 0,
+        commitVerification: "verified",
+      }),
+      expect.objectContaining({
+        turnIndex: 1,
+        inputTokens: 12,
+        responseElapsedMs: 8_000,
+        promptSha256: hashProPromptIdentity("tiny follow-up"),
+        committedUserTurnIndex: 2,
+        commitVerification: "verified",
+      }),
     ]);
+    expect(runtime.proResponseTimingProvenance).toBe("verified");
+  });
+
+  test("allows one active follow-up exactly one turn beyond the completed receipt chain", () => {
+    let runtime = beginProResponseTimingTurn(
+      {},
+      { inputTokens: 8, attachmentBytes: 0, prompt: "initial" },
+    );
+    runtime = markProPromptDispatched(runtime, new Date("2026-08-13T00:00:00.000Z"));
+    runtime = markProPromptCommitted(runtime, 0);
+    runtime = completeProResponseTimingTurn({
+      answer: "initial",
+      runtime,
+      capturedAt: new Date("2026-08-13T00:00:05.000Z"),
+    });
+    runtime = beginProResponseTimingTurn(runtime, {
+      inputTokens: 4_000,
+      attachmentBytes: 0,
+      prompt: "follow-up in flight",
+    });
+
+    expect(runtime.proTurnIndex).toBe(1);
+    expect(runtime.proResponseTimingReceipts).toHaveLength(1);
+    expect(assertProResponseTimingReceiptChain(runtime)).toBe("verified");
+  });
+
+  test("keeps legacy historical receipts readable without upgrading their provenance", () => {
+    const legacyRuntime = {
+      proDispatchAt: "2026-08-13T00:01:00.000Z",
+      proResponseElapsedMs: 90_000,
+      proInputTokens: 4_000,
+      proAttachmentBytes: 0,
+      proTurnIndex: 1,
+      proTurnCommitted: true,
+      proPromptSha256: hashProPromptIdentity("current follow-up"),
+      proCommittedTurnIndex: 2,
+      proResponseTimingReceipts: [
+        {
+          turnIndex: 0,
+          dispatchAt: "2026-08-13T00:00:00.000Z",
+          responseElapsedMs: 90_000,
+          inputTokens: 8,
+          attachmentBytes: 0,
+        },
+      ],
+    };
+
+    const verified = verifyStoredProResponseWorkloadTiming({
+      answer: "current follow-up answer",
+      runtime: legacyRuntime,
+      capturedAt: new Date("2026-08-13T00:02:30.000Z"),
+    });
+
+    expect(verified.proResponseTimingReceipts?.[0]).toEqual(
+      legacyRuntime.proResponseTimingReceipts[0],
+    );
+    expect(verified.proResponseTimingReceipts?.[1]).toMatchObject({
+      turnIndex: 1,
+      promptSha256: hashProPromptIdentity("current follow-up"),
+      committedUserTurnIndex: 2,
+      commitVerification: "verified",
+    });
+    expect(verified.proResponseTimingProvenance).toBe("legacy-partial");
+  });
+
+  test("rejects a non-contiguous historical receipt chain", () => {
+    const receipt = (turnIndex: number) => ({
+      turnIndex,
+      dispatchAt: `2026-08-13T00:0${turnIndex}:00.000Z`,
+      responseElapsedMs: 90_000,
+      inputTokens: 8,
+      attachmentBytes: 0,
+      promptSha256: "a".repeat(64),
+      committedUserTurnIndex: turnIndex * 2,
+      commitVerification: "verified" as const,
+    });
+
+    expect(() =>
+      assertProResponseTimingReceiptChain({
+        proResponseTimingReceipts: [receipt(0), receipt(2)],
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        details: expect.objectContaining({ code: "pro-workload-receipt-invalid" }),
+      }),
+    );
   });
 
   test("keeps two substantive follow-ups on independent dispatch clocks", () => {

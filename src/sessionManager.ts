@@ -43,7 +43,15 @@ export interface ProResponseTimingReceipt {
   inputTokens: number;
   /** Bytes uploaded with this submitted turn. */
   attachmentBytes: number;
+  /** SHA-256 of this completed turn's normalized prompt identity. Omitted only by legacy receipts. */
+  promptSha256?: string;
+  /** Zero-based DOM index of this completed turn's verified user message. Omitted only by legacy receipts. */
+  committedUserTurnIndex?: number;
+  /** Closed commit evidence for a new-format accepted receipt. Omitted only by legacy receipts. */
+  commitVerification?: "verified";
 }
+
+export type ProResponseTimingProvenance = "verified" | "legacy-partial";
 
 export interface BrowserSessionConfig {
   transport?: BrowserTransport;
@@ -146,6 +154,8 @@ export interface BrowserRuntimeMetadata {
   proCommittedTurnIndex?: number;
   /** Accepted direct-CDP turns, each bound to its own timing and workload receipt. */
   proResponseTimingReceipts?: ProResponseTimingReceipt[];
+  /** Whether every completed direct-CDP turn has self-contained commit identity. */
+  proResponseTimingProvenance?: ProResponseTimingProvenance;
   /** Oracle-owned operation reference for this OpenCLI dispatch attempt. */
   opencliOperationRef?: string;
   /** OpenCLI version verified before dispatch. */

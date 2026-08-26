@@ -164,6 +164,7 @@ function pickProTimingRuntime(runtime: BrowserRuntimeMetadata): BrowserRuntimeMe
     proPromptSha256: runtime.proPromptSha256,
     proCommittedTurnIndex: runtime.proCommittedTurnIndex,
     proResponseTimingReceipts: runtime.proResponseTimingReceipts,
+    proResponseTimingProvenance: runtime.proResponseTimingProvenance,
   };
 }
 

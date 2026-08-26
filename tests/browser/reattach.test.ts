@@ -112,7 +112,7 @@ describe("resumeBrowserSession", () => {
     const evaluate = vi.fn(async ({ expression }: { expression: string }) => {
       if (expression === "location.href") return { result: { value: runtime.tabUrl } };
       if (expression === "1+1") return { result: { value: 2 } };
-      if (expression.includes("expectedSha256")) return { result: { value: true } };
+      if (expression.includes("expectedTurns")) return { result: { value: true } };
       return { result: { value: null } };
     });
     const close = vi.fn(async () => {});
@@ -250,6 +250,7 @@ describe("resumeBrowserSession", () => {
 
   test("rejects recovery when the committed browser turn no longer matches the prompt digest", async () => {
     const runtime = {
+      proTurnIndex: 0,
       proTurnCommitted: true,
       proCommittedTurnIndex: 4,
       proPromptSha256: hashProPromptIdentity("expected follow-up"),
@@ -265,6 +266,76 @@ describe("resumeBrowserSession", () => {
       }),
     });
   });
+
+  test.each([
+    {
+      label: "prompt digest",
+      historicalPromptSha256: "b".repeat(64),
+      historicalCommittedUserTurnIndex: 0,
+    },
+    {
+      label: "committed DOM index",
+      historicalPromptSha256: hashProPromptIdentity("initial prompt"),
+      historicalCommittedUserTurnIndex: 4,
+    },
+  ])(
+    "fails closed when an older self-contained receipt has another valid $label",
+    async ({ historicalPromptSha256, historicalCommittedUserTurnIndex }) => {
+      const currentPromptSha256 = hashProPromptIdentity("current follow-up");
+      const runtime = {
+        proDispatchAt: "2026-08-13T00:02:00.000Z",
+        proResponseElapsedMs: 90_000,
+        proInputTokens: 4_000,
+        proAttachmentBytes: 0,
+        proTurnIndex: 1,
+        proTurnCommitted: true,
+        proPromptSha256: currentPromptSha256,
+        proCommittedTurnIndex: 2,
+        proResponseTimingProvenance: "verified" as const,
+        proResponseTimingReceipts: [
+          {
+            turnIndex: 0,
+            dispatchAt: "2026-08-13T00:00:00.000Z",
+            responseElapsedMs: 90_000,
+            inputTokens: 8,
+            attachmentBytes: 0,
+            promptSha256: historicalPromptSha256,
+            committedUserTurnIndex: historicalCommittedUserTurnIndex,
+            commitVerification: "verified" as const,
+          },
+          {
+            turnIndex: 1,
+            dispatchAt: "2026-08-13T00:02:00.000Z",
+            responseElapsedMs: 90_000,
+            inputTokens: 4_000,
+            attachmentBytes: 0,
+            promptSha256: currentPromptSha256,
+            committedUserTurnIndex: 2,
+            commitVerification: "verified" as const,
+          },
+        ],
+      };
+      const Runtime = {
+        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+          expect(expression).toContain(historicalPromptSha256);
+          expect(expression).toContain(
+            `"committedUserTurnIndex":${historicalCommittedUserTurnIndex}`,
+          );
+          expect(expression).toContain(currentPromptSha256);
+          return { result: { value: false } };
+        }),
+      } as unknown as ChromeClient["Runtime"];
+
+      await expect(__test__.verifyCommittedProTurnIdentity(Runtime, runtime)).rejects.toMatchObject(
+        {
+          details: expect.objectContaining({
+            code: "pro-turn-identity-mismatch",
+            verifiedReceiptTurnIndices: [0, 1],
+          }),
+        },
+      );
+    },
+  );
 
   test.each([
     {

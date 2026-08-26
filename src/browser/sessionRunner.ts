@@ -358,6 +358,7 @@ export async function runBrowserSessionExecution(
       proPromptSha256: browserResult.proPromptSha256,
       proCommittedTurnIndex: browserResult.proCommittedTurnIndex,
       proResponseTimingReceipts: browserResult.proResponseTimingReceipts,
+      proResponseTimingProvenance: browserResult.proResponseTimingProvenance,
       opencliOperationRef: browserResult.opencliOperationRef,
       opencliVersion: browserResult.opencliVersion,
       opencliPayloadSha256: browserResult.opencliPayloadSha256,
