@@ -149,6 +149,7 @@ export type {
   SessionUserErrorMetadata,
   SessionStatus,
   SessionModelRun,
+  SessionBatchContext,
 } from "./sessionManager.js";
 
 export async function pruneOldSessions(

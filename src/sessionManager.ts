@@ -296,6 +296,7 @@ export interface StoredRunOptions {
   browserInlineFiles?: boolean;
   browserBundleFiles?: boolean;
   browserBundleFormat?: BrowserBundleFormat;
+  bundleLabel?: string;
   background?: boolean;
   search?: boolean;
   provider?: ApiProviderMode;
@@ -346,6 +347,15 @@ export interface SessionMetadata {
   transport?: SessionTransportMetadata;
   error?: SessionUserErrorMetadata;
   lifecycle?: SessionLifecycleMetadata;
+  batch?: SessionBatchContext;
+}
+
+export interface SessionBatchContext {
+  batchId: string;
+  laneId: string;
+  role: "lane" | "synthesis";
+  attempt: number;
+  inputManifestSha256: string;
 }
 
 export type SessionStatus = "pending" | "running" | "completed" | "partial" | "error" | "cancelled";
@@ -744,6 +754,7 @@ export async function initializeSession(
       browserInlineFiles: options.browserInlineFiles,
       browserBundleFiles: options.browserBundleFiles,
       browserBundleFormat: options.browserBundleFormat,
+      bundleLabel: options.bundleLabel,
       background: options.background,
       search: options.search,
       provider: options.provider,
@@ -1025,8 +1036,14 @@ export async function deleteSessionsOlderThan({
   }
   const cutoff = includeAll ? Number.NEGATIVE_INFINITY : Date.now() - hours * 60 * 60 * 1000;
   let deleted = 0;
+  const protectedBatchSessions = await import("./batch/store.js")
+    .then(({ listProtectedBatchSessionIds }) => listProtectedBatchSessionIds())
+    .catch(() => new Set<string>());
 
   for (const entry of entries) {
+    if (protectedBatchSessions.has(entry)) {
+      continue;
+    }
     const dir = sessionDir(entry);
     let createdMs: number | undefined;
     const meta = await readSessionMetadata(entry);

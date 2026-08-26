@@ -19,6 +19,12 @@ export interface NotifyConfig {
   muteIn?: Array<"CI" | "SSH">;
 }
 
+export interface BatchConfigDefaults {
+  enabled?: boolean;
+  maxParallel?: number;
+  maxChildSessions?: number;
+}
+
 export interface BrowserConfigDefaults {
   /** Browser automation backend. `opencli` avoids direct Chrome CDP attachment. */
   transport?: BrowserTransport;
@@ -101,6 +107,8 @@ export interface UserConfig {
   maxFileSizeBytes?: number;
   notify?: NotifyConfig;
   browser?: BrowserConfigDefaults;
+  /** Local owner policy for explicit Batch Oracle runs. User config only. */
+  batch?: BatchConfigDefaults;
   heartbeatSeconds?: number;
   filesReport?: boolean;
   background?: boolean;
