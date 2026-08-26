@@ -18,6 +18,7 @@ import {
   recoverConversationTab,
   type RecoveredConversation,
 } from "../browser/recoverConversation.js";
+import { reconcileOwnedBrowserTargets } from "../browser/lifecycleReconciler.js";
 import { resolveOutputPath } from "./writeOutputPath.js";
 
 const LIVE_POLL_MS = 2000;
@@ -187,6 +188,102 @@ async function persistHarvest(
   await sessionStore.updateSession(sessionId, { browser });
 }
 
+interface CompletedOwnedHarvestDeps {
+  readSession?: typeof sessionStore.readSession;
+  updateSession?: typeof sessionStore.updateSession;
+  reconcile?: typeof reconcileOwnedBrowserTargets;
+}
+
+async function finishCompletedOwnedLiveHarvest(
+  sessionId: string,
+  meta: SessionMetadata,
+  harvested: ChatGptTabSummary,
+  endpoint: { host: string; port: number },
+  explicitBrowserTabRef: string | undefined,
+  deps: CompletedOwnedHarvestDeps = {},
+): Promise<boolean> {
+  if (
+    harvested.state !== "completed" ||
+    !isRecoveredConversationHarvestReady(harvested) ||
+    explicitBrowserTabRef
+  ) {
+    return false;
+  }
+  const readSession = deps.readSession ?? sessionStore.readSession.bind(sessionStore);
+  const updateSession = deps.updateSession ?? sessionStore.updateSession.bind(sessionStore);
+  const reconcile = deps.reconcile ?? reconcileOwnedBrowserTargets;
+  const current = (await readSession(sessionId)) ?? meta;
+  const runtime = current.browser?.runtime;
+  if (
+    !runtime?.userDataDir ||
+    !runtime.chromeHost ||
+    !runtime.chromePort ||
+    !runtime.chromeTargetId ||
+    runtime.chromeHost !== endpoint.host ||
+    runtime.chromePort !== endpoint.port ||
+    runtime.chromeTargetId !== harvested.targetId
+  ) {
+    return false;
+  }
+  const harvestedConversationId =
+    harvested.conversationId ?? extractConversationIdFromUrl(harvested.url);
+  if (
+    runtime.conversationId &&
+    harvestedConversationId &&
+    runtime.conversationId !== harvestedConversationId
+  ) {
+    return false;
+  }
+
+  const completedRuntime = {
+    ...runtime,
+    browserDisposition: "completed" as const,
+    recoveryKind: undefined,
+    recoveryExpiresAt: undefined,
+    reconcileNeeded: undefined,
+  };
+  await updateSession(sessionId, {
+    browser: {
+      ...(current.browser ?? meta.browser),
+      runtime: completedRuntime,
+    },
+  });
+
+  try {
+    const receipt = await reconcile({
+      profileDir: runtime.userDataDir,
+      host: endpoint.host,
+      port: endpoint.port,
+      logger: () => {},
+      ensureSentinel: true,
+    });
+    if (
+      receipt.status === "complete" &&
+      (receipt.closedTargetIds.includes(runtime.chromeTargetId) ||
+        !receipt.targetSnapshots[runtime.chromeTargetId])
+    ) {
+      return true;
+    }
+  } catch {
+    // The terminal lifecycle state is already durable; cold-start reconciliation retries cleanup.
+  }
+
+  const afterFailure = (await readSession(sessionId)) ?? current;
+  await updateSession(sessionId, {
+    browser: {
+      ...(afterFailure.browser ?? current.browser),
+      runtime: {
+        ...(afterFailure.browser?.runtime ?? completedRuntime),
+        browserDisposition: "completed",
+        recoveryKind: undefined,
+        recoveryExpiresAt: undefined,
+        reconcileNeeded: true,
+      },
+    },
+  });
+  return false;
+}
+
 function printHarvestSummary(sessionId: string, harvested: ChatGptTabSummary): void {
   console.log(chalk.bold(`Session: ${sessionId}`));
   console.log(`Target: ${harvested.targetId}`);
@@ -319,6 +416,15 @@ export async function harvestSessionBrowserOutput(
     if (!options.quietOutput && output) {
       process.stdout.write(`${output}${output.endsWith("\n") ? "" : "\n"}`);
     }
+    if (!recoveredConversation) {
+      await finishCompletedOwnedLiveHarvest(
+        sessionId,
+        meta,
+        harvested,
+        initialEndpoint,
+        options.browserTabRef,
+      );
+    }
     return harvested;
   } finally {
     await finishRecoveredChrome(
@@ -435,6 +541,15 @@ export async function liveTailSessionBrowserOutput(
         if (output) {
           process.stdout.write(`${output}${output.endsWith("\n") ? "" : "\n"}`);
         }
+        if (!recoveredConversation) {
+          await finishCompletedOwnedLiveHarvest(
+            sessionId,
+            meta,
+            finalHarvest,
+            endpoint,
+            options.browserTabRef,
+          );
+        }
         return finalHarvest;
       }
 
@@ -448,3 +563,8 @@ export async function liveTailSessionBrowserOutput(
     );
   }
 }
+
+// biome-ignore lint/style/useNamingConvention: test-only export used in vitest suite
+export const __test__ = {
+  finishCompletedOwnedLiveHarvest,
+};

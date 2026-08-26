@@ -37,6 +37,10 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   recovery holds, and unowned meaningful pages are preserved. Failed close
   confirmation records reconciliation work without spawning another blank tab;
   cold start retries exact owned cleanup and never falls back to the first page.
+  A completed `oracle session <id> --live` or `--harvest` of an already-live,
+  exactly recorded session target now terminalizes and reconciles that target
+  too, including a draft the operator deliberately sent by hand; overrides and
+  ownership mismatches remain open.
 - Dedicated browser targets: register ChatGPT, Project Sources, Gemini, recovery,
   and sentinel targets in one durable ownership registry. Completed sessions
   close their exact targets, including `keepBrowser:true` Gemini runs, while
@@ -57,12 +61,14 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   follow-ups. Each submitted turn now carries its own dispatch, first-answer
   elapsed time, input estimate, verified upload bytes, commit state, and
   privacy-safe prompt identity and must pass admission before Oracle can format
-  a multi-turn transcript. Reattach matches the stored prompt digest to the
-  exact committed user turn. Once any new turn-receipt identity marker exists,
-  every commit, digest, index, workload, and timing field is required even when
-  resolved config is stale; partial active workload and indeterminate timing
-  fail closed, while older scalar and OpenCLI receipts keep their explicit
-  migration policy.
+  a multi-turn transcript. Every completed turn now archives that prompt digest,
+  committed DOM user-turn index, and verified commit evidence in its own
+  receipt; reattach validates the full new-format historical chain, not only
+  the latest scalar. Once any new turn-receipt identity marker exists, every
+  commit, digest, index, workload, and timing field in that receipt is required
+  even when resolved config is stale. Legacy identity-less and mixed chains
+  remain readable as `legacy-partial` without inferred backfill, while partial
+  active workload and indeterminate timing fail closed.
 - Direct CDP submission: background-open the dedicated Chrome through macOS
   LaunchServices, create each new tab with `focus:false`, and use page-side
   focus emulation for trusted input. Oracle now verifies exact composer identity

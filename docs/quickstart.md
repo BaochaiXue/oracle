@@ -163,6 +163,14 @@ If a connection dropped after submission, `oracle session <id>` reuses the
 stored profile/target/conversation receipt and harvests that conversation. It
 does not silently send the prompt again.
 
+If Oracle retained a prepared draft and you deliberately pressed **Send** in
+that exact owned tab, `oracle session <id> --live` can tail the same turn. After
+a completed answer is persisted and printed, Oracle marks only the recorded
+session target terminal and reconciles it closed; other tabs and the shared
+Chrome process remain independent. An explicit `--browser-tab`, a target or
+endpoint mismatch, or incomplete ownership evidence disables this automatic
+close rather than risking another tab.
+
 Continue the same conversation explicitly:
 
 ```bash
