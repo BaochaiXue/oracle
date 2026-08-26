@@ -58,6 +58,13 @@ JSON5 parsing, so trailing commas and comments are allowed.
     manualLoginCookieSync: false, // keep false to preserve the personal-profile boundary
   },
 
+  // Explicit Batch Oracle owner policy. User config only.
+  batch: {
+    enabled: true,
+    maxParallel: 3,
+    maxChildSessions: 5,
+  },
+
   // Azure OpenAI defaults (only used when endpoint is set)
   azure: {
     endpoint: "https://your-resource-name.openai.azure.com/",
@@ -112,8 +119,8 @@ ChatGPT Project URL in a package subdirectory.
 Project configs intentionally support only workflow defaults. They cannot set
 provider routing or secret/executable/security fields such as `apiBaseUrl`,
 `modelOverrides`, `azure`, `browser.remoteHost`, `browser.remoteToken`,
-`browser.chromePath`, `browser.chromeCookiePath`, `browser.opencliPath`, or
-`browser.useMockKeychain`. Keep tokens, machine-local executable/profile paths,
+`browser.chromePath`, `browser.chromeCookiePath`, `browser.opencliPath`,
+`browser.useMockKeychain`, or `batch`. Keep tokens, machine-local executable/profile paths,
 and the macOS keychain-mode choice in `~/.oracle/config.json`, environment
 variables, or explicit CLI flags.
 
@@ -123,7 +130,7 @@ CLI flags and explicit override environment variables → effective config (proj
 
 - The effective config starts with `~/.oracle/config.json`, then layers project `.oracle/config.json` files from parent to child. `engine`, `model`, `search`, `filesReport`, `heartbeatSeconds`, `maxFileSizeBytes`, and `apiBaseUrl` in the effective config override auto-detected values unless explicitly set on the CLI or through a supported override environment variable.
 - Project `.oracle/config.json` files can override safe workflow defaults such as `engine`, `model`, `search`, `filesReport`, `heartbeatSeconds`, `maxFileSizeBytes`, `promptSuffix`, and allowed `browser.*` workflow settings.
-- Provider routing and machine-local fields (`apiBaseUrl`, `modelOverrides`, `azure`, remote browser host/token defaults, Chrome binary/profile paths, cookie DB paths, the OpenCLI executable path, and session retention cleanup) are ignored in project configs and are read only from the user config, environment variables, or explicit CLI flags.
+- Provider routing, machine-local fields, and Batch owner caps (`apiBaseUrl`, `modelOverrides`, `azure`, remote browser host/token defaults, Chrome binary/profile paths, cookie DB paths, the OpenCLI executable path, `batch`, and session retention cleanup) are ignored in project configs and are read only from the user config, environment variables, or explicit CLI flags.
 - `ORACLE_ENGINE=api|browser` is a global override for engine selection (useful for MCP/Codex setups); it wins over `config.json`.
 - If `azure.endpoint` (or `--azure-endpoint`) is set, Oracle reads `AZURE_OPENAI_API_KEY` first and falls back to `OPENAI_API_KEY` for GPT models.
 - Remote browser defaults follow the same order: `--remote-host/--remote-token` win, then `browser.remoteHost` / `browser.remoteToken` in the config, then `ORACLE_REMOTE_HOST` / `ORACLE_REMOTE_TOKEN` if still unset.
@@ -157,6 +164,12 @@ oracle browser smoke --profile-dir "/Users/you/.oracle/browser-profile" --port 9
 Neither command submits a prompt. See
 [Dedicated Chrome transport](dedicated-chrome.md) for the security and smoke
 contract.
+
+Batch manifests may only narrow `batch.maxParallel` and
+`batch.maxChildSessions`; they cannot raise local owner caps. The effective
+parallel capacity is also bounded by `browser.maxConcurrentTabs`. Setting
+`batch.enabled:false` disables `batch run` and `batch resume` locally while
+leaving ordinary consultations unchanged. See [Batch Oracle v1](batch-oracle.md).
 
 ## Session retention
 

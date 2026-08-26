@@ -13,11 +13,28 @@ This is the curated cheatsheet. The authoritative source is always `oracle --hel
 | `oracle status`                | List recent sessions (see [Sessions](sessions.md)).                |
 | `oracle session <id>`          | Replay or block on a stored session.                               |
 | `oracle restart <id>`          | Re-run with the same prompt + files.                               |
+| `oracle batch …`               | Validate, run, resume, inspect, or render a parallel Pro batch.    |
 | `oracle docs check`            | Check documented flags against CLI help metadata.                  |
 | `oracle serve`                 | Run the remote browser host (see [Browser Mode](browser-mode.md)). |
 | `oracle bridge claude-config`  | Emit a `.mcp.json` for Claude Code (see [MCP](mcp.md)).            |
 | `oracle tui`                   | Interactive TUI (humans only).                                     |
 | `oracle-mcp`                   | Stdio MCP server entrypoint.                                       |
+
+## Batch Oracle
+
+| Command                                               | Purpose                                                                                          |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `oracle batch validate <manifest.json5>`              | Strictly validate JSON5, paths, duplicate lanes, and child caps without dispatch.                |
+| `oracle batch run <manifest.json5>`                   | Seal all first-stage lanes, create child mappings, and dispatch the blind ready set in parallel. |
+| `oracle batch status [batch-id] [--json]`             | Reconcile child sessions and show one batch, or list recent batches.                             |
+| `oracle batch resume <batch-id>`                      | Reattach original sessions and retry only proven unsubmitted, uncommitted, retry-safe attempts.  |
+| `oracle batch resume <batch-id> --allow-partial`      | Explicitly accept terminal missing lanes before synthesis; nonterminal lanes cannot be waived.   |
+| `oracle batch render <batch-id> [--lane <id>\|--all]` | Render status, one raw answer, or all raw answers in manifest order followed by synthesis.       |
+
+`batch run --max-parallel <count>` can only lower the effective manifest,
+user-config, and browser capacity. Batch v1 always uses local dedicated-profile
+direct CDP, `gpt-5-pro`, and the Pro reasoning tier. See
+[Batch Oracle v1](batch-oracle.md).
 
 ## Core consult flags
 
@@ -111,6 +128,7 @@ Profile lifecycle commands:
 | `--browser-headless`, `--browser-hide-window`                                  | Visibility controls.                                                                                                         |
 | `--browser-attachments <auto\|never\|always>`                                  | Attach files inline vs upload.                                                                                               |
 | `--browser-bundle-files`, `--browser-bundle-format <auto\|text\|zip>`          | Bundle browser uploads as text or byte-preserving ZIP.                                                                       |
+| `--bundle-label <label>`                                                       | Give generated TXT/ZIP attachments a stable semantic label before the content-derived ID.                                    |
 | `--browser-chrome-path`, `--browser-cookie-path`                               | Override Chrome / cookie store discovery (Linux / Windows).                                                                  |
 
 See [Browser Mode](browser-mode.md) for usage.
@@ -156,3 +174,4 @@ See [Browser Mode](browser-mode.md) for usage.
 - `oracle --help` — short usage.
 - `oracle --help --verbose` — every flag, including hidden ones.
 - [Configuration](configuration.md) — `~/.oracle/config.json` and project `.oracle/config.json` defaults.
+- [Batch Oracle v1](batch-oracle.md) — strict manifests, stage barriers, recovery, and synthesis.

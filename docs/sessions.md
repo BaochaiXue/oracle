@@ -18,6 +18,22 @@ Every Oracle run gets an id, a slug, and a folder. You can list runs, render the
 
 Override the root with `ORACLE_HOME_DIR=/some/path`.
 
+Batch Oracle adds a parent store beside ordinary sessions:
+
+```text
+~/.oracle/batches/<batch-id>/
+├── state.json
+├── report.md
+├── inputs/       # sealed prompts, attachment bytes, and provenance
+└── outputs/      # manifest-ordered raw answers and receipts
+```
+
+Every Batch lane and optional synthesis remains an ordinary child session under
+`~/.oracle/sessions/`, with `batchId`, `laneId`, role, attempt, and sealed input
+digest in its metadata. The parent coordinates the stage; child session/browser
+metadata remains execution and reattach authority. Nonterminal batch children
+are protected from time-based session pruning.
+
 ## Listing
 
 ```bash
@@ -87,6 +103,19 @@ oracle --engine browser \
 
 See [Browser Mode](browser-mode.md) for the full set.
 
+For a declared parallel batch, resume the parent instead of restarting a child:
+
+```bash
+oracle batch status <batch-id> --json
+oracle batch resume <batch-id>
+```
+
+Batch resume reuses the original recoverable child session. It creates a new
+attempt only when the previous child has durable evidence that no prompt was
+submitted or committed and the failure is retry-safe. `oracle restart <child>`
+is not the Batch recovery path because it bypasses parent reservations and the
+stage barrier. See [Batch Oracle v1](batch-oracle.md).
+
 ## Restart
 
 ```bash
@@ -123,7 +152,10 @@ GPT-5.x Pro defaults to background; non-Pro models block by default. Override pe
 oracle status --clear --hours 168   # delete sessions older than a week
 ```
 
-`--clear` is destructive — preview without it first. Sessions are local files, so `rm -rf ~/.oracle/sessions/<id>` works too.
+`--clear` is destructive — preview without it first. Time-based pruning skips
+child sessions referenced by a nonterminal Batch Oracle parent. Batch state is
+separate under `~/.oracle/batches`; inspect its report and lineage before
+removing any corresponding ordinary child session manually.
 
 ## Stale / zombie detection
 

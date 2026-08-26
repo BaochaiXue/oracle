@@ -119,6 +119,9 @@ Deep Research, image generation, and render/copy are separate documented paths.
   response timing, privacy boundary, and recovery invariants.
 - **Run a consultation.** [Quickstart](quickstart.md) covers first setup, direct
   CDP, API, render, and reattach.
+- **Run independent reviews in parallel.** [Batch Oracle v1](batch-oracle.md)
+  covers strict manifests, all-or-nothing sealing, blind lanes, barrier
+  synthesis, and same-session recovery.
 - **See every browser feature.** [Browser Mode](browser-mode.md) covers direct
   CDP, remote/attach-running paths, Deep Research, files, images, and OpenCLI.
 - **Wire a coding agent.** [Agents](agents.md) covers Codex, Claude Code,

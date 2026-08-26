@@ -327,6 +327,35 @@ composer mutation are separately locked so parallel agents do not race one
 another into the same tab. Tune the soft tab limit with
 `browser.maxConcurrentTabs` or `ORACLE_BROWSER_MAX_CONCURRENT_TABS`.
 
+## Batch Oracle: parallel-first, recoverable consultation
+
+When one decision contains at least two independent questions, a strict JSON5
+Batch Oracle manifest can declare separate GPT-5.6 Pro lanes instead of
+serializing them or sending one identical prompt to a voting panel. Oracle
+seals the complete first-stage ready set before dispatch, creates one durable
+child session per logical lane, runs the blind first pass concurrently within
+owner/browser capacity, and persists every raw answer and receipt without
+printing early answers.
+
+```bash
+oracle batch validate batch.json5
+oracle batch run batch.json5
+oracle batch status <batch-id> --json
+oracle batch resume <batch-id>
+oracle batch render <batch-id> --all
+```
+
+An optional contradiction-first synthesis session starts only after the stage
+barrier closes. Terminal missing lanes require explicit
+`batch resume --allow-partial`; recoverable lanes cannot be waived. Resume
+reattaches committed work to its original session and creates another attempt
+only for durable pre-submit, uncommitted, retry-safe failures. Sealed inputs and
+outputs live owner-only under `~/.oracle/batches/<batch-id>/`; workspace drift
+is reported but never causes silent resealing.
+
+See [Batch Oracle v1](docs/batch-oracle.md) for the manifest, durable topology,
+recovery matrix, semantic bundle identity, and v1 boundaries.
+
 ## Alternative OpenCLI transport
 
 OpenCLI Browser Bridge remains useful when direct CDP cannot be launched or when
@@ -373,6 +402,9 @@ after dispatch. See [OpenCLI alternative transport](docs/opencli-transport.md).
 | Workload-aware Pro timing guard           |           Yes |                       Yes |
 | Automatic cross-transport fallback        |         Never |                     Never |
 
+Batch Oracle v1 uses the dedicated-CDP column only. It does not fan out through
+OpenCLI, API, MCP, or remote/attach-running transports.
+
 Attach-running against a personal Chrome, remote Chrome, API, MCP, and render
 paths remain available as separate explicit modes. Their trust and account
 boundaries are documented in [Browser Mode](docs/browser-mode.md).
@@ -407,6 +439,7 @@ not this fork. Full upstream documentation is at
 | Start here                                                                      | Deeper reference                                                              |
 | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | [Dedicated Chrome transport](docs/dedicated-chrome.md)                          | Canonical topology, setup, lifecycle, privacy, and verification               |
+| [Batch Oracle v1](docs/batch-oracle.md)                                         | Parallel-first manifests, sealing, barrier synthesis, recovery, and rendering |
 | [Browser Mode](docs/browser-mode.md)                                            | Direct CDP, attach-running, remote Chrome, OpenCLI, Deep Research, and images |
 | [Quickstart](docs/quickstart.md)                                                | First sign-in, smoke, first consult, API, render, and reattach                |
 | [OpenCLI alternative](docs/opencli-transport.md)                                | Sealed bridge handoff and waiter-only recovery                                |

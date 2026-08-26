@@ -2,6 +2,17 @@
 
 ## 0.17.3 — Unreleased
 
+### Added
+
+- Batch Oracle v1: declare two or more independent GPT-5.6 Pro review lanes in
+  a strict JSON5 manifest, seal the blind first-stage ready set before dispatch,
+  run within owner/browser concurrency caps, recover each original child
+  session without duplicating committed prompts, and optionally launch an
+  explicit-partial, contradiction-first synthesis after the durable barrier.
+  New `oracle batch validate|run|status|resume|render` commands, owner-only
+  parent state, semantic TXT/ZIP bundle identities, receipts, and
+  manifest-order rendering keep the workflow inspectable.
+
 ### Changed
 
 - Browser: preserve completed ChatGPT conversations by default so users can
