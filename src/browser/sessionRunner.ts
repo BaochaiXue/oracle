@@ -12,7 +12,7 @@ import type {
 import { runBrowserMode } from "../browserMode.js";
 import { runOpenCliBrowserMode } from "./opencliTransport.js";
 import type { BrowserRunResult } from "../browserMode.js";
-import { assembleBrowserPrompt } from "./prompt.js";
+import { assembleBrowserPrompt, cleanupGeneratedBrowserBundles } from "./prompt.js";
 import { BrowserAutomationError } from "../oracle/errors.js";
 import { assertOracleModelAllowed } from "../oracle/forkPolicy.js";
 import type { BrowserLogger } from "./types.js";
@@ -321,6 +321,8 @@ export async function runBrowserSessionExecution(
     }
     const message = error instanceof Error ? error.message : "Browser automation failed.";
     throw new BrowserAutomationError(message, { stage: "execute-browser" }, error);
+  } finally {
+    await cleanupGeneratedBrowserBundles(promptArtifacts);
   }
   const modelSelection =
     browserResult.modelSelection ?? buildUnavailableModelSelectionEvidence(browserConfig);

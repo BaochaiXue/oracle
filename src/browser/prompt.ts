@@ -15,6 +15,13 @@ import { buildPromptMarkdown } from "../oracle/promptAssembly.js";
 import type { BrowserAttachment } from "./types.js";
 import { buildAttachmentPlan } from "./policies.js";
 import { createStoredZip } from "./zipBundle.js";
+import {
+  buildTextBundle,
+  buildZipBundleManifest,
+  inferBundleRole,
+  sha256,
+} from "../batch/bundleIdentity.js";
+import type { BundleContext, BundleIdentity, SourceFileIdentity } from "../batch/types.js";
 
 const DEFAULT_BROWSER_INLINE_CHAR_BUDGET = 60_000;
 const MAX_BROWSER_ATTACHMENTS = 10;
@@ -118,6 +125,7 @@ export interface BrowserBundleMetadata {
   originalCount: number;
   bundlePath: string;
   format?: BrowserBundleFormat;
+  identity?: BundleIdentity;
 }
 
 interface AssemblePromptDeps {
@@ -136,6 +144,7 @@ interface BrowserBundleSource {
   absolutePath: string;
   displayPath: string;
   sizeBytes: number;
+  sha256?: string;
 }
 
 type ResolvedBrowserBundleFormat = Exclude<BrowserBundleFormat, "auto">;
@@ -198,56 +207,148 @@ async function writeBrowserBundle(
   sections: FileSection[],
   sources: BrowserBundleSource[],
   format: ResolvedBrowserBundleFormat,
+  options: {
+    cwd: string;
+    runOptions: RunOracleOptions;
+    context?: BundleContext;
+  },
 ): Promise<WrittenBrowserBundle> {
   const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "oracle-browser-bundle-"));
-  const tokenEstimateText = formatSectionsForBundle(sections, {
-    lineNumbers: format === "text",
-  });
-  if (format === "zip") {
-    const totalSourceBytes = sources.reduce((total, source) => total + source.sizeBytes, 0);
-    if (totalSourceBytes > MAX_BROWSER_ZIP_BUNDLE_BYTES) {
-      throw new Error(
-        `Browser ZIP bundle inputs exceed the ${MAX_BROWSER_ZIP_BUNDLE_BYTES}-byte in-memory limit.`,
-      );
-    }
-    const bundlePath = path.join(bundleDir, "attachments-bundle.zip");
-    const buffer = createStoredZip(
-      await Promise.all(
+  try {
+    const tokenEstimateText = formatSectionsForBundle(sections, {
+      lineNumbers: format === "text",
+    });
+    const role = inferBundleRole(options.runOptions.bundleLabel);
+    const labelParts = options.runOptions.bundleLabel?.split(/--+/gu) ?? [];
+    const project = labelParts[0] || path.basename(options.cwd);
+    const subject =
+      labelParts[1] || options.runOptions.slug || options.runOptions.sessionId || "session";
+    if (format === "zip") {
+      const totalSourceBytes = sources.reduce((total, source) => total + source.sizeBytes, 0);
+      if (totalSourceBytes > MAX_BROWSER_ZIP_BUNDLE_BYTES) {
+        throw new Error(
+          `Browser ZIP bundle inputs exceed the ${MAX_BROWSER_ZIP_BUNDLE_BYTES}-byte in-memory limit.`,
+        );
+      }
+      const sourceBuffers = await Promise.all(
         sources.map(async (source) => ({
-          path: source.displayPath,
+          source,
           content: await fs.readFile(source.absolutePath),
         })),
-      ),
-    );
-    await fs.writeFile(bundlePath, buffer);
+      );
+      const sourceIdentities: SourceFileIdentity[] = sourceBuffers.map(({ source, content }) => ({
+        relativePath: source.displayPath,
+        sizeBytes: content.length,
+        sha256: source.sha256 ?? sha256(content),
+      }));
+      const zipIdentity = buildZipBundleManifest({
+        label: options.runOptions.bundleLabel,
+        project,
+        subject,
+        role,
+        extension: "zip",
+        files: sourceIdentities,
+        context: options.runOptions.bundleContext ?? options.context,
+      });
+      const bundlePath = path.join(bundleDir, zipIdentity.identity.filename);
+      const buffer = createStoredZip([
+        {
+          path: `${zipIdentity.root}/ORACLE_BUNDLE_MANIFEST.json`,
+          content: Buffer.from(zipIdentity.internalManifest, "utf8"),
+        },
+        ...sourceBuffers.map(({ source, content }) => ({
+          path: `${zipIdentity.root}/${source.displayPath}`,
+          content,
+        })),
+      ]);
+      await fs.writeFile(bundlePath, buffer, { mode: 0o600 });
+      return {
+        attachment: {
+          path: bundlePath,
+          displayPath: bundlePath,
+          sizeBytes: buffer.length,
+          generatedBundle: true,
+        },
+        metadata: {
+          originalCount: sources.length,
+          bundlePath,
+          format,
+          identity: zipIdentity.identity,
+        },
+        tokenEstimateText,
+      };
+    }
+    const sourceIdentities: SourceFileIdentity[] = sections.map((section) => ({
+      relativePath: section.displayPath,
+      sizeBytes: Buffer.byteLength(section.content, "utf8"),
+      sha256: sha256(section.content),
+    }));
+    const textBundle = buildTextBundle({
+      label: options.runOptions.bundleLabel,
+      project,
+      subject,
+      role,
+      extension: "txt",
+      files: sourceIdentities,
+      body: tokenEstimateText,
+      context: options.runOptions.bundleContext ?? options.context,
+    });
+    const bundlePath = path.join(bundleDir, textBundle.identity.filename);
+    await fs.writeFile(bundlePath, textBundle.content, { encoding: "utf8", mode: 0o600 });
     return {
       attachment: {
         path: bundlePath,
         displayPath: bundlePath,
-        sizeBytes: buffer.length,
+        sizeBytes: Buffer.byteLength(textBundle.content, "utf8"),
         generatedBundle: true,
       },
-      metadata: { originalCount: sources.length, bundlePath, format },
+      metadata: {
+        originalCount: sections.length,
+        bundlePath,
+        format,
+        identity: textBundle.identity,
+      },
       tokenEstimateText,
     };
+  } catch (error) {
+    await fs.rm(bundleDir, { recursive: true, force: true });
+    throw error;
   }
-  const bundlePath = path.join(bundleDir, "attachments-bundle.txt");
-  await fs.writeFile(bundlePath, tokenEstimateText, "utf8");
-  return {
-    attachment: {
-      path: bundlePath,
-      displayPath: bundlePath,
-      sizeBytes: Buffer.byteLength(tokenEstimateText, "utf8"),
-      generatedBundle: true,
-    },
-    metadata: { originalCount: sections.length, bundlePath, format },
-    tokenEstimateText,
-  };
+}
+
+export async function cleanupGeneratedBrowserBundles(
+  artifacts: Pick<BrowserPromptArtifacts, "attachments" | "fallback">,
+): Promise<void> {
+  const candidates = [...artifacts.attachments, ...(artifacts.fallback?.attachments ?? [])].filter(
+    (attachment) => attachment.generatedBundle === true,
+  );
+  const roots = new Set(
+    candidates
+      .map((attachment) => path.dirname(attachment.path))
+      .filter((dir) => path.basename(dir).startsWith("oracle-browser-bundle-")),
+  );
+  await Promise.all([...roots].map((dir) => fs.rm(dir, { recursive: true, force: true })));
 }
 
 export async function assembleBrowserPrompt(
   runOptions: RunOracleOptions,
   deps: AssemblePromptDeps = {},
+): Promise<BrowserPromptArtifacts> {
+  const generatedBundleRoots = new Set<string>();
+  try {
+    return await assembleBrowserPromptInternal(runOptions, deps, generatedBundleRoots);
+  } catch (error) {
+    await Promise.all(
+      [...generatedBundleRoots].map((dir) => fs.rm(dir, { recursive: true, force: true })),
+    );
+    throw error;
+  }
+}
+
+async function assembleBrowserPromptInternal(
+  runOptions: RunOracleOptions,
+  deps: AssemblePromptDeps,
+  generatedBundleRoots: Set<string>,
 ): Promise<BrowserPromptArtifacts> {
   const cwd = deps.cwd ?? process.cwd();
   const readFilesFn = deps.readFilesImpl ?? readFiles;
@@ -370,7 +471,9 @@ export async function assembleBrowserPrompt(
       sections,
       resolvedBundleFormat === "zip" ? allBundleSources : textBundleSources,
       resolvedBundleFormat,
+      { cwd, runOptions },
     );
+    generatedBundleRoots.add(path.dirname(writtenBundle.attachment.path));
     bundleText = writtenBundle.tokenEstimateText;
     attachments.length = 0;
     attachments.push(writtenBundle.attachment);
@@ -430,7 +533,9 @@ export async function assembleBrowserPrompt(
         sections,
         fallbackBundleFormat === "zip" ? allBundleSources : textBundleSources,
         fallbackBundleFormat,
+        { cwd, runOptions },
       );
+      generatedBundleRoots.add(path.dirname(writtenBundle.attachment.path));
       fallbackAttachments.length = 0;
       fallbackAttachments.push(writtenBundle.attachment);
       if (fallbackBundleFormat === "text") {

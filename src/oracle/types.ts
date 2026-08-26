@@ -1,3 +1,5 @@
+import type { BundleContext } from "../batch/types.js";
+
 export type TokenizerFn = (input: unknown, options?: Record<string, unknown>) => number;
 
 export type KnownModelName =
@@ -209,6 +211,10 @@ export interface RunOracleOptions {
   browserInlineFiles?: boolean;
   browserBundleFiles?: boolean;
   browserBundleFormat?: BrowserBundleFormat;
+  /** Semantic label used for generated browser bundle provenance. */
+  bundleLabel?: string;
+  /** Provenance copied into semantic TXT/ZIP bundle headers and manifests. */
+  bundleContext?: BundleContext;
   /** Browser image generation output path. */
   generateImage?: string;
   /** Optional output path used by browser image operations. */
