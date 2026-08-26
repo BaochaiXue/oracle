@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import {
+  acceptMissingBatchLane,
   getBatchStatus,
   listRecentBatches,
   renderStoredBatch,
@@ -85,12 +86,27 @@ export function registerBatchCommand(program: Command): void {
     )
     .option(
       "--allow-partial",
-      "Explicitly accept terminal failed lanes for partial synthesis.",
+      "Cross the barrier after unavailable lanes have explicit accept-missing decisions.",
       false,
     )
     .action(async (batchId: string, options: { allowPartial?: boolean }) => {
       const result = await resumeBatch(batchId, { allowPartial: options.allowPartial });
       printRunOutcome(result.state, result.reportPath);
+    });
+
+  batch
+    .command("accept-missing <batch-id>")
+    .description(
+      "Record an explicit owner decision to abandon one unavailable lane without re-sending it.",
+    )
+    .requiredOption("--lane <lane-id>", "Lane to close as accepted-missing.")
+    .requiredOption("--reason <text>", "Durable owner reason for accepting the missing evidence.")
+    .action(async (batchId: string, options: { lane: string; reason: string }) => {
+      const state = await acceptMissingBatchLane(batchId, options.lane, options.reason);
+      console.log(
+        `Batch ${batchId}: lane ${options.lane} accepted missing; status=${state.status}`,
+      );
+      console.log(`Next: oracle batch resume ${batchId} --allow-partial`);
     });
 
   batch

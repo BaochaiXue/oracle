@@ -26,10 +26,10 @@ describe("Batch Oracle CLI", () => {
     ]);
   });
 
-  test("advertises the five Batch Oracle subcommands", async () => {
+  test("advertises the six Batch Oracle subcommands", async () => {
     const result = await execCli(["batch", "--help"]);
     expect(result.code).toBe(0);
-    for (const command of ["validate", "run", "status", "resume", "render"]) {
+    for (const command of ["validate", "run", "status", "resume", "accept-missing", "render"]) {
       expect(result.stdout).toMatch(new RegExp(`\\b${command}\\b`, "u"));
     }
   });

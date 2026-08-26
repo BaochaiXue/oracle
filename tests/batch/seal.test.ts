@@ -3,10 +3,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { setOracleHomeDirOverrideForTest } from "../../src/oracleHome.js";
-import { captureBatchSourceManifest, loadBatchManifest } from "../../src/batch/manifest.js";
+import { loadBatchManifest, snapshotBatchSources } from "../../src/batch/manifest.js";
 import { initializeBatchStore, getBatchPaths } from "../../src/batch/store.js";
 import { loadSealedPromptArtifacts, sealFirstStageInputs } from "../../src/batch/seal.js";
 import type { BrowserPromptArtifacts } from "../../src/browser/prompt.js";
+import { assembleBrowserPrompt } from "../../src/browser/prompt.js";
 
 describe("first-stage input sealing", () => {
   let home: string;
@@ -32,14 +33,13 @@ describe("first-stage input sealing", () => {
 
   test("seals every lane before exposing final inputs and survives workspace mutation", async () => {
     const loaded = await loadBatchManifest("batch.json5", { cwd });
-    const source = await captureBatchSourceManifest(loaded, "fixture-batch");
     await initializeBatchStore({
       loaded,
       batchId: "fixture-batch",
-      sourceManifest: source,
       effectiveMaxParallel: 2,
       effectiveMaxChildSessions: 5,
     });
+    await snapshotBatchSources(loaded, "fixture-batch");
     const sealed = await sealFirstStageInputs(loaded, "fixture-batch");
     expect(sealed.map((entry) => entry.laneId)).toEqual(["one", "two"]);
     await fs.writeFile(path.join(cwd, "lane-a.md"), "MUTATED", "utf8");
@@ -56,14 +56,13 @@ describe("first-stage input sealing", () => {
 
   test("one lane assembly failure leaves no dispatchable lane root", async () => {
     const loaded = await loadBatchManifest("batch.json5", { cwd });
-    const source = await captureBatchSourceManifest(loaded, "fixture-batch");
     await initializeBatchStore({
       loaded,
       batchId: "fixture-batch",
-      sourceManifest: source,
       effectiveMaxParallel: 2,
       effectiveMaxChildSessions: 5,
     });
+    await snapshotBatchSources(loaded, "fixture-batch");
     const assemble = vi.fn(async (options): Promise<BrowserPromptArtifacts> => {
       if (options.prompt.includes("Lane: two")) throw new Error("intentional seal failure");
       return fakeArtifacts(options.prompt);
@@ -74,6 +73,54 @@ describe("first-stage input sealing", () => {
     await expect(
       fs.stat(path.join(getBatchPaths("fixture-batch").inputs, "lanes")),
     ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  test("assembles every lane from one snapshot even if the workspace mutates mid-assembly", async () => {
+    const loaded = await loadBatchManifest("batch.json5", { cwd });
+    await initializeBatchStore({
+      loaded,
+      batchId: "fixture-batch",
+      effectiveMaxParallel: 2,
+      effectiveMaxChildSessions: 5,
+    });
+    await snapshotBatchSources(loaded, "fixture-batch");
+    let mutated = false;
+    const assemble = async (options: Parameters<typeof assembleBrowserPrompt>[0]) => {
+      if (!mutated && options.prompt.includes("Lane: one")) {
+        mutated = true;
+        await fs.writeFile(path.join(cwd, "lane-b.md"), "MUTATED DURING ASSEMBLY", "utf8");
+      }
+      return assembleBrowserPrompt(options, { cwd });
+    };
+    await sealFirstStageInputs(loaded, "fixture-batch", { assemblePrompt: assemble });
+    const laneTwo = await loadSealedPromptArtifacts("fixture-batch", "two");
+    const bundle = await fs.readFile(laneTwo.artifacts.attachments[0]!.path, "utf8");
+    expect(bundle).toContain("1 | B");
+    expect(bundle).not.toContain("MUTATED DURING ASSEMBLY");
+  });
+
+  test("rejects a tampered sealed input manifest before dispatch", async () => {
+    const loaded = await loadBatchManifest("batch.json5", { cwd });
+    await initializeBatchStore({
+      loaded,
+      batchId: "fixture-batch",
+      effectiveMaxParallel: 2,
+      effectiveMaxChildSessions: 5,
+    });
+    await snapshotBatchSources(loaded, "fixture-batch");
+    await sealFirstStageInputs(loaded, "fixture-batch");
+    const inputManifestPath = path.join(
+      getBatchPaths("fixture-batch").inputs,
+      "lanes",
+      "one",
+      "input-manifest.json",
+    );
+    const manifest = JSON.parse(await fs.readFile(inputManifestPath, "utf8"));
+    manifest.estimatedInputTokens += 1;
+    await fs.writeFile(inputManifestPath, JSON.stringify(manifest), "utf8");
+    await expect(loadSealedPromptArtifacts("fixture-batch", "one")).rejects.toThrow(
+      /input manifest digest mismatch/u,
+    );
   });
 });
 

@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import type { BrowserBundleFormat, FileSection, RunOracleOptions } from "../oracle.js";
@@ -223,6 +224,14 @@ async function writeBrowserBundle(
     const project = labelParts[0] || path.basename(options.cwd);
     const subject =
       labelParts[1] || options.runOptions.slug || options.runOptions.sessionId || "session";
+    const context = options.runOptions.bundleContext ?? options.context;
+    const instanceId =
+      context?.artifactInstanceId ??
+      (context?.batchId
+        ? `batch-${sha256(context.batchId).slice(0, 8)}`
+        : context?.sessionId
+          ? `session-${sha256(context.sessionId).slice(0, 8)}`
+          : `artifact-${randomUUID().slice(0, 8)}`);
     if (format === "zip") {
       const totalSourceBytes = sources.reduce((total, source) => total + source.sizeBytes, 0);
       if (totalSourceBytes > MAX_BROWSER_ZIP_BUNDLE_BYTES) {
@@ -248,7 +257,8 @@ async function writeBrowserBundle(
         role,
         extension: "zip",
         files: sourceIdentities,
-        context: options.runOptions.bundleContext ?? options.context,
+        context,
+        instanceId,
       });
       const bundlePath = path.join(bundleDir, zipIdentity.identity.filename);
       const buffer = createStoredZip([
@@ -261,6 +271,7 @@ async function writeBrowserBundle(
           content,
         })),
       ]);
+      const identity = { ...zipIdentity.identity, artifactSha256: sha256(buffer) };
       await fs.writeFile(bundlePath, buffer, { mode: 0o600 });
       return {
         attachment: {
@@ -273,7 +284,7 @@ async function writeBrowserBundle(
           originalCount: sources.length,
           bundlePath,
           format,
-          identity: zipIdentity.identity,
+          identity,
         },
         tokenEstimateText,
       };
@@ -290,8 +301,9 @@ async function writeBrowserBundle(
       role,
       extension: "txt",
       files: sourceIdentities,
+      instanceId,
       body: tokenEstimateText,
-      context: options.runOptions.bundleContext ?? options.context,
+      context,
     });
     const bundlePath = path.join(bundleDir, textBundle.identity.filename);
     await fs.writeFile(bundlePath, textBundle.content, { encoding: "utf8", mode: 0o600 });

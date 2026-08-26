@@ -4,6 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { setOracleHomeDirOverrideForTest } from "../../src/oracleHome.js";
 import { initializeBatchStore, writeBatchState } from "../../src/batch/store.js";
+import { getBatchPaths } from "../../src/batch/store.js";
+import { snapshotBatchSources } from "../../src/batch/manifest.js";
+import { sealFirstStageInputs } from "../../src/batch/seal.js";
+import { createHash } from "node:crypto";
 import {
   BatchSynthesisInputTooLargeError,
   buildSynthesisPrompt,
@@ -20,6 +24,7 @@ describe("batch synthesis", () => {
     home = await fs.mkdtemp(path.join(os.tmpdir(), "oracle-batch-synthesis-home-"));
     cwd = await fs.mkdtemp(path.join(os.tmpdir(), "oracle-batch-synthesis-cwd-"));
     setOracleHomeDirOverrideForTest(home);
+    await fs.writeFile(path.join(cwd, "authority.md"), "CANONICAL AUTHORITY", "utf8");
   });
 
   afterEach(async () => {
@@ -54,7 +59,32 @@ describe("batch synthesis", () => {
         const outputPath = path.join(outputDir, lane.id, "answer.md");
         await fs.mkdir(path.dirname(outputPath), { recursive: true });
         await fs.writeFile(outputPath, `answer-${lane.id}`, "utf8");
-        return { ...lane, status: "completed" as const, outputPath };
+        const answer = Buffer.from(`answer-${lane.id}`, "utf8");
+        const outputSha256 = createHash("sha256").update(answer).digest("hex");
+        const receiptPath = path.join(outputDir, lane.id, "answer-receipt.json");
+        await fs.writeFile(
+          receiptPath,
+          `${JSON.stringify({
+            schemaVersion: "oracle.batch.v1",
+            batchId: state.batchId,
+            laneId: lane.id,
+            role: "lane",
+            sessionId: `session-${lane.id}`,
+            status: "completed",
+            capturedAt: new Date().toISOString(),
+            inputManifestSha256: lane.inputManifestSha256,
+            answerSha256: outputSha256,
+            answerBytes: answer.length,
+          })}\n`,
+          "utf8",
+        );
+        return {
+          ...lane,
+          status: "completed" as const,
+          outputPath,
+          outputSha256,
+          sessionId: `session-${lane.id}`,
+        };
       }),
     );
     const completed = { ...state, status: "sealed" as const, lanes };
@@ -78,6 +108,12 @@ describe("batch synthesis", () => {
     expect((caught as Error).message).toContain("one=10");
     expect((caught as Error).message).toContain("No truncation or summary child was used");
     expect(assemblePrompt).toHaveBeenCalledTimes(1);
+    const files = assemblePrompt.mock.calls[0]![0].file as string[];
+    const authority = files.find((file) => file.includes("shared-authority/authority.md"));
+    expect(authority).toBeTruthy();
+    expect(await fs.readFile(authority!, "utf8")).toBe("CANONICAL AUTHORITY");
+    expect(files.filter((file) => file.endsWith("answer-receipt.json"))).toHaveLength(2);
+    expect(files.filter((file) => file.endsWith("input-manifest.json"))).toHaveLength(2);
   });
 });
 
@@ -90,7 +126,38 @@ async function fixtureState(cwd: string) {
     effectiveMaxParallel: 2,
     effectiveMaxChildSessions: 3,
   });
-  return { loaded, state };
+  const snapshot = await snapshotBatchSources(loaded, "fixture-batch");
+  const sealed = await sealFirstStageInputs(loaded, "fixture-batch", {
+    assemblePrompt: async (options): Promise<BrowserPromptArtifacts> => ({
+      markdown: options.prompt,
+      composerText: options.prompt,
+      estimatedInputTokens: 10,
+      attachments: [],
+      inlineFileCount: 0,
+      tokenEstimateIncludesInlineFiles: false,
+      attachmentsPolicy: "always",
+      attachmentMode: "upload",
+      fallback: null,
+      bundled: null,
+    }),
+  });
+  const sealedState = {
+    ...state,
+    sourceManifestSha256: snapshot.manifest.snapshotManifestSha256,
+    sourceSnapshotManifestSha256: snapshot.manifest.snapshotManifestSha256,
+    lanes: state.lanes.map((lane) => {
+      const input = sealed.find((entry) => entry.laneId === lane.id)!;
+      return {
+        ...lane,
+        status: "sealed" as const,
+        inputManifestSha256: input.inputManifest.inputManifestSha256,
+        inputManifestPath: input.inputManifestPath,
+      };
+    }),
+  };
+  await writeBatchState(sealedState);
+  expect(getBatchPaths("fixture-batch").sourceSnapshot).toBeTruthy();
+  return { loaded, state: sealedState };
 }
 
 function fixtureLoaded(cwd: string): LoadedBatchManifest {
@@ -99,6 +166,7 @@ function fixtureLoaded(cwd: string): LoadedBatchManifest {
     slug: "fixture-batch",
     project: "fixture",
     objective: "Adjudicate.",
+    sharedAuthority: { revisionLabel: "r1", files: ["authority.md"] },
     lanes: [
       {
         id: "one",
@@ -131,7 +199,11 @@ function fixtureLoaded(cwd: string): LoadedBatchManifest {
     sourceText: JSON.stringify(manifest),
     cwd,
     manifest,
-    files: { sharedAuthority: [], lanes: { one: [], two: [] }, synthesis: [] },
+    files: {
+      sharedAuthority: [path.join(cwd, "authority.md")],
+      lanes: { one: [], two: [] },
+      synthesis: [],
+    },
   };
 }
 

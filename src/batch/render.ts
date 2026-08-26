@@ -1,4 +1,4 @@
-import fs from "node:fs/promises";
+import { readVerifiedBatchAnswer } from "./answers.js";
 import type { BatchManifestV1, BatchStateV1 } from "./types.js";
 
 export interface RenderBatchOptions {
@@ -42,7 +42,8 @@ export async function renderBatch(
   for (const laneSpec of requestedLanes) {
     const lane = state.lanes.find((entry) => entry.id === laneSpec.id);
     if (!lane?.outputPath) continue;
-    lines.push("", `## Raw answer: ${lane.id}`, "", await readAnswer(lane.outputPath));
+    const verified = await readVerifiedBatchAnswer(state.batchId, lane);
+    lines.push("", `## Raw answer: ${lane.id}`, "", verified.answer.toString("utf8"));
   }
   if (state.synthesis) {
     lines.push(
@@ -54,7 +55,8 @@ export async function renderBatch(
       `- Raw path: ${state.synthesis.outputPath ?? "unavailable"}`,
     );
     if (state.synthesis.outputPath && state.synthesis.status === "completed") {
-      lines.push("", await readAnswer(state.synthesis.outputPath));
+      const verified = await readVerifiedBatchAnswer(state.batchId, state.synthesis);
+      lines.push("", verified.answer.toString("utf8"));
     }
   }
   const missing = state.lanes.filter((lane) => lane.status !== "completed");
@@ -77,7 +79,7 @@ export function buildBatchStatusProjection(state: BatchStateV1) {
     createdAt: state.createdAt,
     updatedAt: state.updatedAt,
     barrierClosedAt: state.barrierClosedAt,
-    workspaceDrift: state.workspaceDrift ?? false,
+    admittedSourceDrift: state.admittedSourceDrift ?? state.workspaceDrift ?? false,
     laneCompletion: {
       completed: state.lanes.filter((lane) => lane.status === "completed").length,
       total: state.lanes.length,
@@ -89,6 +91,8 @@ export function buildBatchStatusProjection(state: BatchStateV1) {
       attempt: lane.attempts.at(-1)?.attempt,
       inputManifestSha256: lane.inputManifestSha256,
       outputPath: lane.outputPath,
+      acceptedMissing: lane.acceptedMissing ?? false,
+      abandonedAt: lane.abandonedAt,
       recoverable: lane.status === "recoverable",
       error: lane.lastError,
     })),
@@ -111,13 +115,14 @@ function ownerAction(state: BatchStateV1): string | null {
     return `Run: oracle batch resume ${state.batchId}`;
   }
   if (state.status === "awaiting-owner") {
+    const unresolved = state.lanes.find(
+      (lane) => lane.status !== "completed" && !lane.acceptedMissing,
+    );
     return state.synthesis
-      ? `Resolve failed lanes or explicitly accept partial synthesis with: oracle batch resume ${state.batchId} --allow-partial`
+      ? unresolved
+        ? `Resolve ${unresolved.id}, or explicitly close it with: oracle batch accept-missing ${state.batchId} --lane ${unresolved.id} --reason <reason>`
+        : `Continue accepted partial synthesis with: oracle batch resume ${state.batchId} --allow-partial`
       : "Resolve failed lanes; this batch has no synthesis stage.";
   }
   return null;
-}
-
-async function readAnswer(target: string): Promise<string> {
-  return fs.readFile(target, "utf8").catch(() => "(answer artifact missing)");
 }

@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
@@ -302,7 +303,9 @@ describe("assembleBrowserPrompt", () => {
       );
 
       expect(result.attachments).toHaveLength(10);
-      expect(result.attachments[0]?.displayPath).toMatch(/--sources--[a-f0-9]{8}\.txt$/u);
+      expect(result.attachments[0]?.displayPath).toMatch(
+        /--sources--artifact-[a-f0-9]{8}--[a-f0-9]{8}\.txt$/u,
+      );
       expect(result.bundled?.format).toBe("text");
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
@@ -450,7 +453,7 @@ describe("assembleBrowserPrompt", () => {
 
     expect(result.attachments).toHaveLength(1);
     expect(result.attachments[0]?.displayPath).toMatch(
-      /repo--session--sources--[a-f0-9]{8}\.txt$/u,
+      /repo--session--sources--artifact-[a-f0-9]{8}--[a-f0-9]{8}\.txt$/u,
     );
     expect(result.attachments[0]?.generatedBundle).toBe(true);
     const bundleText = await fs.readFile(result.attachments[0]!.path, "utf8");
@@ -493,7 +496,9 @@ describe("assembleBrowserPrompt", () => {
       });
 
       expect(result.attachments).toHaveLength(1);
-      expect(result.attachments[0]?.displayPath).toMatch(/--sources--[a-f0-9]{8}\.zip$/u);
+      expect(result.attachments[0]?.displayPath).toMatch(
+        /--sources--artifact-[a-f0-9]{8}--[a-f0-9]{8}\.zip$/u,
+      );
       expect(result.attachments[0]?.generatedBundle).toBe(true);
       expect(result.bundled).toEqual(
         expect.objectContaining({
@@ -503,6 +508,9 @@ describe("assembleBrowserPrompt", () => {
         }),
       );
       const zipBytes = await fs.readFile(result.attachments[0]!.path);
+      expect(result.bundled?.identity?.artifactSha256).toBe(
+        createHash("sha256").update(zipBytes).digest("hex"),
+      );
       expect(zipBytes.subarray(0, 4).toString("hex")).toBe("504b0304");
       const entries = readStoredZipEntries(zipBytes);
       const root = path.basename(result.attachments[0]!.path, ".zip");
@@ -551,7 +559,9 @@ describe("assembleBrowserPrompt", () => {
       );
 
       expect(result.attachments).toHaveLength(1);
-      expect(result.attachments[0]?.displayPath).toMatch(/--sources--[a-f0-9]{8}\.zip$/u);
+      expect(result.attachments[0]?.displayPath).toMatch(
+        /--sources--artifact-[a-f0-9]{8}--[a-f0-9]{8}\.zip$/u,
+      );
       expect(result.bundled).toEqual(
         expect.objectContaining({
           originalCount: 2,
@@ -598,7 +608,9 @@ describe("assembleBrowserPrompt", () => {
       );
 
       expect(result.attachments).toHaveLength(1);
-      expect(result.attachments[0]?.displayPath).toMatch(/--sources--[a-f0-9]{8}\.zip$/u);
+      expect(result.attachments[0]?.displayPath).toMatch(
+        /--sources--artifact-[a-f0-9]{8}--[a-f0-9]{8}\.zip$/u,
+      );
       expect(result.bundled).toEqual(
         expect.objectContaining({
           originalCount: 2,
@@ -640,7 +652,9 @@ describe("assembleBrowserPrompt", () => {
       );
 
       expect(result.attachments).toHaveLength(1);
-      expect(result.attachments[0]?.displayPath).toMatch(/--sources--[a-f0-9]{8}\.zip$/u);
+      expect(result.attachments[0]?.displayPath).toMatch(
+        /--sources--artifact-[a-f0-9]{8}--[a-f0-9]{8}\.zip$/u,
+      );
       const entries = readStoredZipEntries(await fs.readFile(result.attachments[0]!.path));
       const root = path.basename(result.attachments[0]!.path, ".zip");
       expect(entries.get(`${root}/src/a.ts`)).toEqual(textBytes);

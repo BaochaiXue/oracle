@@ -18,12 +18,27 @@ export async function reconcileBatchState(
 ): Promise<BatchStateV1> {
   const discovered = await attachDiscoveredChildSessions(state, store);
   const reconcileLane = async (lane: BatchLaneState): Promise<BatchLaneState> => {
+    if (lane.acceptedMissing || lane.status === "abandoned") return lane;
     if (!lane.sessionId) return lane;
     const metadata = await store.readSession(lane.sessionId);
     const derived = deriveLaneSessionState(metadata, lane);
     return {
       ...lane,
       status: derived.status,
+      attempts: lane.attempts.map((attempt, index) =>
+        index !== lane.attempts.length - 1
+          ? attempt
+          : derived.status === "completed"
+            ? {
+                ...attempt,
+                phase: "completed" as const,
+                completedAt:
+                  metadata?.completedAt ?? attempt.completedAt ?? new Date().toISOString(),
+              }
+            : derived.status === "error" || derived.status === "recoverable"
+              ? { ...attempt, phase: "failed" as const }
+              : attempt,
+      ),
       ...(derived.lastError ? { lastError: derived.lastError } : {}),
       ...(derived.status === "completed"
         ? { completedAt: metadata?.completedAt ?? lane.completedAt ?? new Date().toISOString() }
@@ -47,32 +62,69 @@ async function attachDiscoveredChildSessions(
   const sessions = await store.listSessions();
   const attach = (lane: BatchLaneState): BatchLaneState => {
     if (lane.sessionId) return lane;
-    const candidates = sessions
-      .filter(
-        (session) =>
-          session.batch?.batchId === state.batchId &&
-          session.batch.laneId === lane.id &&
-          session.batch.role === lane.role,
-      )
-      .sort(
-        (left, right) =>
-          (right.batch?.attempt ?? 0) - (left.batch?.attempt ?? 0) ||
-          right.createdAt.localeCompare(left.createdAt),
+    const related = sessions.filter(
+      (session) =>
+        session.batch?.batchId === state.batchId &&
+        session.batch.laneId === lane.id &&
+        session.batch.role === lane.role,
+    );
+    if (related.length === 0) return lane;
+    if (!lane.inputManifestSha256) {
+      return orphanAmbiguity(
+        lane,
+        "Parent lane has no sealed input digest; discovered child identity cannot be proven.",
       );
+    }
+    const mismatched = related.filter(
+      (session) => session.batch?.inputManifestSha256 !== lane.inputManifestSha256,
+    );
+    if (mismatched.length > 0) {
+      return orphanAmbiguity(
+        lane,
+        `Discovered child input digest differs from the parent seal: ${mismatched.map((entry) => entry.id).join(", ")}.`,
+      );
+    }
+    const candidates = related.sort(
+      (left, right) =>
+        (right.batch?.attempt ?? 0) - (left.batch?.attempt ?? 0) ||
+        right.createdAt.localeCompare(left.createdAt),
+    );
+    const attemptsByNumber = new Map<number, SessionMetadata[]>();
+    for (const candidate of candidates) {
+      const attempt = candidate.batch?.attempt ?? 1;
+      attemptsByNumber.set(attempt, [...(attemptsByNumber.get(attempt) ?? []), candidate]);
+    }
+    const duplicateAttempt = [...attemptsByNumber.entries()].find(
+      ([, entries]) => entries.length > 1,
+    );
+    if (duplicateAttempt) {
+      return orphanAmbiguity(
+        lane,
+        `Multiple children claim attempt ${duplicateAttempt[0]}: ${duplicateAttempt[1].map((entry) => entry.id).join(", ")}.`,
+      );
+    }
+    const committed = candidates.filter(childMayHaveCommittedPrompt);
+    if (committed.length > 1) {
+      return orphanAmbiguity(
+        lane,
+        `Multiple discovered children may have committed a Pro turn: ${committed.map((entry) => entry.id).join(", ")}.`,
+      );
+    }
     const selected = candidates[0];
-    if (!selected) return lane;
     const attempts = candidates
       .map((session) => ({
         attempt: session.batch?.attempt ?? 1,
         sessionId: session.id,
         createdAt: session.createdAt,
+        phase: inferAttemptPhase(session),
+        ...(childMayHaveStarted(session) ? { dispatchStartedAt: session.createdAt } : {}),
         ...(session.completedAt ? { completedAt: session.completedAt } : {}),
       }))
       .sort((left, right) => left.attempt - right.attempt);
     return {
       ...lane,
-      sessionId: selected.id,
-      inputManifestSha256: selected.batch?.inputManifestSha256 ?? lane.inputManifestSha256,
+      sessionId: selected!.id,
+      inputManifestSha256: lane.inputManifestSha256,
       outputPath: lane.outputPath ?? childOutputPath(state.batchId, lane.id, lane.role),
       attempts,
     };
@@ -143,7 +195,10 @@ export function deriveLaneSessionState(
       lane?.dispatchReservation &&
       isProcessAlive(lane.dispatchReservation.pid)
     ) {
-      return { status: "running" };
+      return { status: lane.status === "claimed" ? "claimed" : "running" };
+    }
+    if (lane?.attempts.at(-1)?.dispatchStartedAt) {
+      return indeterminateDispatch(metadata.id);
     }
     return { status: "session-created", clearReservation: true };
   }
@@ -158,7 +213,7 @@ export function deriveLaneSessionState(
       return { status: "running" };
     }
     if (!runtime) {
-      return { status: "session-created", clearReservation: true };
+      return indeterminateDispatch(metadata.id);
     }
   }
   const terminalTiming = isTerminalProResponseTimingCode(details?.code);
@@ -201,6 +256,7 @@ export function classifyParentStatus(state: BatchStateV1): BatchStateV1["status"
       (lane) =>
         lane.status === "recoverable" ||
         lane.status === "running" ||
+        lane.status === "claimed" ||
         lane.status === "session-created" ||
         lane.status === "sealed" ||
         lane.status === "pending",
@@ -208,7 +264,7 @@ export function classifyParentStatus(state: BatchStateV1): BatchStateV1["status"
   ) {
     return "awaiting-recovery";
   }
-  if (required.some((lane) => lane.status === "error")) {
+  if (required.some((lane) => lane.status === "error" || lane.status === "indeterminate")) {
     return "awaiting-owner";
   }
   if (required.every((lane) => lane.status === "completed")) {
@@ -221,12 +277,14 @@ export function classifyParentStatus(state: BatchStateV1): BatchStateV1["status"
       if (
         state.synthesis.status === "recoverable" ||
         state.synthesis.status === "running" ||
+        state.synthesis.status === "claimed" ||
         state.synthesis.status === "session-created" ||
         state.synthesis.status === "sealed"
       ) {
         return "awaiting-recovery";
       }
-      if (state.synthesis.status === "error") return "awaiting-owner";
+      if (state.synthesis.status === "error" || state.synthesis.status === "indeterminate")
+        return "awaiting-owner";
       return "sealed";
     }
     return state.ownerDecisions?.some((decision) => decision.type === "allow-partial")
@@ -234,6 +292,59 @@ export function classifyParentStatus(state: BatchStateV1): BatchStateV1["status"
       : "completed";
   }
   return state.status;
+}
+
+function indeterminateDispatch(sessionId: string): DerivedLaneSessionState {
+  return {
+    status: "indeterminate",
+    clearReservation: true,
+    lastError: {
+      code: "batch-dispatch-outcome-indeterminate",
+      message: `Worker entered dispatch for session ${sessionId}, but no explicit safe pre-submit receipt or reattachable runtime proves that a new send is safe.`,
+      retrySafe: false,
+    },
+  };
+}
+
+function orphanAmbiguity(lane: BatchLaneState, message: string): BatchLaneState {
+  return {
+    ...lane,
+    status: "indeterminate",
+    lastError: {
+      code: "batch-orphan-child-ambiguity",
+      message,
+      retrySafe: false,
+    },
+  };
+}
+
+function childMayHaveStarted(metadata: SessionMetadata): boolean {
+  return metadata.status !== "pending" || childMayHaveCommittedPrompt(metadata);
+}
+
+function childMayHaveCommittedPrompt(metadata: SessionMetadata): boolean {
+  const details = metadata.error?.details as
+    | {
+        promptSubmitted?: boolean;
+        submissionCommitted?: boolean;
+        runtime?: { promptSubmitted?: boolean; proTurnCommitted?: boolean };
+      }
+    | undefined;
+  const runtime = metadata.browser?.runtime;
+  return Boolean(
+    details?.promptSubmitted ||
+    details?.submissionCommitted ||
+    details?.runtime?.promptSubmitted ||
+    details?.runtime?.proTurnCommitted ||
+    runtime?.promptSubmitted ||
+    runtime?.proTurnCommitted,
+  );
+}
+
+function inferAttemptPhase(metadata: SessionMetadata): BatchLaneState["attempts"][number]["phase"] {
+  if (metadata.status === "completed" || metadata.status === "partial") return "completed";
+  if (metadata.status === "error") return childMayHaveStarted(metadata) ? "failed" : "created";
+  return childMayHaveStarted(metadata) ? "started" : "created";
 }
 
 function isProcessAlive(pid: number | undefined): boolean {

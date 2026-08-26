@@ -1036,9 +1036,9 @@ export async function deleteSessionsOlderThan({
   }
   const cutoff = includeAll ? Number.NEGATIVE_INFINITY : Date.now() - hours * 60 * 60 * 1000;
   let deleted = 0;
-  const protectedBatchSessions = await import("./batch/store.js")
-    .then(({ listProtectedBatchSessionIds }) => listProtectedBatchSessionIds())
-    .catch(() => new Set<string>());
+  const protectedBatchSessions = await import("./batch/store.js").then(
+    ({ listProtectedBatchSessionIds }) => listProtectedBatchSessionIds(),
+  );
 
   for (const entry of entries) {
     if (protectedBatchSessions.has(entry)) {

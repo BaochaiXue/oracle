@@ -2,13 +2,18 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { captureBatchSourceManifest, loadBatchManifest } from "../../src/batch/manifest.js";
+import { setOracleHomeDirOverrideForTest } from "../../src/oracleHome.js";
+import { loadBatchManifest, snapshotBatchSources } from "../../src/batch/manifest.js";
+import { initializeBatchStore } from "../../src/batch/store.js";
 
 describe("Batch Oracle manifest loading", () => {
   let cwd: string;
+  let home: string;
 
   beforeEach(async () => {
     cwd = await fs.mkdtemp(path.join(os.tmpdir(), "oracle-batch-manifest-"));
+    home = await fs.mkdtemp(path.join(os.tmpdir(), "oracle-batch-manifest-home-"));
+    setOracleHomeDirOverrideForTest(home);
     await fs.mkdir(path.join(cwd, "docs"));
     await fs.mkdir(path.join(cwd, "evidence"));
     await fs.writeFile(path.join(cwd, "docs", "authority.md"), "authority", "utf8");
@@ -17,7 +22,11 @@ describe("Batch Oracle manifest loading", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(cwd, { recursive: true, force: true });
+    setOracleHomeDirOverrideForTest(null);
+    await Promise.all([
+      fs.rm(cwd, { recursive: true, force: true }),
+      fs.rm(home, { recursive: true, force: true }),
+    ]);
   });
 
   test("parses JSON5, resolves files, and captures source identities", async () => {
@@ -41,13 +50,20 @@ describe("Batch Oracle manifest loading", () => {
     const realCwd = await fs.realpath(cwd);
     expect(loaded.files.sharedAuthority).toEqual([path.join(realCwd, "docs", "authority.md")]);
     expect(loaded.files.lanes.one).toEqual([path.join(realCwd, "evidence", "a.md")]);
-    const source = await captureBatchSourceManifest(loaded, "test-batch");
+    await initializeBatchStore({
+      loaded,
+      batchId: "test-batch",
+      effectiveMaxParallel: 2,
+      effectiveMaxChildSessions: 5,
+    });
+    const { manifest: source } = await snapshotBatchSources(loaded, "test-batch");
     expect(source.files.map((entry) => entry.relativePath)).toEqual([
       "docs/authority.md",
       "evidence/a.md",
       "evidence/b.md",
     ]);
     expect(source.files.every((entry) => /^[a-f0-9]{64}$/u.test(entry.sha256))).toBe(true);
+    expect(source.snapshotManifestSha256).toMatch(/^[a-f0-9]{64}$/u);
   });
 
   test("rejects a direct symlink escape", async () => {

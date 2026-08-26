@@ -20,6 +20,7 @@ export interface CreateBundleIdentityOptions {
   role: BundleRole;
   extension: "txt" | "zip";
   files: SourceFileIdentity[];
+  instanceId: string;
 }
 
 export interface TextBundleResult {
@@ -73,7 +74,7 @@ export function createBundleIdentity(options: CreateBundleIdentityOptions): {
   const fallbackLabel = [project ?? "oracle", subject ?? "session", options.role].join("--");
   const label = sanitizeBundleLabel(options.label?.trim() || fallbackLabel);
   const files = canonicalizeSourceFiles(options.files);
-  const manifest: BundleManifestV1 = {
+  const sourceSetBase = {
     schemaVersion: BUNDLE_SCHEMA_VERSION,
     label,
     ...(project ? { project } : {}),
@@ -81,8 +82,9 @@ export function createBundleIdentity(options: CreateBundleIdentityOptions): {
     role: options.role,
     files,
   };
-  const manifestSha256 = sha256(JSON.stringify(manifest));
-  const bundleId = manifestSha256.slice(0, 8);
+  const sourceSetSha256 = sha256(JSON.stringify(sourceSetBase));
+  const instanceId = sanitizeBundleSegment(options.instanceId, "artifact");
+  const manifest: BundleManifestV1 = { ...sourceSetBase, sourceSetSha256, instanceId };
   return {
     manifest,
     identity: {
@@ -90,9 +92,9 @@ export function createBundleIdentity(options: CreateBundleIdentityOptions): {
       ...(project ? { project } : {}),
       ...(subject ? { subject } : {}),
       role: options.role,
-      bundleId,
-      sha256: manifestSha256,
-      filename: `${label}--${bundleId}.${options.extension}`,
+      sourceSetSha256,
+      instanceId,
+      filename: `${label}--${instanceId}--${sourceSetSha256.slice(0, 8)}.${options.extension}`,
     },
   };
 }
@@ -104,12 +106,15 @@ export function buildTextBundle(
     createdAt?: string;
   },
 ): TextBundleResult {
-  const { identity, manifest } = createBundleIdentity(options);
+  const created = createBundleIdentity(options);
+  const { manifest } = created;
+  let identity = created.identity;
   const context = options.context ?? {};
   const header = [
     "ORACLE INPUT BUNDLE",
     `schema_version: ${BUNDLE_SCHEMA_VERSION}`,
-    `bundle_id: ${identity.bundleId}`,
+    `source_set_sha256: ${identity.sourceSetSha256}`,
+    `artifact_instance: ${identity.instanceId}`,
     `label: ${identity.label}`,
     `batch_id: ${context.batchId ?? "none"}`,
     `lane_id: ${context.laneId ?? "none"}`,
@@ -117,10 +122,12 @@ export function buildTextBundle(
     `created_at: ${options.createdAt ?? new Date().toISOString()}`,
     `authority_revision: ${context.authorityRevision ?? "unspecified"}`,
     `file_count: ${manifest.files.length}`,
-    `manifest_sha256: ${identity.sha256}`,
+    `manifest_sha256: ${sha256(JSON.stringify(manifest))}`,
     "",
   ].join("\n");
-  return { identity, manifest, content: `${header}${options.body}` };
+  const content = `${header}${options.body}`;
+  identity = { ...identity, artifactSha256: sha256(content) };
+  return { identity, manifest, content };
 }
 
 export function buildZipBundleManifest(

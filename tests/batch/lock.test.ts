@@ -51,4 +51,26 @@ describe("batch mutation lock", () => {
     const lock = await acquireBatchMutationLock("fixture-batch");
     await lock.release();
   });
+
+  test("allows exactly one contender to reclaim a stale lock", async () => {
+    const lockPath = path.join(getBatchPaths("fixture-batch").root, ".mutation.lock");
+    await fs.writeFile(
+      lockPath,
+      JSON.stringify({ pid: 999_999, createdAt: "2000-01-01T00:00:00.000Z", token: "dead" }),
+      "utf8",
+    );
+    const results = await Promise.allSettled([
+      acquireBatchMutationLock("fixture-batch", { staleMs: 1 }),
+      acquireBatchMutationLock("fixture-batch", { staleMs: 1 }),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const winner = results.find(
+      (
+        result,
+      ): result is PromiseFulfilledResult<Awaited<ReturnType<typeof acquireBatchMutationLock>>> =>
+        result.status === "fulfilled",
+    );
+    await winner!.value.release();
+  });
 });

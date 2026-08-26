@@ -4,7 +4,12 @@ import path from "node:path";
 import { assembleBrowserPrompt, cleanupGeneratedBrowserBundles } from "../browser/prompt.js";
 import { MODEL_CONFIGS } from "../oracle/config.js";
 import type { RunOracleOptions } from "../oracle/types.js";
-import { captureSourceFileIdentities, sha256Text } from "./manifest.js";
+import { readVerifiedBatchAnswer } from "./answers.js";
+import {
+  captureSourceFileIdentities,
+  readAndVerifyBatchSourceSnapshot,
+  sha256Text,
+} from "./manifest.js";
 import {
   ensureOwnerDir,
   getBatchPaths,
@@ -17,7 +22,6 @@ import type {
   BatchStateV1,
   SealedAttachment,
   SealedBrowserPromptArtifacts,
-  SourceFileIdentity,
 } from "./types.js";
 import { BATCH_SCHEMA_VERSION } from "./types.js";
 
@@ -53,6 +57,7 @@ export async function sealSynthesisInput(
   if (!manifest.synthesis)
     throw new Error(`Batch ${state.batchId} has no synthesis specification.`);
   const paths = getBatchPaths(state.batchId);
+  const snapshot = await readAndVerifyBatchSourceSnapshot(state.batchId);
   const synthesisDir = path.join(paths.inputs, "synthesis");
   const sourceDir = path.join(synthesisDir, "source");
   await ensureOwnerDir(sourceDir);
@@ -66,6 +71,20 @@ export async function sealSynthesisInput(
     path.join(sourceDir, "batch-manifest.json"),
     path.join(sourceDir, "source-manifest.json"),
   ];
+  const authorityDir = path.join(sourceDir, "shared-authority");
+  for (const relativePath of snapshot.sharedAuthority ?? []) {
+    const source = path.join(paths.sourceSnapshot, ...relativePath.split("/"));
+    const target = path.join(authorityDir, ...relativePath.split("/"));
+    await writeOwnerFileAtomic(target, await fs.readFile(source));
+    sourceFiles.push(target);
+  }
+  const synthesisExtrasDir = path.join(sourceDir, "synthesis-extra");
+  for (const relativePath of snapshot.synthesis ?? []) {
+    const source = path.join(paths.sourceSnapshot, ...relativePath.split("/"));
+    const target = path.join(synthesisExtrasDir, ...relativePath.split("/"));
+    await writeOwnerFileAtomic(target, await fs.readFile(source));
+    sourceFiles.push(target);
+  }
   const laneStatus = state.lanes.map((lane) => ({
     id: lane.id,
     status: lane.status,
@@ -81,15 +100,20 @@ export async function sealSynthesisInput(
   const answersDir = path.join(sourceDir, "lane-answers");
   await ensureOwnerDir(answersDir);
   for (const lane of state.lanes) {
-    if (lane.status !== "completed" || !lane.outputPath) continue;
-    const answer = await fs.readFile(lane.outputPath);
-    const answerPath = path.join(answersDir, `${lane.id}.md`);
-    await writeOwnerFileAtomic(answerPath, answer);
-    sourceFiles.push(answerPath);
-    answerSizes.push({ laneId: lane.id, sizeBytes: answer.length });
+    if (lane.status !== "completed") continue;
+    const verified = await readVerifiedBatchAnswer(state.batchId, lane);
+    const laneDir = path.join(answersDir, lane.id);
+    const answerPath = path.join(laneDir, "answer.md");
+    const receiptPath = path.join(laneDir, "answer-receipt.json");
+    const inputManifestPath = path.join(laneDir, "input-manifest.json");
+    await Promise.all([
+      writeOwnerFileAtomic(answerPath, verified.answer),
+      writeOwnerFileAtomic(receiptPath, verified.receiptBytes),
+      writeOwnerFileAtomic(inputManifestPath, verified.inputManifestBytes),
+    ]);
+    sourceFiles.push(answerPath, receiptPath, inputManifestPath);
+    answerSizes.push({ laneId: lane.id, sizeBytes: verified.answer.length });
   }
-  const sealedExtras = path.join(paths.inputs, "synthesis-extra");
-  for (const file of await listFilesRecursive(sealedExtras)) sourceFiles.push(file);
 
   const prompt = buildSynthesisPrompt(manifest, state);
   const runOptions: RunOracleOptions = {
@@ -170,6 +194,7 @@ export async function sealSynthesisInput(
       role: "synthesis" as const,
       sealedAt: new Date().toISOString(),
       promptSha256: sha256Text(artifacts.composerText),
+      sourceSnapshotManifestSha256: snapshot.snapshotManifestSha256!,
       attachments: attachmentIdentities,
       sourceFiles: sourceIdentities,
       estimatedInputTokens: artifacts.estimatedInputTokens,
@@ -183,21 +208,6 @@ export async function sealSynthesisInput(
   } finally {
     await cleanupGeneratedBrowserBundles(assembled);
   }
-}
-
-export async function sealSynthesisExtraFiles(
-  batchId: string,
-  cwd: string,
-  files: string[],
-): Promise<SourceFileIdentity[]> {
-  if (files.length === 0) return [];
-  const root = path.join(getBatchPaths(batchId).inputs, "synthesis-extra");
-  for (const file of files) {
-    const relative = path.relative(cwd, file);
-    const target = path.join(root, relative);
-    await writeOwnerFileAtomic(target, await fs.readFile(file));
-  }
-  return captureSourceFileIdentities(await listFilesRecursive(root), root);
 }
 
 export function buildSynthesisPrompt(
@@ -237,17 +247,6 @@ export function buildSynthesisPrompt(
     "Task:",
     manifest.synthesis.prompt,
   ].join("\n");
-}
-
-async function listFilesRecursive(root: string): Promise<string[]> {
-  const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
-  const files: string[] = [];
-  for (const entry of entries) {
-    const target = path.join(root, entry.name);
-    if (entry.isDirectory()) files.push(...(await listFilesRecursive(target)));
-    else if (entry.isFile()) files.push(target);
-  }
-  return files.sort();
 }
 
 export function sha256Buffer(buffer: Buffer): string {

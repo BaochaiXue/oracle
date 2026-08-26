@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { BrowserPromptArtifacts } from "../browser/prompt.js";
@@ -17,10 +17,11 @@ import {
 } from "../sessionStore.js";
 import { buildCanonicalBatchBrowserConfig } from "./browserConfig.js";
 import {
-  captureBatchSourceManifest,
-  detectBatchWorkspaceDrift,
-  loadBatchManifest,
-} from "./manifest.js";
+  BatchAnswerIntegrityError,
+  getAnswerReceiptPath,
+  readVerifiedBatchAnswer,
+} from "./answers.js";
+import { detectAdmittedSourceDrift, loadBatchManifest, snapshotBatchSources } from "./manifest.js";
 import { classifyParentStatus, deriveLaneSessionState, reconcileBatchState } from "./reconcile.js";
 import { buildBatchStatusProjection, renderBatch } from "./render.js";
 import { runBoundedScheduler, type BatchScheduleResult } from "./scheduler.js";
@@ -38,11 +39,7 @@ import {
   writeJsonAtomic,
   writeOwnerFileAtomic,
 } from "./store.js";
-import {
-  BatchSynthesisInputTooLargeError,
-  sealSynthesisExtraFiles,
-  sealSynthesisInput,
-} from "./synthesis.js";
+import { BatchSynthesisInputTooLargeError, sealSynthesisInput } from "./synthesis.js";
 import type {
   BatchAnswerReceiptV1,
   BatchFirstStageSealV1,
@@ -96,6 +93,7 @@ interface PreparedAction {
   laneId: string;
   role: "lane" | "synthesis";
   kind: "dispatch" | "reattach";
+  claimToken: string;
 }
 
 export async function validateBatchFile(manifestPath: string, options: { cwd?: string } = {}) {
@@ -127,32 +125,32 @@ export async function runBatch(
   const caps = resolveEffectiveCaps(loaded, config, browserConfig, options.maxParallel);
   const batchId = createBatchId(loaded.manifest.slug);
   log(`Batch ID: ${batchId}`);
-  const sourceManifest = await captureBatchSourceManifest(loaded, batchId);
   let state = await initializeBatchStore({
     loaded,
     batchId,
-    sourceManifest,
     effectiveMaxParallel: caps.maxParallel,
     effectiveMaxChildSessions: caps.maxChildSessions,
   });
   try {
+    const snapshot = await snapshotBatchSources(loaded, batchId);
+    state = {
+      ...state,
+      sourceManifestSha256: snapshot.manifest.snapshotManifestSha256,
+      sourceSnapshotManifestSha256: snapshot.manifest.snapshotManifestSha256,
+    };
+    await writeBatchState(state);
     const sealed = await sealFirstStageInputs(loaded, batchId, {
       assemblePrompt: deps.assemblePrompt,
     });
-    const synthesisExtraFiles = await sealSynthesisExtraFiles(
-      batchId,
-      loaded.cwd,
-      loaded.files.synthesis,
-    );
     const sealReceipt: BatchFirstStageSealV1 = {
       schemaVersion: BATCH_SCHEMA_VERSION,
       batchId,
       sealedAt: new Date().toISOString(),
+      sourceSnapshotManifestSha256: snapshot.manifest.snapshotManifestSha256!,
       lanes: sealed.map((entry) => ({
         id: entry.laneId,
         inputManifestSha256: entry.inputManifest.inputManifestSha256,
       })),
-      synthesisExtraFiles,
     };
     await writeJsonAtomic(getBatchPaths(batchId).firstStageSeal, sealReceipt);
     state = {
@@ -183,13 +181,16 @@ export async function runBatch(
     throw new Error(`Batch ${batchId} failed before dispatch: ${message}`);
   }
 
+  let initialActions: PreparedAction[] = [];
   try {
-    state = await createFirstStageSessions(
+    const claimed = await createFirstStageSessions(
       state,
       loaded,
       browserConfig,
       deps.store ?? sessionStore,
     );
+    state = claimed.state;
+    initialActions = claimed.actions;
   } catch (error) {
     state = await mutateBatchState(batchId, (current) => ({
       ...current,
@@ -201,13 +202,7 @@ export async function runBatch(
     }));
     throw error;
   }
-  const actions: PreparedAction[] = state.lanes.map((lane) => ({
-    laneId: lane.id,
-    role: "lane",
-    kind: "dispatch",
-  }));
-  await reserveActions(batchId, actions);
-  await executePreparedActions(batchId, actions, browserConfig, options, deps);
+  await executePreparedActions(batchId, initialActions, browserConfig, options, deps);
   return advanceAfterFirstStage(batchId, browserConfig, options, deps);
 }
 
@@ -238,25 +233,25 @@ export async function resumeBatch(
   }
   const browserConfig = await (deps.buildBrowserConfig ?? buildCanonicalBatchBrowserConfig)(config);
   state = await mutateBatchState(batchId, async (current) =>
-    refreshWorkspaceDrift(await reconcileBatchState(current, store)),
+    refreshAdmittedSourceDrift(await reconcileBatchState(current, store)),
   );
 
   if (options.allowPartial) {
-    const recoverable = state.lanes.filter(
-      (lane) => lane.status !== "completed" && lane.status !== "error",
+    const unaccepted = state.lanes.filter(
+      (lane) => lane.status !== "completed" && !lane.acceptedMissing,
     );
-    if (recoverable.length > 0) {
+    if (unaccepted.length > 0) {
       throw new Error(
-        `Partial synthesis cannot close over nonterminal lanes: ${recoverable.map((lane) => `${lane.id}=${lane.status}`).join(", ")}. Resume their original sessions first.`,
+        `Partial synthesis requires an explicit accept-missing decision for each unavailable lane: ${unaccepted.map((lane) => `${lane.id}=${lane.status}`).join(", ")}. Use oracle batch accept-missing first.`,
       );
     }
-    const missing = state.lanes.filter((lane) => lane.status === "error");
-    if (missing.length > 0) {
+    const missing = state.lanes.filter((lane) => lane.status !== "completed");
+    if (
+      missing.length > 0 &&
+      !state.ownerDecisions?.some((decision) => decision.type === "allow-partial")
+    ) {
       state = await mutateBatchState(batchId, (current) => ({
         ...current,
-        lanes: current.lanes.map((lane) =>
-          missing.some((entry) => entry.id === lane.id) ? { ...lane, acceptedMissing: true } : lane,
-        ),
         ownerDecisions: [
           ...(current.ownerDecisions ?? []),
           {
@@ -277,9 +272,64 @@ export async function resumeBatch(
   return advanceAfterFirstStage(batchId, browserConfig, options, deps);
 }
 
+export async function acceptMissingBatchLane(
+  batchId: string,
+  laneId: string,
+  reason: string,
+): Promise<BatchStateV1> {
+  const normalizedReason = reason.trim();
+  if (!normalizedReason) throw new Error("accept-missing requires a non-empty owner reason.");
+  return mutateBatchState(batchId, (state) => {
+    const lane = state.lanes.find((entry) => entry.id === laneId);
+    if (!lane) throw new Error(`Unknown batch lane: ${laneId}`);
+    if (lane.status === "completed") throw new Error(`Lane ${laneId} already completed.`);
+    if (lane.dispatchReservation && isProcessAlive(lane.dispatchReservation.pid)) {
+      throw new Error(`Lane ${laneId} is actively claimed; stop or reconcile it before closure.`);
+    }
+    if (lane.acceptedMissing) return state;
+    const decidedAt = new Date().toISOString();
+    return {
+      ...state,
+      status: "awaiting-owner",
+      lanes: state.lanes.map((entry) =>
+        entry.id === laneId
+          ? {
+              ...entry,
+              status: "abandoned",
+              acceptedMissing: true,
+              abandonedAt: decidedAt,
+              dispatchReservation: undefined,
+              attempts: entry.attempts.map((attempt, index) =>
+                index === entry.attempts.length - 1
+                  ? { ...attempt, phase: "abandoned" as const }
+                  : attempt,
+              ),
+              lastError: {
+                code: "batch-lane-accepted-missing",
+                message: normalizedReason,
+                retrySafe: false,
+              },
+            }
+          : entry,
+      ),
+      ownerDecisions: [
+        ...(state.ownerDecisions ?? []),
+        {
+          type: "accept-missing" as const,
+          decidedAt,
+          laneId,
+          reason: normalizedReason,
+          sessionId: lane.sessionId,
+          missingLaneIds: [laneId],
+        },
+      ],
+    };
+  });
+}
+
 export async function getBatchStatus(batchId: string, store: SessionStore = sessionStore) {
   const state = await mutateBatchState(batchId, async (current) => {
-    const reconciled = await refreshWorkspaceDrift(await reconcileBatchState(current, store));
+    const reconciled = await refreshAdmittedSourceDrift(await reconcileBatchState(current, store));
     return { ...reconciled, status: classifyParentStatus(reconciled) };
   });
   return { state, projection: buildBatchStatusProjection(state) };
@@ -306,8 +356,9 @@ async function createFirstStageSessions(
   loaded: LoadedBatchManifest,
   browserConfig: BrowserSessionConfig,
   store: SessionStore,
-): Promise<BatchStateV1> {
-  return mutateBatchState(state.batchId, async (current) => {
+): Promise<{ state: BatchStateV1; actions: PreparedAction[] }> {
+  const actions: PreparedAction[] = [];
+  const nextState = await mutateBatchState(state.batchId, async (current) => {
     let next = current;
     for (const laneSpec of loaded.manifest.lanes) {
       const lane = next.lanes.find((entry) => entry.id === laneSpec.id)!;
@@ -321,27 +372,41 @@ async function createFirstStageSessions(
         sealed,
         store,
       });
+      const claimToken = randomUUID();
       next = {
         ...next,
         lanes: next.lanes.map((entry) =>
           entry.id === lane.id
             ? {
                 ...entry,
-                status: "session-created",
+                status: "claimed",
                 sessionId: created.id,
                 outputPath: childOutputPath(next.batchId, lane.id, "lane"),
                 attempts: [
                   ...entry.attempts,
-                  { attempt: 1, sessionId: created.id, createdAt: created.createdAt },
+                  {
+                    attempt: 1,
+                    sessionId: created.id,
+                    createdAt: created.createdAt,
+                    phase: "claimed" as const,
+                    claimedAt: new Date().toISOString(),
+                  },
                 ],
+                dispatchReservation: {
+                  pid: process.pid,
+                  token: claimToken,
+                  reservedAt: new Date().toISOString(),
+                },
               }
             : entry,
         ),
       };
+      actions.push({ laneId: lane.id, role: "lane", kind: "dispatch", claimToken });
       await writeBatchState(next);
     }
     return { ...next, status: "running" };
   });
+  return { state: nextState, actions };
 }
 
 async function createChildSession(options: {
@@ -383,30 +448,6 @@ async function createChildSession(options: {
   });
 }
 
-async function reserveActions(batchId: string, actions: PreparedAction[]): Promise<void> {
-  await mutateBatchState(batchId, (state) => {
-    const ids = new Set(actions.map((action) => `${action.role}:${action.laneId}`));
-    const reserve = (lane: BatchLaneState): BatchLaneState =>
-      ids.has(`${lane.role}:${lane.id}`)
-        ? {
-            ...lane,
-            status: "running",
-            startedAt: lane.startedAt ?? new Date().toISOString(),
-            dispatchReservation: { pid: process.pid, reservedAt: new Date().toISOString() },
-          }
-        : lane;
-    return {
-      ...state,
-      status:
-        state.synthesis && actions.some((action) => action.role === "synthesis")
-          ? "synthesizing"
-          : "running",
-      lanes: state.lanes.map(reserve),
-      ...(state.synthesis ? { synthesis: reserve(state.synthesis) } : {}),
-    };
-  });
-}
-
 async function executePreparedActions(
   batchId: string,
   actions: PreparedAction[],
@@ -428,7 +469,8 @@ async function executePreparedActions(
     await runBoundedScheduler(actions, {
       maxParallel: state.effectiveMaxParallel,
       shouldStart: () => !pausePending,
-      onStart: (action) => {
+      onStart: async (action) => {
+        await markActionStarted(batchId, action);
         log(`Dispatching ${action.role} ${action.laneId}...`);
       },
       worker: async (action) => {
@@ -469,6 +511,9 @@ async function buildChildExecutionContext(
       ? state.lanes.find((entry) => entry.id === action.laneId)
       : state.synthesis;
   if (!lane?.sessionId) throw new Error(`Missing child session for ${action.laneId}.`);
+  if (lane.dispatchReservation?.token !== action.claimToken) {
+    throw new Error(`Lost child execution claim for ${action.role} ${action.laneId}.`);
+  }
   const sessionMeta = await store.readSession(lane.sessionId);
   if (!sessionMeta) throw new Error(`Missing child session metadata: ${lane.sessionId}`);
   const sealed = await loadSealedPromptArtifacts(batchId, action.laneId, action.role);
@@ -601,20 +646,11 @@ async function persistChildOutcome(
         sha256: createHash("sha256").update(answer).digest("hex"),
         bytes: answer.length,
       };
-      const receipt: BatchAnswerReceiptV1 = {
-        schemaVersion: BATCH_SCHEMA_VERSION,
-        batchId,
-        laneId: action.laneId,
-        role: action.role,
-        sessionId: metadata.id,
+      await writeAnswerReceipt(batchId, lane, metadata, {
         status: "completed",
-        capturedAt: new Date().toISOString(),
-        inputManifestSha256: lane.inputManifestSha256!,
         answerSha256: answerIdentity.sha256,
         answerBytes: answerIdentity.bytes,
-        conversationId: metadata.browser?.runtime?.conversationId,
-      };
-      await writeJsonAtomic(answerReceiptPath(batchId, action.laneId, action.role), receipt);
+      });
     } catch (error) {
       derived = {
         status: "error",
@@ -628,21 +664,27 @@ async function persistChildOutcome(
     }
   }
   await mutateBatchState(batchId, (current) => {
-    const update = (entry: BatchLaneState): BatchLaneState =>
-      entry.id === action.laneId && entry.role === action.role
-        ? {
-            ...entry,
-            status: derived.status,
-            dispatchReservation: undefined,
-            ...(derived.lastError ? { lastError: derived.lastError } : {}),
-            ...(derived.status === "completed"
-              ? {
-                  completedAt: metadata?.completedAt ?? new Date().toISOString(),
-                  outputSha256: answerIdentity?.sha256,
-                }
-              : {}),
-          }
-        : entry;
+    const update = (entry: BatchLaneState): BatchLaneState => {
+      if (entry.id !== action.laneId || entry.role !== action.role) return entry;
+      if (entry.dispatchReservation?.token !== action.claimToken) {
+        throw new Error(`Lost settled action claim for ${action.role} ${action.laneId}.`);
+      }
+      return {
+        ...entry,
+        status: derived.status,
+        dispatchReservation: undefined,
+        ...(derived.lastError ? { lastError: derived.lastError } : {}),
+        ...(derived.status === "completed"
+          ? {
+              completedAt: metadata?.completedAt ?? new Date().toISOString(),
+              outputSha256: answerIdentity?.sha256,
+              attempts: completeCurrentAttempt(entry.attempts, metadata?.completedAt),
+            }
+          : {
+              attempts: failCurrentAttempt(entry.attempts),
+            }),
+      };
+    };
     return {
       ...current,
       lanes: current.lanes.map(update),
@@ -661,9 +703,14 @@ async function prepareResumeActions(
   await mutateBatchState(initial.batchId, async (state) => {
     let next = await reconcileBatchState(state, store);
     for (const lane of next.lanes) {
-      if (lane.acceptedMissing || lane.status === "completed" || lane.status === "error") continue;
+      if (
+        lane.acceptedMissing ||
+        ["completed", "error", "indeterminate", "abandoned"].includes(lane.status)
+      )
+        continue;
       if (lane.dispatchReservation && isProcessAlive(lane.dispatchReservation.pid)) continue;
       if (!lane.sessionId) {
+        const claimToken = randomUUID();
         const sealed = await loadSealedPromptArtifacts(state.batchId, lane.id);
         const created = await createChildSession({
           state: next,
@@ -680,20 +727,33 @@ async function prepareResumeActions(
             entry.id === lane.id
               ? {
                   ...entry,
-                  status: "running",
+                  status: "claimed",
                   sessionId: created.id,
                   outputPath: childOutputPath(next.batchId, lane.id, "lane"),
-                  attempts: [{ attempt: 1, sessionId: created.id, createdAt: created.createdAt }],
-                  dispatchReservation: { pid: process.pid, reservedAt: new Date().toISOString() },
+                  attempts: [
+                    {
+                      attempt: 1,
+                      sessionId: created.id,
+                      createdAt: created.createdAt,
+                      phase: "claimed" as const,
+                      claimedAt: new Date().toISOString(),
+                    },
+                  ],
+                  dispatchReservation: {
+                    pid: process.pid,
+                    token: claimToken,
+                    reservedAt: new Date().toISOString(),
+                  },
                 }
               : entry,
           ),
         };
-        actions.push({ laneId: lane.id, role: "lane", kind: "dispatch" });
+        actions.push({ laneId: lane.id, role: "lane", kind: "dispatch", claimToken });
         continue;
       }
       const metadata = lane.sessionId ? await store.readSession(lane.sessionId) : null;
       if (lane.lastError?.retrySafe && metadata?.status === "error") {
+        const claimToken = randomUUID();
         const sealed = await loadSealedPromptArtifacts(state.batchId, lane.id);
         const attempt = (lane.attempts.at(-1)?.attempt ?? 0) + 1;
         const created = await createChildSession({
@@ -711,35 +771,50 @@ async function prepareResumeActions(
             entry.id === lane.id
               ? {
                   ...entry,
-                  status: "running",
+                  status: "claimed",
                   sessionId: created.id,
                   lastError: undefined,
                   attempts: [
                     ...entry.attempts,
-                    { attempt, sessionId: created.id, createdAt: created.createdAt },
+                    {
+                      attempt,
+                      sessionId: created.id,
+                      createdAt: created.createdAt,
+                      phase: "claimed" as const,
+                      claimedAt: new Date().toISOString(),
+                    },
                   ],
-                  dispatchReservation: { pid: process.pid, reservedAt: new Date().toISOString() },
+                  dispatchReservation: {
+                    pid: process.pid,
+                    token: claimToken,
+                    reservedAt: new Date().toISOString(),
+                  },
                 }
               : entry,
           ),
         };
-        actions.push({ laneId: lane.id, role: "lane", kind: "dispatch" });
+        actions.push({ laneId: lane.id, role: "lane", kind: "dispatch", claimToken });
         continue;
       }
       const kind = metadata?.browser?.runtime ? "reattach" : "dispatch";
+      const claimToken = randomUUID();
       next = {
         ...next,
         lanes: next.lanes.map((entry) =>
           entry.id === lane.id
             ? {
                 ...entry,
-                status: "running",
-                dispatchReservation: { pid: process.pid, reservedAt: new Date().toISOString() },
+                status: "claimed",
+                dispatchReservation: {
+                  pid: process.pid,
+                  token: claimToken,
+                  reservedAt: new Date().toISOString(),
+                },
               }
             : entry,
         ),
       };
-      actions.push({ laneId: lane.id, role: "lane", kind });
+      actions.push({ laneId: lane.id, role: "lane", kind, claimToken });
     }
     const synthesis = next.synthesis;
     if (
@@ -751,6 +826,7 @@ async function prepareResumeActions(
     ) {
       const metadata = synthesis.sessionId ? await store.readSession(synthesis.sessionId) : null;
       if (synthesis.lastError?.retrySafe && metadata?.status === "error") {
+        const claimToken = randomUUID();
         const sealed = await loadSealedPromptArtifacts(state.batchId, synthesis.id, "synthesis");
         const attempt = (synthesis.attempts.at(-1)?.attempt ?? 0) + 1;
         const created = await createChildSession({
@@ -767,31 +843,52 @@ async function prepareResumeActions(
           status: "synthesizing",
           synthesis: {
             ...synthesis,
-            status: "running",
+            status: "claimed",
             sessionId: created.id,
             lastError: undefined,
             attempts: [
               ...synthesis.attempts,
-              { attempt, sessionId: created.id, createdAt: created.createdAt },
+              {
+                attempt,
+                sessionId: created.id,
+                createdAt: created.createdAt,
+                phase: "claimed" as const,
+                claimedAt: new Date().toISOString(),
+              },
             ],
-            dispatchReservation: { pid: process.pid, reservedAt: new Date().toISOString() },
+            dispatchReservation: {
+              pid: process.pid,
+              token: claimToken,
+              reservedAt: new Date().toISOString(),
+            },
           },
         };
-        actions.push({ laneId: synthesis.id, role: "synthesis", kind: "dispatch" });
+        actions.push({
+          laneId: synthesis.id,
+          role: "synthesis",
+          kind: "dispatch",
+          claimToken,
+        });
       } else if (metadata) {
+        const claimToken = randomUUID();
         next = {
           ...next,
           status: "synthesizing",
           synthesis: {
             ...synthesis,
-            status: "running",
-            dispatchReservation: { pid: process.pid, reservedAt: new Date().toISOString() },
+            status: "claimed",
+            dispatchReservation: {
+              pid: process.pid,
+              token: claimToken,
+              reservedAt: new Date().toISOString(),
+            },
           },
         };
         actions.push({
           laneId: synthesis.id,
           role: "synthesis",
           kind: metadata.browser?.runtime ? "reattach" : "dispatch",
+          claimToken,
         });
       }
     }
@@ -811,8 +908,12 @@ async function advanceAfterFirstStage(
   state = await recoverCompletedEvidence(state, store);
   const nonaccepted = state.lanes.filter((lane) => !lane.acceptedMissing);
   const allCompleted = nonaccepted.every((lane) => lane.status === "completed");
-  const terminalErrors = nonaccepted.filter((lane) => lane.status === "error");
-  const recoverable = nonaccepted.filter((lane) => !["completed", "error"].includes(lane.status));
+  const terminalErrors = nonaccepted.filter((lane) =>
+    ["error", "indeterminate"].includes(lane.status),
+  );
+  const recoverable = nonaccepted.filter(
+    (lane) => !["completed", "error", "indeterminate"].includes(lane.status),
+  );
   if (recoverable.length > 0) {
     state = await mutateBatchState(batchId, (current) => ({
       ...current,
@@ -853,7 +954,11 @@ async function advanceAfterFirstStage(
     }));
     return finalizeReport(state);
   }
-  if (state.synthesis.status === "error" || state.synthesis.status === "recoverable") {
+  if (
+    state.synthesis.status === "error" ||
+    state.synthesis.status === "recoverable" ||
+    state.synthesis.status === "indeterminate"
+  ) {
     state = await mutateBatchState(batchId, (current) => ({
       ...current,
       status: current.synthesis?.status === "recoverable" ? "awaiting-recovery" : "awaiting-owner",
@@ -861,6 +966,7 @@ async function advanceAfterFirstStage(
     return finalizeReport(state);
   }
   let reservedSynthesis = false;
+  const synthesisClaimToken = randomUUID();
   state = await mutateBatchState(batchId, (current) => {
     const synthesis = current.synthesis;
     if (
@@ -880,7 +986,11 @@ async function advanceAfterFirstStage(
       synthesis: {
         ...synthesis,
         status: "sealed",
-        dispatchReservation: { pid: process.pid, reservedAt: new Date().toISOString() },
+        dispatchReservation: {
+          pid: process.pid,
+          token: synthesisClaimToken,
+          reservedAt: new Date().toISOString(),
+        },
       },
     };
   });
@@ -889,6 +999,31 @@ async function advanceAfterFirstStage(
   }
   try {
     const sealed = await sealSynthesisInput(state, { assemblePrompt: deps.assemblePrompt });
+    state = await mutateBatchState(batchId, (current) => {
+      if (current.synthesis?.dispatchReservation?.token !== synthesisClaimToken) {
+        throw new Error(`Lost synthesis seal claim for batch ${batchId}.`);
+      }
+      return {
+        ...current,
+        status: "synthesizing",
+        synthesis: {
+          ...current.synthesis,
+          status: "sealed",
+          inputManifestSha256: sealed.inputManifest.inputManifestSha256,
+          inputManifestPath: path.join(
+            getBatchPaths(batchId).inputs,
+            "synthesis",
+            "input-manifest.json",
+          ),
+          outputPath: childOutputPath(batchId, current.synthesis.id, "synthesis"),
+          dispatchReservation: {
+            pid: process.pid,
+            token: synthesisClaimToken,
+            reservedAt: new Date().toISOString(),
+          },
+        },
+      };
+    });
     const created = await createChildSession({
       state,
       lane: state.synthesis!,
@@ -897,27 +1032,44 @@ async function advanceAfterFirstStage(
       sealed,
       store,
     });
-    state = await mutateBatchState(batchId, (current) => ({
-      ...current,
-      status: "synthesizing",
-      synthesis: {
-        ...current.synthesis!,
-        status: "running",
-        sessionId: created.id,
-        inputManifestSha256: sealed.inputManifest.inputManifestSha256,
-        inputManifestPath: path.join(
-          getBatchPaths(batchId).inputs,
-          "synthesis",
-          "input-manifest.json",
-        ),
-        outputPath: childOutputPath(batchId, current.synthesis!.id, "synthesis"),
-        attempts: [{ attempt: 1, sessionId: created.id, createdAt: created.createdAt }],
-        dispatchReservation: { pid: process.pid, reservedAt: new Date().toISOString() },
-      },
-    }));
+    state = await mutateBatchState(batchId, (current) => {
+      if (current.synthesis?.dispatchReservation?.token !== synthesisClaimToken) {
+        throw new Error(`Lost synthesis dispatch claim for batch ${batchId}.`);
+      }
+      return {
+        ...current,
+        status: "synthesizing",
+        synthesis: {
+          ...current.synthesis,
+          status: "claimed",
+          sessionId: created.id,
+          attempts: [
+            {
+              attempt: 1,
+              sessionId: created.id,
+              createdAt: created.createdAt,
+              phase: "claimed" as const,
+              claimedAt: new Date().toISOString(),
+            },
+          ],
+          dispatchReservation: {
+            pid: process.pid,
+            token: synthesisClaimToken,
+            reservedAt: new Date().toISOString(),
+          },
+        },
+      };
+    });
     await executePreparedActions(
       batchId,
-      [{ laneId: state.synthesis!.id, role: "synthesis", kind: "dispatch" }],
+      [
+        {
+          laneId: state.synthesis!.id,
+          role: "synthesis",
+          kind: "dispatch",
+          claimToken: synthesisClaimToken,
+        },
+      ],
       browserConfig,
       options,
       deps,
@@ -976,20 +1128,8 @@ async function recoverFirstStageSeal(state: BatchStateV1): Promise<BatchStateV1>
         throw new Error(`sealed input identity mismatch for lane ${lane.id}`);
       }
     }
-    const synthesisExtraRoot = path.join(paths.inputs, "synthesis-extra");
-    for (const identity of receipt.synthesisExtraFiles) {
-      const target = path.resolve(synthesisExtraRoot, identity.relativePath);
-      const relative = path.relative(synthesisExtraRoot, target);
-      if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
-        throw new Error(`unsafe sealed synthesis file identity: ${identity.relativePath}`);
-      }
-      const content = await fs.readFile(target);
-      if (
-        content.length !== identity.sizeBytes ||
-        createHash("sha256").update(content).digest("hex") !== identity.sha256
-      ) {
-        throw new Error(`sealed synthesis file digest mismatch: ${identity.relativePath}`);
-      }
+    if (receipt.sourceSnapshotManifestSha256 !== state.sourceSnapshotManifestSha256) {
+      throw new Error("first-stage source snapshot identity mismatch");
     }
     return mutateBatchState(state.batchId, (current) => ({
       ...current,
@@ -1013,12 +1153,12 @@ async function recoverFirstStageSeal(state: BatchStateV1): Promise<BatchStateV1>
   }
 }
 
-async function refreshWorkspaceDrift(state: BatchStateV1): Promise<BatchStateV1> {
-  const workspaceDrift = await detectBatchWorkspaceDrift({
+async function refreshAdmittedSourceDrift(state: BatchStateV1): Promise<BatchStateV1> {
+  const admittedSourceDrift = await detectAdmittedSourceDrift({
     cwd: state.cwd,
     sourceManifestPath: getBatchPaths(state.batchId).sourceManifestIdentity,
   });
-  return { ...state, workspaceDrift };
+  return { ...state, admittedSourceDrift, workspaceDrift: undefined };
 }
 
 async function recoverCompletedEvidence(
@@ -1032,7 +1172,9 @@ async function recoverCompletedEvidence(
     if (!metadata) continue;
     if (lane.status === "completed" && !lane.outputSha256) {
       try {
-        const answer = await ensureAnswerOutput(metadata, lane.outputPath);
+        const answer = await ensureAnswerOutput(metadata, lane.outputPath, {
+          requireTranscriptMatch: true,
+        });
         const outputSha256 = createHash("sha256").update(answer).digest("hex");
         await writeAnswerReceipt(initial.batchId, lane, metadata, {
           status: "completed",
@@ -1051,6 +1193,24 @@ async function recoverCompletedEvidence(
             status: "error",
             lastError: {
               code: "batch-answer-output-missing",
+              message: error instanceof Error ? error.message : String(error),
+              retrySafe: false,
+            },
+          }),
+        );
+      }
+    } else if (lane.status === "completed" && lane.outputSha256) {
+      try {
+        await readVerifiedBatchAnswer(initial.batchId, lane);
+      } catch (error) {
+        state = await mutateBatchState(initial.batchId, (current) =>
+          updateLane(current, lane, {
+            status: "error",
+            lastError: {
+              code:
+                error instanceof BatchAnswerIntegrityError
+                  ? error.code
+                  : "batch-answer-integrity-mismatch",
               message: error instanceof Error ? error.message : String(error),
               retrySafe: false,
             },
@@ -1101,7 +1261,28 @@ async function writeAnswerReceipt(
     conversationId: metadata.browser?.runtime?.conversationId,
     error: outcome.error,
   };
-  await writeJsonAtomic(answerReceiptPath(batchId, lane.id, lane.role), receipt);
+  const receiptPath = getAnswerReceiptPath(batchId, lane.id, lane.role);
+  const existing = await fs.readFile(receiptPath, "utf8").catch(() => null);
+  if (existing) {
+    const parsed = JSON.parse(existing) as BatchAnswerReceiptV1;
+    if (
+      parsed.batchId !== receipt.batchId ||
+      parsed.laneId !== receipt.laneId ||
+      parsed.role !== receipt.role ||
+      parsed.sessionId !== receipt.sessionId ||
+      parsed.inputManifestSha256 !== receipt.inputManifestSha256 ||
+      parsed.status !== receipt.status ||
+      parsed.answerSha256 !== receipt.answerSha256 ||
+      parsed.answerBytes !== receipt.answerBytes
+    ) {
+      throw new BatchAnswerIntegrityError(
+        lane.id,
+        `Existing answer receipt identity differs for lane ${lane.id}; refusing to overwrite it.`,
+      );
+    }
+    return;
+  }
+  await writeJsonAtomic(receiptPath, receipt);
 }
 
 function buildChildRunOptions(
@@ -1129,12 +1310,18 @@ function buildChildRunOptions(
   };
 }
 
-async function ensureAnswerOutput(metadata: SessionMetadata, outputPath: string): Promise<Buffer> {
+async function ensureAnswerOutput(
+  metadata: SessionMetadata,
+  outputPath: string,
+  options: { requireTranscriptMatch?: boolean } = {},
+): Promise<Buffer> {
   const existing = await fs.readFile(outputPath).catch(() => null);
-  if (existing && existing.length > 0) return existing;
   const transcript = metadata.artifacts?.find((artifact) => artifact.kind === "transcript");
-  if (!transcript)
+  if (existing && existing.length > 0 && !options.requireTranscriptMatch) return existing;
+  if (!transcript) {
+    if (existing && existing.length > 0 && !options.requireTranscriptMatch) return existing;
     throw new Error(`Session ${metadata.id} completed without an answer output or transcript.`);
+  }
   const raw = await fs.readFile(transcript.path, "utf8");
   const marker = "\n## Answer\n\n";
   const start = raw.indexOf(marker);
@@ -1144,15 +1331,35 @@ async function ensureAnswerOutput(metadata: SessionMetadata, outputPath: string)
     .split("\n## Artifacts\n", 1)[0]
     ?.trim();
   if (!answer) throw new Error(`Session ${metadata.id} transcript answer is empty.`);
-  await writeOwnerFileAtomic(outputPath, `${answer}\n`);
-  return Buffer.from(`${answer}\n`, "utf8");
+  const transcriptAnswer = Buffer.from(`${answer}\n`, "utf8");
+  if (existing && existing.length > 0) {
+    if (!existing.equals(transcriptAnswer)) {
+      throw new Error(
+        `Session ${metadata.id} output differs from its transcript; refusing to establish a receipt.`,
+      );
+    }
+    return existing;
+  }
+  await writeOwnerFileAtomic(outputPath, transcriptAnswer);
+  return transcriptAnswer;
 }
 
 async function clearReservation(batchId: string, action: PreparedAction): Promise<void> {
   await mutateBatchState(batchId, (state) => {
     const clear = (lane: BatchLaneState): BatchLaneState =>
-      lane.id === action.laneId && lane.role === action.role
-        ? { ...lane, status: "session-created", dispatchReservation: undefined }
+      lane.id === action.laneId &&
+      lane.role === action.role &&
+      lane.dispatchReservation?.token === action.claimToken
+        ? {
+            ...lane,
+            status: "session-created",
+            dispatchReservation: undefined,
+            attempts: lane.attempts.map((attempt, index) =>
+              index === lane.attempts.length - 1 && attempt.phase === "claimed"
+                ? { ...attempt, phase: "created" as const, claimedAt: undefined }
+                : attempt,
+            ),
+          }
         : lane;
     return {
       ...state,
@@ -1160,6 +1367,62 @@ async function clearReservation(batchId: string, action: PreparedAction): Promis
       ...(state.synthesis ? { synthesis: clear(state.synthesis) } : {}),
     };
   });
+}
+
+async function markActionStarted(batchId: string, action: PreparedAction): Promise<void> {
+  await mutateBatchState(batchId, (state) => {
+    const startedAt = new Date().toISOString();
+    const mark = (lane: BatchLaneState): BatchLaneState => {
+      if (lane.id !== action.laneId || lane.role !== action.role) return lane;
+      if (
+        lane.status !== "claimed" ||
+        !lane.dispatchReservation ||
+        lane.dispatchReservation.pid !== process.pid ||
+        lane.dispatchReservation.token !== action.claimToken
+      ) {
+        throw new Error(`Lost dispatch claim for ${action.role} ${action.laneId}.`);
+      }
+      return {
+        ...lane,
+        status: "running",
+        startedAt: lane.startedAt ?? startedAt,
+        attempts: lane.attempts.map((attempt, index) =>
+          index === lane.attempts.length - 1
+            ? { ...attempt, phase: "started" as const, dispatchStartedAt: startedAt }
+            : attempt,
+        ),
+      };
+    };
+    return {
+      ...state,
+      status: action.role === "synthesis" ? "synthesizing" : "running",
+      lanes: state.lanes.map(mark),
+      ...(state.synthesis ? { synthesis: mark(state.synthesis) } : {}),
+    };
+  });
+}
+
+function completeCurrentAttempt(
+  attempts: BatchLaneState["attempts"],
+  completedAt = new Date().toISOString(),
+): BatchLaneState["attempts"] {
+  return attempts.map((attempt, index) =>
+    index === attempts.length - 1
+      ? {
+          ...attempt,
+          phase: "completed" as const,
+          completedAt: completedAt ?? new Date().toISOString(),
+        }
+      : attempt,
+  );
+}
+
+function failCurrentAttempt(attempts: BatchLaneState["attempts"]): BatchLaneState["attempts"] {
+  return attempts.map((attempt, index) =>
+    index === attempts.length - 1 && attempt.phase === "started"
+      ? { ...attempt, phase: "failed" as const }
+      : attempt,
+  );
 }
 
 function resolveEffectiveCaps(
@@ -1205,12 +1468,6 @@ function childOutputPath(batchId: string, laneId: string, role: "lane" | "synthe
   return role === "lane"
     ? path.join(getBatchPaths(batchId).outputs, "lanes", laneId, "answer.md")
     : path.join(getBatchPaths(batchId).outputs, "synthesis", "answer.md");
-}
-
-function answerReceiptPath(batchId: string, laneId: string, role: "lane" | "synthesis"): string {
-  return role === "lane"
-    ? path.join(getBatchPaths(batchId).outputs, "lanes", laneId, "answer-receipt.json")
-    : path.join(getBatchPaths(batchId).outputs, "synthesis", "answer-receipt.json");
 }
 
 function isProcessAlive(pid: number): boolean {

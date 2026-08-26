@@ -35,6 +35,7 @@ describe("batch reconciliation", () => {
       effectiveMaxParallel: 2,
       effectiveMaxChildSessions: 5,
     });
+    state.lanes[0]!.inputManifestSha256 = "a".repeat(64);
     const child = await sessionStore.createSession(
       { prompt: "one", model: "gpt-5-pro", mode: "browser" },
       cwd,
@@ -128,6 +129,109 @@ describe("batch reconciliation", () => {
       status: "recoverable",
       clearReservation: true,
     });
+  });
+
+  test("fails closed when a started child has no runtime and no safe pre-submit receipt", () => {
+    const metadata: SessionMetadata = {
+      id: "lost-child",
+      createdAt: new Date().toISOString(),
+      status: "running",
+      mode: "browser",
+      models: [],
+      notifications: { enabled: false, sound: false },
+      options: { prompt: "test", model: "gpt-5-pro" },
+    };
+    const derived = deriveLaneSessionState(metadata, {
+      id: "one",
+      role: "lane",
+      status: "running",
+      required: true,
+      attempts: [
+        {
+          attempt: 1,
+          sessionId: metadata.id,
+          createdAt: metadata.createdAt,
+          phase: "started",
+          dispatchStartedAt: metadata.createdAt,
+        },
+      ],
+    });
+    expect(derived).toEqual(
+      expect.objectContaining({
+        status: "indeterminate",
+        lastError: expect.objectContaining({
+          code: "batch-dispatch-outcome-indeterminate",
+          retrySafe: false,
+        }),
+      }),
+    );
+  });
+
+  test("does not select a latest orphan when the sealed digest is mismatched", async () => {
+    const loaded = fixtureLoaded(cwd);
+    const state = await initializeBatchStore({
+      loaded,
+      batchId: "fixture-batch",
+      sourceManifest: fixtureSource(cwd),
+      effectiveMaxParallel: 2,
+      effectiveMaxChildSessions: 5,
+    });
+    state.lanes[0]!.inputManifestSha256 = "a".repeat(64);
+    const child = await sessionStore.createSession(
+      { prompt: "one", model: "gpt-5-pro", mode: "browser" },
+      cwd,
+    );
+    await sessionStore.updateSession(child.id, {
+      batch: {
+        batchId: state.batchId,
+        laneId: "one",
+        role: "lane",
+        attempt: 1,
+        inputManifestSha256: "b".repeat(64),
+      },
+    });
+    const reconciled = await reconcileBatchState(state, sessionStore);
+    expect(reconciled.lanes[0]).toEqual(
+      expect.objectContaining({
+        status: "indeterminate",
+        lastError: expect.objectContaining({ code: "batch-orphan-child-ambiguity" }),
+      }),
+    );
+  });
+
+  test("rejects two orphan children that claim the same attempt", async () => {
+    const loaded = fixtureLoaded(cwd);
+    const state = await initializeBatchStore({
+      loaded,
+      batchId: "fixture-batch",
+      sourceManifest: fixtureSource(cwd),
+      effectiveMaxParallel: 2,
+      effectiveMaxChildSessions: 5,
+    });
+    const digest = "a".repeat(64);
+    state.lanes[0]!.inputManifestSha256 = digest;
+    for (const prompt of ["orphan one", "orphan duplicate"]) {
+      const child = await sessionStore.createSession(
+        { prompt, model: "gpt-5-pro", mode: "browser" },
+        cwd,
+      );
+      await sessionStore.updateSession(child.id, {
+        batch: {
+          batchId: state.batchId,
+          laneId: "one",
+          role: "lane",
+          attempt: 1,
+          inputManifestSha256: digest,
+        },
+      });
+    }
+    const reconciled = await reconcileBatchState(state, sessionStore);
+    expect(reconciled.lanes[0]).toEqual(
+      expect.objectContaining({
+        status: "indeterminate",
+        lastError: expect.objectContaining({ code: "batch-orphan-child-ambiguity" }),
+      }),
+    );
   });
 });
 

@@ -9,37 +9,45 @@ export interface BatchMutationLock {
   release(): Promise<void>;
 }
 
+interface LockPayload {
+  token: string;
+  pid: number;
+  createdAt: string;
+}
+
 export async function acquireBatchMutationLock(
   batchId: string,
   options: { staleMs?: number } = {},
 ): Promise<BatchMutationLock> {
-  const lockPath = path.join(getOracleHomeDir(), "batches", batchId, ".mutation.lock");
+  const batchRoot = path.join(getOracleHomeDir(), "batches", batchId);
+  const lockPath = path.join(batchRoot, ".mutation.lock");
   const token = randomUUID();
-  const payload = JSON.stringify({ token, pid: process.pid, createdAt: new Date().toISOString() });
-  try {
-    await fs.writeFile(lockPath, payload, { flag: "wx", mode: 0o600 });
-  } catch (error) {
-    if ((error as { code?: string }).code !== "EEXIST") throw error;
-    const stale = await isStaleLock(lockPath, options.staleMs ?? DEFAULT_STALE_MS);
-    if (!stale) {
-      throw new Error(`Batch ${batchId} is already being mutated by another process.`);
-    }
-    await fs.unlink(lockPath);
-    await fs.writeFile(lockPath, payload, { flag: "wx", mode: 0o600 });
-  }
-  return {
-    release: async () => {
-      const current = await fs.readFile(lockPath, "utf8").catch(() => "");
-      if (current) {
-        try {
-          if ((JSON.parse(current) as { token?: string }).token !== token) return;
-        } catch {
-          return;
-        }
+  const payload: LockPayload = { token, pid: process.pid, createdAt: new Date().toISOString() };
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      await fs.mkdir(lockPath, { mode: 0o700 });
+      await fs.writeFile(path.join(lockPath, "owner.json"), JSON.stringify(payload), {
+        flag: "wx",
+        mode: 0o600,
+      });
+      return ownedLock(lockPath, token);
+    } catch (error) {
+      if ((error as { code?: string }).code !== "EEXIST") throw error;
+      const stale = await isStaleLock(lockPath, options.staleMs ?? DEFAULT_STALE_MS);
+      if (!stale) {
+        throw new Error(`Batch ${batchId} is already being mutated by another process.`);
       }
-      await fs.unlink(lockPath).catch(() => undefined);
-    },
-  };
+      const quarantine = path.join(batchRoot, `.mutation.lock.stale-${randomUUID()}`);
+      try {
+        await fs.rename(lockPath, quarantine);
+      } catch (renameError) {
+        if ((renameError as { code?: string }).code === "ENOENT") continue;
+        throw renameError;
+      }
+      await fs.rm(quarantine, { recursive: true, force: true });
+    }
+  }
+  throw new Error(`Batch ${batchId} lock ownership changed during stale-lock recovery.`);
 }
 
 export async function withBatchMutationLock<T>(
@@ -54,17 +62,38 @@ export async function withBatchMutationLock<T>(
   }
 }
 
+function ownedLock(lockPath: string, token: string): BatchMutationLock {
+  return {
+    release: async () => {
+      const current = await readLockPayload(lockPath);
+      if (current?.token !== token) return;
+      const quarantine = `${lockPath}.release-${token}`;
+      try {
+        await fs.rename(lockPath, quarantine);
+      } catch (error) {
+        if ((error as { code?: string }).code === "ENOENT") return;
+        throw error;
+      }
+      await fs.rm(quarantine, { recursive: true, force: true });
+    },
+  };
+}
+
 async function isStaleLock(lockPath: string, staleMs: number): Promise<boolean> {
+  const parsed = await readLockPayload(lockPath);
+  if (!parsed) return true;
+  if (Number.isFinite(parsed.pid)) return !isProcessAlive(parsed.pid);
+  const age = Date.now() - Date.parse(parsed.createdAt ?? "");
+  return !Number.isFinite(age) || age >= staleMs;
+}
+
+async function readLockPayload(lockPath: string): Promise<Partial<LockPayload> | null> {
   try {
-    const raw = await fs.readFile(lockPath, "utf8");
-    const parsed = JSON.parse(raw) as { pid?: number; createdAt?: string };
-    const age = parsed.createdAt
-      ? Date.now() - Date.parse(parsed.createdAt)
-      : Number.POSITIVE_INFINITY;
-    if (Number.isFinite(parsed.pid)) return !isProcessAlive(parsed.pid);
-    return age >= staleMs;
+    const stats = await fs.stat(lockPath);
+    const ownerPath = stats.isDirectory() ? path.join(lockPath, "owner.json") : lockPath;
+    return JSON.parse(await fs.readFile(ownerPath, "utf8")) as Partial<LockPayload>;
   } catch {
-    return true;
+    return null;
   }
 }
 

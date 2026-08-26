@@ -7,7 +7,11 @@ import {
   cleanupGeneratedBrowserBundles,
   type BrowserPromptArtifacts,
 } from "../browser/prompt.js";
-import { captureSourceFileIdentities, sha256Text } from "./manifest.js";
+import {
+  captureSourceFileIdentities,
+  readAndVerifyBatchSourceSnapshot,
+  sha256Text,
+} from "./manifest.js";
 import { ensureOwnerDir, getBatchPaths, writeJsonAtomic, writeOwnerFileAtomic } from "./store.js";
 import type {
   BatchInputManifestV1,
@@ -38,11 +42,15 @@ export async function sealFirstStageInputs(
   deps: SealBatchDeps = {},
 ): Promise<SealedLaneInput[]> {
   const assemble = deps.assemblePrompt ?? assembleBrowserPrompt;
+  const paths = getBatchPaths(batchId);
+  const snapshotManifest = await readAndVerifyBatchSourceSnapshot(batchId);
+  const snapshotPath = (relativePath: string) =>
+    path.join(paths.sourceSnapshot, ...relativePath.split("/"));
   const attempts = await Promise.allSettled(
     loaded.manifest.lanes.map(async (lane) => {
       const sourceFiles = uniqueFiles([
-        ...loaded.files.sharedAuthority,
-        ...(loaded.files.lanes[lane.id] ?? []),
+        ...(snapshotManifest.sharedAuthority ?? []).map(snapshotPath),
+        ...(snapshotManifest.lanes?.[lane.id] ?? []).map(snapshotPath),
       ]);
       const runOptions = buildLaneRunOptions(loaded, lane, sourceFiles, batchId);
       const artifacts = await assemble(runOptions, { cwd: loaded.cwd });
@@ -87,7 +95,6 @@ export async function sealFirstStageInputs(
       artifacts: BrowserPromptArtifacts;
     }>
   >;
-  const paths = getBatchPaths(batchId);
   const stagingRoot = path.join(paths.inputs, `.lanes-staging-${randomUUID()}`);
   await ensureOwnerDir(stagingRoot);
   try {
@@ -96,6 +103,8 @@ export async function sealFirstStageInputs(
         persistSealedLane({
           batchId,
           cwd: loaded.cwd,
+          sourceSnapshotRoot: paths.sourceSnapshot,
+          sourceSnapshotManifestSha256: snapshotManifest.snapshotManifestSha256!,
           stagingRoot,
           lane: value.lane,
           sourceFiles: value.sourceFiles,
@@ -135,7 +144,11 @@ export async function loadSealedPromptArtifacts(
   const inputManifest = JSON.parse(
     await fs.readFile(path.join(base, "input-manifest.json"), "utf8"),
   ) as BatchInputManifestV1;
-  await verifySealedPromptArtifacts(base, artifacts, inputManifest);
+  await verifySealedPromptArtifacts(base, artifacts, inputManifest, {
+    batchId,
+    laneId,
+    role,
+  });
   return { artifacts, inputManifest };
 }
 
@@ -143,9 +156,34 @@ export async function verifySealedPromptArtifacts(
   baseDir: string,
   artifacts: SealedBrowserPromptArtifacts,
   inputManifest: BatchInputManifestV1,
+  expectedIdentity?: { batchId: string; laneId: string; role: "lane" | "synthesis" },
 ): Promise<void> {
   if (inputManifest.schemaVersion !== BATCH_SCHEMA_VERSION) {
     throw new Error(`Invalid sealed input schema for lane ${inputManifest.laneId}.`);
+  }
+  if (
+    expectedIdentity &&
+    (inputManifest.batchId !== expectedIdentity.batchId ||
+      inputManifest.laneId !== expectedIdentity.laneId ||
+      inputManifest.role !== expectedIdentity.role)
+  ) {
+    throw new Error(
+      `Sealed input identity mismatch: expected ${expectedIdentity.batchId}/${expectedIdentity.role}/${expectedIdentity.laneId}.`,
+    );
+  }
+  const { inputManifestSha256, ...manifestBase } = inputManifest;
+  if (sha256Text(JSON.stringify(manifestBase)) !== inputManifestSha256) {
+    throw new Error(`Sealed input manifest digest mismatch for lane ${inputManifest.laneId}.`);
+  }
+  const snapshot = inputManifest.sourceSnapshotManifestSha256
+    ? await readAndVerifyBatchSourceSnapshot(inputManifest.batchId)
+    : await verifyLegacyPreSnapshotInput(inputManifest);
+  if (snapshot && snapshot.snapshotManifestSha256 !== inputManifest.sourceSnapshotManifestSha256) {
+    throw new Error(`Sealed source snapshot mismatch for lane ${inputManifest.laneId}.`);
+  }
+  const prompt = await fs.readFile(path.join(baseDir, "prompt.txt"), "utf8");
+  if (prompt !== artifacts.composerText || sha256Text(prompt) !== inputManifest.promptSha256) {
+    throw new Error(`Sealed prompt file digest mismatch for lane ${inputManifest.laneId}.`);
   }
   if (sha256Text(artifacts.composerText) !== inputManifest.promptSha256) {
     throw new Error(`Sealed prompt digest mismatch for lane ${inputManifest.laneId}.`);
@@ -153,8 +191,16 @@ export async function verifySealedPromptArtifacts(
   const expected = new Map(
     inputManifest.attachments.map((entry) => [entry.relativePath, entry] as const),
   );
+  const seen = new Set<string>();
   for (const attachment of artifacts.attachments) {
     const relativePath = path.relative(baseDir, attachment.path).split(path.sep).join("/");
+    if (relativePath === ".." || relativePath.startsWith("../") || path.isAbsolute(relativePath)) {
+      throw new Error(`Sealed attachment escapes its input root: ${attachment.path}`);
+    }
+    if (seen.has(relativePath)) {
+      throw new Error(`Duplicate sealed attachment path: ${relativePath}`);
+    }
+    seen.add(relativePath);
     const identity = expected.get(relativePath);
     if (!identity) {
       throw new Error(`Sealed attachment is missing from the input manifest: ${relativePath}`);
@@ -167,6 +213,52 @@ export async function verifySealedPromptArtifacts(
       );
     }
   }
+  if (seen.size !== expected.size) {
+    throw new Error(`Sealed attachment set mismatch for lane ${inputManifest.laneId}.`);
+  }
+  if (inputManifest.role === "lane" && snapshot) {
+    const declaredSources = new Map(snapshot.files.map((entry) => [entry.relativePath, entry]));
+    for (const source of inputManifest.sourceFiles) {
+      const declared = declaredSources.get(source.relativePath);
+      if (
+        !declared ||
+        declared.sizeBytes !== source.sizeBytes ||
+        declared.sha256 !== source.sha256
+      ) {
+        throw new Error(
+          `Sealed source identity mismatch for lane ${inputManifest.laneId}: ${source.relativePath}`,
+        );
+      }
+    }
+    const expectedSources = new Set([
+      ...(snapshot.sharedAuthority ?? []),
+      ...(snapshot.lanes?.[inputManifest.laneId] ?? []),
+    ]);
+    const actualSources = new Set(inputManifest.sourceFiles.map((entry) => entry.relativePath));
+    if (
+      expectedSources.size !== actualSources.size ||
+      [...expectedSources].some((relativePath) => !actualSources.has(relativePath))
+    ) {
+      throw new Error(`Sealed source set mismatch for lane ${inputManifest.laneId}.`);
+    }
+  }
+}
+
+async function verifyLegacyPreSnapshotInput(inputManifest: BatchInputManifestV1): Promise<null> {
+  // Recovery-only compatibility for local batches created by the pre-snapshot
+  // draft. New sealing always records a snapshot digest, and a new snapshot
+  // manifest makes omission of that digest an integrity error.
+  const source = JSON.parse(
+    await fs.readFile(getBatchPaths(inputManifest.batchId).sourceManifestIdentity, "utf8"),
+  ) as { schemaVersion?: string; batchId?: string; snapshotManifestSha256?: string };
+  if (
+    source.schemaVersion !== BATCH_SCHEMA_VERSION ||
+    source.batchId !== inputManifest.batchId ||
+    source.snapshotManifestSha256
+  ) {
+    throw new Error(`Sealed source snapshot digest is missing for lane ${inputManifest.laneId}.`);
+  }
+  return null;
 }
 
 export function buildLanePrompt(loaded: LoadedBatchManifest, lane: BatchLaneSpec): string {
@@ -223,6 +315,8 @@ function buildLaneRunOptions(
 async function persistSealedLane(options: {
   batchId: string;
   cwd: string;
+  sourceSnapshotRoot: string;
+  sourceSnapshotManifestSha256: string;
   stagingRoot: string;
   lane: BatchLaneSpec;
   sourceFiles: string[];
@@ -271,7 +365,10 @@ async function persistSealedLane(options: {
     attachments.map((attachment) => attachment.path),
     inputDir,
   );
-  const sourceIdentities = await captureSourceFileIdentities(options.sourceFiles, options.cwd);
+  const sourceIdentities = await captureSourceFileIdentities(
+    options.sourceFiles,
+    options.sourceSnapshotRoot,
+  );
   const manifestWithoutDigest = {
     schemaVersion: BATCH_SCHEMA_VERSION,
     batchId: options.batchId,
@@ -279,6 +376,7 @@ async function persistSealedLane(options: {
     role: "lane" as const,
     sealedAt: new Date().toISOString(),
     promptSha256: sha256Text(sealedArtifacts.composerText),
+    sourceSnapshotManifestSha256: options.sourceSnapshotManifestSha256,
     attachments: attachmentIdentities,
     sourceFiles: sourceIdentities,
     estimatedInputTokens: sealedArtifacts.estimatedInputTokens,

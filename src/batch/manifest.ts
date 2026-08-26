@@ -15,6 +15,7 @@ import type {
 } from "./types.js";
 import { BATCH_SCHEMA_VERSION } from "./types.js";
 import { formatBatchValidationError, parseBatchManifest } from "./schema.js";
+import { getBatchPaths, writeJsonAtomic, writeOwnerFileAtomic } from "./store.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -72,24 +73,146 @@ export async function loadBatchManifest(
   return { sourcePath, sourceText, cwd: realCwd, manifest, files };
 }
 
-export async function captureBatchSourceManifest(
+/**
+ * Copies every admitted source exactly once, hashes the copied bytes, and only
+ * then publishes the complete snapshot directory. Lane assembly must consume
+ * these paths rather than re-reading the mutable workspace.
+ */
+export async function snapshotBatchSources(
   loaded: LoadedBatchManifest,
   batchId: string,
-): Promise<BatchSourceManifestV1> {
-  const allFiles = new Set<string>(loaded.files.sharedAuthority);
-  for (const files of Object.values(loaded.files.lanes)) {
-    for (const file of files) allFiles.add(file);
+): Promise<{ manifest: BatchSourceManifestV1; files: ResolvedBatchFiles }> {
+  const paths = getBatchPaths(batchId);
+  const realCwd = await fs.realpath(loaded.cwd);
+  const staging = path.join(paths.inputs, `.source-snapshot-staging-${process.pid}-${Date.now()}`);
+  const published = paths.sourceSnapshot;
+  const allFiles = [
+    ...loaded.files.sharedAuthority,
+    ...Object.values(loaded.files.lanes).flat(),
+    ...loaded.files.synthesis,
+  ];
+  const unique = [...new Set(allFiles)].sort();
+  const copied = new Map<string, { snapshotPath: string; identity: SourceFileIdentity }>();
+  await fs.mkdir(staging, { recursive: false, mode: 0o700 });
+  try {
+    for (const source of unique) {
+      const realSource = await fs.realpath(source);
+      assertWithinRoot(realCwd, realSource, source);
+      const relativePath = toPosix(path.relative(realCwd, realSource));
+      const content = await fs.readFile(realSource);
+      const target = path.join(staging, ...relativePath.split("/"));
+      await writeOwnerFileAtomic(target, content);
+      copied.set(realSource, {
+        snapshotPath: target,
+        identity: {
+          relativePath,
+          sizeBytes: content.length,
+          sha256: createHash("sha256").update(content).digest("hex"),
+        },
+      });
+      copied.set(source, copied.get(realSource)!);
+    }
+    const membership = (files: string[]) =>
+      files.map((file) => copied.get(file)?.identity.relativePath).filter(Boolean) as string[];
+    const manifestBase = {
+      schemaVersion: BATCH_SCHEMA_VERSION,
+      batchId,
+      capturedAt: new Date().toISOString(),
+      cwd: realCwd,
+      git: await captureGitAuthority(realCwd),
+      manifestSha256: sha256Text(JSON.stringify(loaded.manifest)),
+      files: [
+        ...new Map(
+          [...copied.values()].map(
+            (entry) => [entry.identity.relativePath, entry.identity] as const,
+          ),
+        ).values(),
+      ].sort((left, right) => left.relativePath.localeCompare(right.relativePath)),
+      sharedAuthority: membership(loaded.files.sharedAuthority),
+      lanes: Object.fromEntries(
+        Object.entries(loaded.files.lanes).map(([laneId, files]) => [laneId, membership(files)]),
+      ),
+      synthesis: membership(loaded.files.synthesis),
+    };
+    const manifest: BatchSourceManifestV1 = {
+      ...manifestBase,
+      snapshotManifestSha256: sha256Text(JSON.stringify(manifestBase)),
+    };
+    await writeJsonAtomic(path.join(staging, "snapshot-manifest.json"), manifest);
+    await fs.rename(staging, published);
+    await writeJsonAtomic(paths.sourceManifestIdentity, manifest);
+    const resolveSnapshot = (relativePaths: string[] = []) =>
+      relativePaths.map((relativePath) => path.join(published, ...relativePath.split("/")));
+    return {
+      manifest,
+      files: {
+        sharedAuthority: resolveSnapshot(manifest.sharedAuthority),
+        lanes: Object.fromEntries(
+          Object.entries(manifest.lanes ?? {}).map(([laneId, files]) => [
+            laneId,
+            resolveSnapshot(files),
+          ]),
+        ),
+        synthesis: resolveSnapshot(manifest.synthesis),
+      },
+    };
+  } catch (error) {
+    await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
   }
-  for (const file of loaded.files.synthesis) allFiles.add(file);
-  return {
-    schemaVersion: BATCH_SCHEMA_VERSION,
-    batchId,
-    capturedAt: new Date().toISOString(),
-    cwd: loaded.cwd,
-    git: await captureGitAuthority(loaded.cwd),
-    manifestSha256: sha256Text(JSON.stringify(loaded.manifest)),
-    files: await captureSourceFileIdentities([...allFiles], loaded.cwd),
-  };
+}
+
+export async function readAndVerifyBatchSourceSnapshot(
+  batchId: string,
+): Promise<BatchSourceManifestV1> {
+  const paths = getBatchPaths(batchId);
+  const manifest = JSON.parse(
+    await fs.readFile(paths.sourceManifestIdentity, "utf8"),
+  ) as BatchSourceManifestV1;
+  const { snapshotManifestSha256, ...base } = manifest;
+  if (
+    manifest.schemaVersion !== BATCH_SCHEMA_VERSION ||
+    manifest.batchId !== batchId ||
+    !snapshotManifestSha256 ||
+    sha256Text(JSON.stringify(base)) !== snapshotManifestSha256
+  ) {
+    throw new Error(`Batch ${batchId} source snapshot manifest identity mismatch.`);
+  }
+  const sealedCopy = JSON.parse(
+    await fs.readFile(path.join(paths.sourceSnapshot, "snapshot-manifest.json"), "utf8"),
+  ) as BatchSourceManifestV1;
+  if (JSON.stringify(sealedCopy) !== JSON.stringify(manifest)) {
+    throw new Error(`Batch ${batchId} published source snapshot manifest differs from its seal.`);
+  }
+  const declared = new Set(manifest.files.map((entry) => entry.relativePath));
+  for (const relativePath of [
+    ...(manifest.sharedAuthority ?? []),
+    ...Object.values(manifest.lanes ?? {}).flat(),
+    ...(manifest.synthesis ?? []),
+  ]) {
+    if (!declared.has(relativePath)) {
+      throw new Error(`Batch ${batchId} snapshot membership is undeclared: ${relativePath}`);
+    }
+  }
+  for (const identity of manifest.files) {
+    const target = safeSnapshotPath(paths.sourceSnapshot, identity.relativePath);
+    const content = await fs.readFile(target);
+    if (
+      content.length !== identity.sizeBytes ||
+      createHash("sha256").update(content).digest("hex") !== identity.sha256
+    ) {
+      throw new Error(`Batch ${batchId} source snapshot digest mismatch: ${identity.relativePath}`);
+    }
+  }
+  const actualFiles = (await listFilesRecursive(paths.sourceSnapshot))
+    .map((target) => toPosix(path.relative(paths.sourceSnapshot, target)))
+    .filter((relativePath) => relativePath !== "snapshot-manifest.json")
+    .sort();
+  const expectedFiles = manifest.files.map((entry) => entry.relativePath).sort();
+  if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {
+    throw new Error(`Batch ${batchId} source snapshot contains an undeclared or missing file.`);
+  }
+  return manifest;
 }
 
 export async function captureSourceFileIdentities(
@@ -120,7 +243,7 @@ export async function captureGitAuthority(cwd: string): Promise<GitAuthoritySnap
   return { head, branch, dirty: Boolean(status) };
 }
 
-export async function detectBatchWorkspaceDrift(state: {
+export async function detectAdmittedSourceDrift(state: {
   cwd: string;
   sourceManifestPath: string;
 }): Promise<boolean> {
@@ -199,4 +322,24 @@ async function gitValue(cwd: string, args: string[]): Promise<string | null> {
 
 function toPosix(value: string): string {
   return value.split(path.sep).join("/");
+}
+
+function safeSnapshotPath(root: string, relativePath: string): string {
+  const target = path.resolve(root, ...relativePath.split("/"));
+  const relative = path.relative(root, target);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`Unsafe source snapshot path: ${relativePath}`);
+  }
+  return target;
+}
+
+async function listFilesRecursive(root: string): Promise<string[]> {
+  const entries = await fs.readdir(root, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const target = path.join(root, entry.name);
+    if (entry.isDirectory()) files.push(...(await listFilesRecursive(target)));
+    else if (entry.isFile()) files.push(target);
+  }
+  return files;
 }

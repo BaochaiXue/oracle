@@ -77,8 +77,9 @@ export interface BundleIdentity {
   project?: string;
   subject?: string;
   role: BundleRole;
-  bundleId: string;
-  sha256: string;
+  sourceSetSha256: string;
+  instanceId: string;
+  artifactSha256?: string;
   filename: string;
 }
 
@@ -89,6 +90,8 @@ export interface BundleManifestV1 {
   subject?: string;
   role: BundleRole;
   files: SourceFileIdentity[];
+  sourceSetSha256: string;
+  instanceId: string;
 }
 
 export interface BundleContext {
@@ -96,6 +99,7 @@ export interface BundleContext {
   laneId?: string;
   sessionId?: string;
   authorityRevision?: string;
+  artifactInstanceId?: string;
 }
 
 export interface SealedAttachment {
@@ -138,8 +142,11 @@ export type BatchLaneStatus =
   | "pending"
   | "sealed"
   | "session-created"
+  | "claimed"
   | "running"
   | "recoverable"
+  | "indeterminate"
+  | "abandoned"
   | "completed"
   | "error";
 
@@ -147,6 +154,9 @@ export interface BatchLaneAttempt {
   attempt: number;
   sessionId: string;
   createdAt: string;
+  phase?: "created" | "claimed" | "started" | "completed" | "failed" | "abandoned";
+  claimedAt?: string;
+  dispatchStartedAt?: string;
   completedAt?: string;
 }
 
@@ -163,9 +173,11 @@ export interface BatchLaneState {
   attempts: BatchLaneAttempt[];
   startedAt?: string;
   completedAt?: string;
+  abandonedAt?: string;
   acceptedMissing?: boolean;
   dispatchReservation?: {
     pid: number;
+    token?: string;
     reservedAt: string;
   };
   lastError?: {
@@ -176,9 +188,12 @@ export interface BatchLaneState {
 }
 
 export interface BatchOwnerDecision {
-  type: "allow-partial";
+  type: "allow-partial" | "accept-missing";
   decidedAt: string;
   missingLaneIds: string[];
+  laneId?: string;
+  reason?: string;
+  sessionId?: string;
 }
 
 export interface BatchStateV1 {
@@ -191,11 +206,14 @@ export interface BatchStateV1 {
   createdAt: string;
   updatedAt: string;
   cwd: string;
-  sourceManifestSha256: string;
+  sourceManifestSha256?: string;
+  sourceSnapshotManifestSha256?: string;
   effectiveMaxParallel: number;
   effectiveMaxChildSessions: number;
   barrierClosedAt?: string;
   synthesisEligible?: boolean;
+  admittedSourceDrift?: boolean;
+  /** Legacy draft-state field retained only so existing local recovery specimens remain readable. */
   workspaceDrift?: boolean;
   lanes: BatchLaneState[];
   synthesis?: BatchLaneState;
@@ -213,7 +231,11 @@ export interface BatchSourceManifestV1 {
   cwd: string;
   git: GitAuthoritySnapshot;
   manifestSha256: string;
+  snapshotManifestSha256?: string;
   files: SourceFileIdentity[];
+  sharedAuthority?: string[];
+  lanes?: Record<string, string[]>;
+  synthesis?: string[];
 }
 
 export interface BatchInputManifestV1 {
@@ -223,6 +245,7 @@ export interface BatchInputManifestV1 {
   role: "lane" | "synthesis";
   sealedAt: string;
   promptSha256: string;
+  sourceSnapshotManifestSha256?: string;
   attachments: SourceFileIdentity[];
   sourceFiles: SourceFileIdentity[];
   estimatedInputTokens: number;
@@ -233,11 +256,11 @@ export interface BatchFirstStageSealV1 {
   schemaVersion: typeof BATCH_SCHEMA_VERSION;
   batchId: string;
   sealedAt: string;
+  sourceSnapshotManifestSha256: string;
   lanes: Array<{
     id: string;
     inputManifestSha256: string;
   }>;
-  synthesisExtraFiles: SourceFileIdentity[];
 }
 
 export interface BatchAnswerReceiptV1 {

@@ -5,7 +5,12 @@ import path from "node:path";
 import { setOracleHomeDirOverrideForTest } from "../../src/oracleHome.js";
 import { sessionStore } from "../../src/sessionStore.js";
 import { getBatchPaths, readBatchState } from "../../src/batch/store.js";
-import { renderStoredBatch, resumeBatch, runBatch } from "../../src/batch/runtime.js";
+import {
+  acceptMissingBatchLane,
+  renderStoredBatch,
+  resumeBatch,
+  runBatch,
+} from "../../src/batch/runtime.js";
 import type { BatchChildExecutionContext } from "../../src/batch/runtime.js";
 import type { BrowserSessionConfig } from "../../src/sessionStore.js";
 import type { BrowserPromptArtifacts } from "../../src/browser/prompt.js";
@@ -337,13 +342,18 @@ describe("Batch Oracle runtime", () => {
     expect(initial.state.status).toBe("awaiting-owner");
     expect(dispatchChild.mock.calls.some(([context]) => context.role === "synthesis")).toBe(false);
 
+    await acceptMissingBatchLane(
+      initial.state.batchId,
+      "two",
+      "Reviewer exhausted without usable evidence.",
+    );
     const resumed = await resumeBatch(
       initial.state.batchId,
       { allowPartial: true, log: () => undefined },
       { buildBrowserConfig: async () => browserConfig, dispatchChild, assemblePrompt },
     );
     expect(resumed.state.status).toBe("partial");
-    expect(synthesisPrompt).toContain("Missing or unavailable lanes: two (error)");
+    expect(synthesisPrompt).toContain("Missing or unavailable lanes: two (abandoned)");
     const paths = getBatchPaths(resumed.state.batchId);
     const errorReceipt = JSON.parse(
       await fs.readFile(path.join(paths.outputs, "lanes", "two", "answer-receipt.json"), "utf8"),
@@ -429,6 +439,89 @@ describe("Batch Oracle runtime", () => {
     expect(
       dispatchChild.mock.calls.filter(([context]) => context.role === "synthesis"),
     ).toHaveLength(1);
+  });
+
+  test("blocks synthesis when an accepted lane answer is tampered after receipt", async () => {
+    await fs.writeFile(
+      path.join(cwd, "batch.json5"),
+      JSON.stringify({
+        ...twoLaneManifest(),
+        policy: { maxParallel: 1, maxChildSessions: 3 },
+        synthesis: {
+          id: "judge",
+          title: "Judge",
+          prompt: "Adjudicate.",
+          requiredOutput: ["contradiction matrix"],
+        },
+      }),
+      "utf8",
+    );
+    let firstOutput = "";
+    const dispatchChild = vi.fn(async (context: BatchChildExecutionContext) => {
+      await fs.mkdir(path.dirname(context.outputPath), { recursive: true });
+      await fs.writeFile(context.outputPath, `answer ${context.laneId}`, "utf8");
+      if (context.laneId === "one") firstOutput = context.outputPath;
+      if (context.laneId === "two") await fs.writeFile(firstOutput, "tampered", "utf8");
+      await context.store.updateModelRun(context.sessionMeta.id, "gpt-5-pro", {
+        status: "completed",
+        completedAt: new Date().toISOString(),
+      });
+      await context.store.updateSession(context.sessionMeta.id, {
+        status: "completed",
+        completedAt: new Date().toISOString(),
+      });
+    });
+    const result = await runBatch(
+      "batch.json5",
+      { cwd, maxParallel: 1, log: () => undefined },
+      {
+        buildBrowserConfig: async () => ({ ...browserConfig, maxConcurrentTabs: 1 }),
+        dispatchChild,
+      },
+    );
+    expect(result.state.status).toBe("awaiting-owner");
+    expect(result.state.lanes[0]?.lastError?.code).toBe("batch-answer-integrity-mismatch");
+    expect(result.state.synthesis?.sessionId).toBeUndefined();
+  });
+
+  test("run and concurrent resume share one atomic claim per lane", async () => {
+    await fs.writeFile(path.join(cwd, "batch.json5"), JSON.stringify(twoLaneManifest()), "utf8");
+    const firstGate = deferred();
+    const logs: string[] = [];
+    const dispatchChild = vi.fn(async (context: BatchChildExecutionContext) => {
+      if (context.laneId === "one") await firstGate.promise;
+      await fs.mkdir(path.dirname(context.outputPath), { recursive: true });
+      await fs.writeFile(context.outputPath, `answer ${context.laneId}`, "utf8");
+      await context.store.updateSession(context.sessionMeta.id, {
+        status: "completed",
+        completedAt: new Date().toISOString(),
+      });
+    });
+    const running = runBatch(
+      "batch.json5",
+      { cwd, maxParallel: 1, log: (message) => logs.push(message) },
+      {
+        buildBrowserConfig: async () => ({ ...browserConfig, maxConcurrentTabs: 1 }),
+        dispatchChild,
+      },
+    );
+    await vi.waitFor(() => expect(dispatchChild).toHaveBeenCalledTimes(1));
+    const batchId = logs[0]!.replace("Batch ID: ", "");
+    const concurrent = await resumeBatch(
+      batchId,
+      { log: () => undefined },
+      {
+        buildBrowserConfig: async () => ({ ...browserConfig, maxConcurrentTabs: 1 }),
+        dispatchChild,
+      },
+    );
+    expect(concurrent.state.status).toBe("awaiting-recovery");
+    expect(dispatchChild).toHaveBeenCalledTimes(1);
+    firstGate.resolve();
+    const completed = await running;
+    expect(completed.state.status).toBe("completed");
+    expect(dispatchChild).toHaveBeenCalledTimes(2);
+    expect(completed.state.lanes.every((lane) => lane.attempts.length === 1)).toBe(true);
   });
 });
 

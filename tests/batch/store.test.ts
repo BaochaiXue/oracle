@@ -96,6 +96,20 @@ describe("durable batch store", () => {
     expect(await sessionStore.deleteOlderThan({ hours: 1 })).toEqual({ deleted: 0, remaining: 1 });
     expect(await sessionStore.readSession(child.id)).not.toBeNull();
   });
+
+  test("fails closed when any batch state is unreadable", async () => {
+    const loaded = fixtureLoaded(cwd);
+    await initializeBatchStore({
+      loaded,
+      batchId: "fixture-batch",
+      sourceManifest: fixtureSource(cwd),
+      effectiveMaxParallel: 2,
+      effectiveMaxChildSessions: 5,
+    });
+    await fs.mkdir(getBatchPaths("broken-batch").root, { recursive: true });
+    await fs.writeFile(getBatchPaths("broken-batch").state, "{not-json", "utf8");
+    await expect(listProtectedBatchSessionIds()).rejects.toThrow(/pruning safety.*unreadable/u);
+  });
 });
 
 function fixtureLoaded(cwd: string): LoadedBatchManifest {

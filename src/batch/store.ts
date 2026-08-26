@@ -21,12 +21,13 @@ export interface BatchPaths {
   inputs: string;
   outputs: string;
   firstStageSeal: string;
+  sourceSnapshot: string;
 }
 
 export interface InitializeBatchOptions {
   loaded: LoadedBatchManifest;
   batchId: string;
-  sourceManifest: BatchSourceManifestV1;
+  sourceManifest?: BatchSourceManifestV1;
   effectiveMaxParallel: number;
   effectiveMaxChildSessions: number;
 }
@@ -56,6 +57,7 @@ export function getBatchPaths(batchId: string): BatchPaths {
     inputs: path.join(root, "inputs"),
     outputs: path.join(root, "outputs"),
     firstStageSeal: path.join(root, "inputs", "first-stage-seal.json"),
+    sourceSnapshot: path.join(root, "inputs", "source-snapshot"),
   };
 }
 
@@ -68,7 +70,9 @@ export async function initializeBatchStore(options: InitializeBatchOptions): Pro
     ensureOwnerDir(paths.outputs),
     writeOwnerFileAtomic(paths.sourceManifest, options.loaded.sourceText),
     writeJsonAtomic(paths.normalizedManifest, options.loaded.manifest),
-    writeJsonAtomic(paths.sourceManifestIdentity, options.sourceManifest),
+    ...(options.sourceManifest
+      ? [writeJsonAtomic(paths.sourceManifestIdentity, options.sourceManifest)]
+      : []),
   ]);
   const now = new Date().toISOString();
   const state: BatchStateV1 = {
@@ -81,7 +85,9 @@ export async function initializeBatchStore(options: InitializeBatchOptions): Pro
     createdAt: now,
     updatedAt: now,
     cwd: options.loaded.cwd,
-    sourceManifestSha256: options.sourceManifest.manifestSha256,
+    sourceManifestSha256:
+      options.sourceManifest?.snapshotManifestSha256 ?? options.sourceManifest?.manifestSha256,
+    sourceSnapshotManifestSha256: options.sourceManifest?.snapshotManifestSha256,
     effectiveMaxParallel: options.effectiveMaxParallel,
     effectiveMaxChildSessions: options.effectiveMaxChildSessions,
     lanes: options.loaded.manifest.lanes.map((lane) => ({
@@ -159,13 +165,28 @@ export async function readNormalizedBatchManifest(
 
 export async function listBatchStates(): Promise<BatchStateV1[]> {
   const entries = await fs.readdir(getBatchesDir(), { withFileTypes: true }).catch(() => []);
-  const states = await Promise.all(
-    entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => readBatchState(entry.name).catch(() => null)),
+  const batchDirs = entries.filter(
+    (entry) => entry.isDirectory() && !entry.name.startsWith(".mutation.lock.stale-"),
   );
-  return states
-    .filter((state): state is BatchStateV1 => state !== null)
+  const results = await Promise.allSettled(batchDirs.map((entry) => readBatchState(entry.name)));
+  const unreadable = results
+    .map((result, index) => ({ result, batchId: batchDirs[index]!.name }))
+    .filter(
+      (entry): entry is { result: PromiseRejectedResult; batchId: string } =>
+        entry.result.status === "rejected",
+    );
+  if (unreadable.length > 0) {
+    throw new Error(
+      `Cannot prove batch-session pruning safety because batch state is unreadable: ${unreadable
+        .map(
+          ({ batchId, result }) =>
+            `${batchId} (${result.reason instanceof Error ? result.reason.message : String(result.reason)})`,
+        )
+        .join(", ")}`,
+    );
+  }
+  return results
+    .map((result) => (result as PromiseFulfilledResult<BatchStateV1>).value)
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 

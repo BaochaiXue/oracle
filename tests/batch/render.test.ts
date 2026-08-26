@@ -6,7 +6,7 @@ import { renderBatch } from "../../src/batch/render.js";
 import type { BatchManifestV1, BatchStateV1 } from "../../src/batch/types.js";
 
 describe("batch rendering", () => {
-  test("keeps raw answers hidden by default and emits them in manifest order with --all", async () => {
+  test("keeps raw answers hidden by default and refuses unreceipted raw output", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "oracle-batch-render-"));
     try {
       const one = path.join(root, "one.md");
@@ -20,8 +20,9 @@ describe("batch rendering", () => {
       const summary = await renderBatch(manifest, state);
       expect(summary).not.toContain("ANSWER ONE");
       expect(summary).not.toContain("ANSWER TWO");
-      const all = await renderBatch(manifest, state, { all: true });
-      expect(all.indexOf("ANSWER ONE")).toBeLessThan(all.indexOf("ANSWER TWO"));
+      await expect(renderBatch(manifest, state, { all: true })).rejects.toThrow(
+        /no complete accepted answer receipt boundary/u,
+      );
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
