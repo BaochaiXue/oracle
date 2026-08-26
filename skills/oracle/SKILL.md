@@ -132,9 +132,11 @@ parallel stage whenever its complete input can already be sealed. Dispatch all
 ready lanes concurrently up to the owner's configured capacity. Do not
 serialize independent work for procedural convenience.
 
-Seal every first-stage lane before dispatching any of them. Independent lanes
-receive a blind first pass and never see sibling answers while the stage is
-open.
+Resolve the ready-set membership, copy each admitted source exactly once into
+the owner-only batch snapshot, and assemble every first-stage lane from that
+published snapshot. Seal every lane before dispatching any of them.
+Independent lanes receive a blind first pass and never see sibling answers
+while the stage is open.
 
 Arrival order is transport state, not epistemic priority. Persist each raw
 answer and receipt as it arrives, but do not perform rolling synthesis, rewrite
@@ -143,13 +145,17 @@ sibling prompts, or choose a direction before the barrier closes.
 A batch owns one recoverable logical session per lane. Reattach quiet,
 detached, or timed-out work within that lane. Create another attempt only when
 durable evidence proves the prior prompt was unsubmitted, uncommitted, and
-retry-safe.
+retry-safe. Once `dispatchStartedAt` exists, missing runtime evidence is
+indeterminate rather than permission to send again.
 
 Close the first-stage barrier only after every required lane is terminal.
-Partial synthesis requires explicit owner action and must name missing lanes
-and weakened conclusions.
+Partial synthesis requires two explicit owner actions: record each unavailable
+lane with `oracle batch accept-missing <batch-id> --lane <lane-id> --reason
+"<reason>"`, then resume with `--allow-partial`. It must name missing lanes and
+weakened conclusions.
 
-A synthesis session receives all available raw answers and provenance. It must
+A synthesis session receives canonical shared-authority bytes plus each
+verified answer, its immutable receipt, and its sealed input manifest. It must
 preserve dissent, identify unsupported agreement, produce a contradiction
 matrix, expose owner-pending decisions, and propose one bounded next experiment
 with kill criteria. Never decide by majority vote alone.

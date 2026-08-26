@@ -11,8 +11,8 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/IndelibleVivi/oracle?style=flat-square" alt="License"></a>
 </p>
 
-**A recoverable browser path from coding agents to ChatGPT GPT-5.6 Pro, using an
-Oracle-only Chrome profile instead of attaching to your personal browser.**
+**Recoverable GPT-5.6 Pro consultations — one session or a declared parallel
+batch.**
 
 This public fork keeps [Oracle](https://github.com/steipete/oracle) in charge of
 the prompt bundle, browser actions, session receipt, recovery, transcripts, and
@@ -342,16 +342,21 @@ oracle batch validate batch.json5
 oracle batch run batch.json5
 oracle batch status <batch-id> --json
 oracle batch resume <batch-id>
+oracle batch accept-missing <batch-id> --lane <lane-id> --reason "<owner reason>"
+oracle batch resume <batch-id> --allow-partial
 oracle batch render <batch-id> --all
 ```
 
 An optional contradiction-first synthesis session starts only after the stage
-barrier closes. Terminal missing lanes require explicit
-`batch resume --allow-partial`; recoverable lanes cannot be waived. Resume
+barrier closes. An unavailable lane first requires a durable
+`batch accept-missing` owner decision; `batch resume --allow-partial` may then
+cross the barrier. Resume
 reattaches committed work to its original session and creates another attempt
 only for durable pre-submit, uncommitted, retry-safe failures. Sealed inputs and
-outputs live owner-only under `~/.oracle/batches/<batch-id>/`; workspace drift
-is reported but never causes silent resealing.
+outputs live owner-only under `~/.oracle/batches/<batch-id>/`. Inputs are copied
+once into a published source snapshot before any lane assembly. Changes to an
+already admitted workspace file are reported as `admittedSourceDrift`; they
+never cause silent resealing or change the snapshot consumed by a child.
 
 See [Batch Oracle v1](docs/batch-oracle.md) for the manifest, durable topology,
 recovery matrix, semantic bundle identity, and v1 boundaries.

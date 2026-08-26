@@ -14,8 +14,9 @@ or maintainer-only release instructions.
 - Batch Oracle v1 uses direct CDP only. It does not dispatch through API,
   OpenCLI, MCP, remote Chrome, attach-running Chrome, or another account/model.
 - Browser child session metadata remains execution and recovery authority.
-  Batch parent state coordinates sealed inputs, child lineage, dispatch
-  reservations, the first-stage barrier, owner decisions, and rendering.
+  Batch parent state coordinates the admitted source snapshot, sealed inputs,
+  child lineage, dispatch claims, the first-stage barrier, owner decisions, and
+  verified rendering.
 - Never click or auto-click ChatGPT's `Answer now` control. A quiet Pro run is
   recovered by reattaching its exact stored session, not by resubmitting.
 
@@ -33,10 +34,18 @@ or maintainer-only release instructions.
 - One active recoverable attempt is allowed per logical lane. A new attempt is
   valid only on explicit resume after durable evidence proves the earlier
   prompt unsubmitted, uncommitted, and retry-safe.
-- First-stage inputs are all-or-nothing sealed. Resume must use sealed copies
-  and must not re-glob a changed workspace.
+- Source admission is snapshot-first: resolve membership, copy each admitted
+  file once, hash the copied bytes, atomically publish the snapshot, then
+  assemble every lane from it. Resume must use sealed copies and must not
+  re-glob a changed workspace.
+- Once a worker records `dispatchStartedAt`, absence of an explicit safe
+  pre-submit receipt or reattachable runtime is indeterminate and must never be
+  redispatched.
+- Synthesis and raw rendering consume answers only through the accepted answer
+  digest, receipt, and sealed input manifest. Integrity mismatch blocks use.
 - Synthesis starts only after the durable barrier. Partial synthesis is an
-  explicit owner decision and must preserve missing-lane provenance.
+  explicit two-step owner decision (`accept-missing`, then `--allow-partial`)
+  and must preserve missing-lane provenance.
 
 ## Verification
 

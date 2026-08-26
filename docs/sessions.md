@@ -24,8 +24,8 @@ Batch Oracle adds a parent store beside ordinary sessions:
 ~/.oracle/batches/<batch-id>/
 ├── state.json
 ├── report.md
-├── inputs/       # sealed prompts, attachment bytes, and provenance
-└── outputs/      # manifest-ordered raw answers and receipts
+├── inputs/       # admitted source snapshot, sealed prompts, bytes, provenance
+└── outputs/      # manifest-ordered raw answers and immutable receipts
 ```
 
 Every Batch lane and optional synthesis remains an ordinary child session under
@@ -116,6 +116,14 @@ submitted or committed and the failure is retry-safe. `oracle restart <child>`
 is not the Batch recovery path because it bypasses parent reservations and the
 stage barrier. See [Batch Oracle v1](batch-oracle.md).
 
+If an unavailable lane must be omitted, preserve its session and record the
+owner decision before partial synthesis:
+
+```bash
+oracle batch accept-missing <batch-id> --lane <lane-id> --reason "<reason>"
+oracle batch resume <batch-id> --allow-partial
+```
+
 ## Restart
 
 ```bash
@@ -154,8 +162,10 @@ oracle status --clear --hours 168   # delete sessions older than a week
 
 `--clear` is destructive — preview without it first. Time-based pruning skips
 child sessions referenced by a nonterminal Batch Oracle parent. Batch state is
-separate under `~/.oracle/batches`; inspect its report and lineage before
-removing any corresponding ordinary child session manually.
+separate under `~/.oracle/batches`; if any batch state is unreadable, pruning
+fails closed rather than guessing that its children are unprotected. Inspect a
+batch report and lineage before removing any corresponding ordinary child
+session manually.
 
 ## Stale / zombie detection
 

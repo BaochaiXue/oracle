@@ -19,20 +19,22 @@ receives the raw answers and their provenance together, preserves dissent, and
 adjudicates contradictions. Batch Oracle is not identical-prompt voting, a
 persona panel, rolling synthesis, or an arbitrary workflow DAG.
 
-```text
-strict JSON5 manifest
-        │
-        ▼
-all-or-nothing first-stage seal
-        │
-        ├── lane A ── child session A ── raw answer + receipt
-        ├── lane B ── child session B ── raw answer + receipt
-        └── lane C ── child session C ── raw answer + receipt
-                            │
-                    durable stage barrier
-                            │
-                            ▼
-              optional synthesis child session
+```mermaid
+flowchart LR
+  M[Strict JSON5 manifest] --> S[Atomic admitted-source snapshot]
+  S --> A[Shared authority bytes]
+  S --> LA[Lane A sealed input]
+  S --> LB[Lane B sealed input]
+  A --> LA
+  A --> LB
+  LA --> CA[Child A: claimed then started]
+  LB --> CB[Child B: claimed then started]
+  CA --> VA[Verified answer + receipt + input manifest]
+  CB --> VB[Verified answer + receipt + input manifest]
+  VA --> B{Durable barrier}
+  VB --> B
+  A --> Y[Optional contradiction-first synthesis]
+  B --> Y
 ```
 
 ## Manifest
@@ -96,9 +98,14 @@ two first-stage lanes.
 
 Every file path or glob is resolved beneath the manifest's effective `cwd`.
 Absolute paths, traversal, backslashes, empty path segments, and symlink escapes
-are rejected. The resolved files and their byte digests become source
-provenance; later workspace changes may set `workspaceDrift:true`, but never
-replace already sealed child input.
+are rejected. The resolved membership is copied once into a private staging
+directory. Oracle hashes the copied bytes, writes the complete snapshot
+manifest, and atomically publishes the directory before assembling any lane.
+Every lane therefore sees the same shared-authority revision even if the
+workspace changes during assembly. Later changes to an admitted workspace file
+may set `admittedSourceDrift:true`; that name deliberately does not claim
+detection of new files that would match an old glob. Drift never replaces the
+snapshot or an already sealed child input.
 
 ## Commands
 
@@ -118,7 +125,12 @@ oracle batch status --hours 168
 # Reattach original recoverable sessions. This never duplicates a committed turn.
 oracle batch resume <batch-id>
 
-# Explicitly accept terminal failed lanes before partial synthesis.
+# Preserve the original session and record an explicit owner closure.
+oracle batch accept-missing <batch-id> \
+  --lane recovery \
+  --reason "Reviewer exhausted without usable evidence."
+
+# Cross the barrier after every unavailable lane has an owner decision.
 oracle batch resume <batch-id> --allow-partial
 
 # Summary hides raw child answers; load one or all only on demand.
@@ -133,24 +145,34 @@ manifest, local owner, or browser tab caps.
 ## Sealing, bundle identity, and privacy
 
 All first-stage lanes must assemble successfully before Oracle creates any
-child session or dispatches any prompt. The final prompt text, attachment
-bytes, source identities, token estimate, and input-manifest digest are copied
-to owner-only batch storage. Resume reads those sealed copies; it does not
-re-glob the mutable workspace.
+child session or dispatches any prompt. Assembly reads only from the published
+source snapshot. Each sealed lane records its batch/lane/role identity, source
+snapshot digest, exact source membership, `prompt.txt` digest, exact attachment
+set and bytes, token estimate, and a digest over the complete input manifest.
+Dispatch and resume verify that whole chain. They do not re-glob or re-read the
+mutable workspace.
 
 Generated TXT and ZIP attachments have semantic identities such as:
 
 ```text
-example--contract--sources--2c71e4a9.txt
-example--recovery--evidence--d90a12f7.zip
-example--adjudication--lane-answers--716eb620.zip
+example--contract--sources--batch-a1b2c3d4--2c71e4a9.txt
+example--recovery--evidence--batch-a1b2c3d4--d90a12f7.zip
+example--adjudication--lane-answers--batch-a1b2c3d4--716eb620.zip
 ```
 
-The eight-character ID is derived from the canonical internal manifest, not
-from a temporary path. TXT headers and ZIP root manifests repeat the same
-project, subject, role, file identities, and digest. A browser-added suffix
-such as ` (1)` may change the transported outer filename, but not the internal
-bundle identity.
+Bundle identity has three separate values:
+
+- `sourceSetSha256` identifies the canonical label, role, and source-file set;
+- `instanceId` scopes this concrete batch/session artifact so equal source sets
+  from different consultations cannot collide; and
+- `artifactSha256` hashes the final TXT/ZIP bytes exactly.
+
+The filename contains the instance and the first eight source-set digest
+characters. TXT headers and ZIP root manifests bind the readable identity and
+source set. The exact final artifact digest is recorded beside the finished
+artifact because a file cannot contain its own non-recursive hash. A
+browser-added suffix such as ` (1)` may change the transported outer filename,
+but not the internal source-set and instance identity.
 
 The batch store is local and owner-only:
 
@@ -163,6 +185,9 @@ The batch store is local and owner-only:
 ├── report.md
 ├── inputs/
 │   ├── first-stage-seal.json
+│   ├── source-snapshot/
+│   │   ├── snapshot-manifest.json
+│   │   └── <admitted source paths>
 │   ├── lanes/<lane-id>/
 │   └── synthesis/
 └── outputs/
@@ -171,32 +196,51 @@ The batch store is local and owner-only:
 ```
 
 Raw child answers are persisted as they arrive but are not printed during an
-open stage. `render --all` emits them in manifest order, never completion order.
+open stage. Each accepted answer is bound to its immutable receipt, child
+session, input-manifest digest, byte length, and output digest. Synthesis and
+`render --lane/--all` use the shared verified-answer reader; a mismatch blocks
+consumption and leaves the original receipt untouched. The synthesis bundle
+includes shared-authority bytes plus, for every completed lane, `answer.md`,
+`answer-receipt.json`, and `input-manifest.json`. Rendering emits verified
+answers in manifest order, never completion order.
 
 ## Recovery and owner gates
 
-Each logical lane has one active recoverable attempt. Quiet, detached, or
+Each logical lane has one active recoverable attempt. Session creation and the
+parent action claim are one atomic mutation. Immediately before a worker enters
+browser dispatch, Oracle persists `dispatchStartedAt`. Quiet, detached, or
 timed-out work reattaches to that lane's original child session. A new attempt
 is allowed only during explicit `batch resume` when durable child evidence says
 the previous prompt was unsubmitted, uncommitted, and `retrySafe:true`.
-Committed, indeterminate, or recoverable submissions are never resubmitted.
+Committed, indeterminate, or recoverable submissions are never resubmitted. If
+a worker entered dispatch but later has neither an explicit safe pre-submit
+receipt nor a reattachable runtime, the attempt becomes `indeterminate` and the
+batch stops at `awaiting-owner`.
 
 The parent reconciles child metadata after a process interruption, including a
 child session written before its parent mapping and an answer written before
-the parent receipt. State mutation locks are short-lived: they protect
-reconciliation and dispatch reservation, but are not held while GPT-5.6 Pro is
-thinking. Concurrent resume processes therefore cannot reserve a second active
-attempt for the same lane.
+the parent receipt. Orphan discovery accepts only the parent's sealed input
+digest; mismatched digests, duplicate attempt numbers, or multiple possibly
+committed children are an ambiguity error rather than “latest wins.” State
+mutation locks are short-lived directory claims. Stale recovery uses an atomic
+rename to quarantine the old claim, so concurrent reclaimers cannot both own
+it. Locks are not held while GPT-5.6 Pro is thinking.
 
 If ChatGPT raises a request-frequency gate before prompt commit, Oracle pauses
 new lane starts and preserves already committed siblings. It reports the batch
 and original session IDs. It does not loop Send, change transport, switch
 provider/model/account, or use an API workaround.
 
-A terminal failed lane keeps the batch at `awaiting-owner`. Synthesis remains
-blocked until the owner explicitly uses `--allow-partial`; recoverable or
-otherwise nonterminal lanes cannot be waived. The synthesis prompt, receipts,
-report, and final `partial` status all name missing lanes and weakened evidence.
+An unavailable lane keeps the batch at `awaiting-owner`. It cannot be waived by
+passing `--allow-partial` alone. The owner must first run `accept-missing` with a
+lane ID and reason; Oracle preserves the original session/conversation, records
+an `abandoned` terminal lane and durable owner decision, and never sends it
+again. Only then may `resume --allow-partial` cross the barrier. The synthesis
+prompt, receipts, report, and final `partial` status all name missing lanes and
+weakened evidence.
+
+Time-based session pruning is also fail-closed. If any batch state is unreadable,
+Oracle refuses the pruning pass instead of assuming that no child is protected.
 
 If the complete synthesis input exceeds the GPT-5.6 Pro context limit, Oracle
 fails closed with per-answer sizes. It does not truncate answers or create a

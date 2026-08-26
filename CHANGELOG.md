@@ -5,13 +5,15 @@
 ### Added
 
 - Batch Oracle v1: declare two or more independent GPT-5.6 Pro review lanes in
-  a strict JSON5 manifest, seal the blind first-stage ready set before dispatch,
-  run within owner/browser concurrency caps, recover each original child
-  session without duplicating committed prompts, and optionally launch an
-  explicit-partial, contradiction-first synthesis after the durable barrier.
-  New `oracle batch validate|run|status|resume|render` commands, owner-only
-  parent state, semantic TXT/ZIP bundle identities, receipts, and
-  manifest-order rendering keep the workflow inspectable.
+  a strict JSON5 manifest, atomically snapshot admitted sources before sealing
+  the blind first-stage ready set, run within owner/browser concurrency caps,
+  recover each original child session without duplicating committed or
+  indeterminate prompts, and optionally launch a contradiction-first synthesis
+  after the durable barrier. New `oracle batch
+validate|run|status|resume|accept-missing|render` commands, atomic action
+  claims, explicit missing-lane owner decisions, three-layer TXT/ZIP artifact
+  identity, verified answer receipts, and manifest-order rendering keep the
+  workflow inspectable and fail closed on evidence mismatch.
 
 ### Changed
 
