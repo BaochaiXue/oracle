@@ -576,7 +576,9 @@ async function persistChildOutcome(
       : state.synthesis;
   if (!lane?.sessionId) throw new Error(`Missing child mapping for ${action.laneId}.`);
   const metadata = await store.readSession(lane.sessionId);
-  let derived = deriveLaneSessionState(metadata, lane);
+  let derived = deriveLaneSessionState(metadata, lane, {
+    actionSettled: scheduleResult.status === "rejected",
+  });
   if (scheduleResult.status === "rejected" && derived.status === "session-created") {
     derived = {
       status: "error",

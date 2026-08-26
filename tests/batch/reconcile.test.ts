@@ -5,7 +5,7 @@ import path from "node:path";
 import { setOracleHomeDirOverrideForTest } from "../../src/oracleHome.js";
 import { reconcileBatchState, deriveLaneSessionState } from "../../src/batch/reconcile.js";
 import { initializeBatchStore } from "../../src/batch/store.js";
-import { sessionStore } from "../../src/sessionStore.js";
+import { sessionStore, type SessionMetadata } from "../../src/sessionStore.js";
 import type { BatchSourceManifestV1, LoadedBatchManifest } from "../../src/batch/types.js";
 
 describe("batch reconciliation", () => {
@@ -103,7 +103,7 @@ describe("batch reconciliation", () => {
   });
 
   test("keeps a live committed child running before applying recoverable-conversation rules", () => {
-    const state = deriveLaneSessionState({
+    const metadata: SessionMetadata = {
       id: "active-child",
       createdAt: new Date().toISOString(),
       status: "running",
@@ -121,8 +121,13 @@ describe("batch reconciliation", () => {
           browserDisposition: "active",
         },
       },
-    });
+    };
+    const state = deriveLaneSessionState(metadata);
     expect(state).toEqual({ status: "running" });
+    expect(deriveLaneSessionState(metadata, undefined, { actionSettled: true })).toEqual({
+      status: "recoverable",
+      clearReservation: true,
+    });
   });
 });
 

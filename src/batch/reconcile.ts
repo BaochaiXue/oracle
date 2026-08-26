@@ -87,6 +87,7 @@ async function attachDiscoveredChildSessions(
 export function deriveLaneSessionState(
   metadata: SessionMetadata | null,
   lane?: BatchLaneState,
+  options: { actionSettled?: boolean } = {},
 ): DerivedLaneSessionState {
   if (!metadata) {
     return {
@@ -137,7 +138,11 @@ export function deriveLaneSessionState(
     };
   }
   if (metadata.status === "pending") {
-    if (lane?.dispatchReservation && isProcessAlive(lane.dispatchReservation.pid)) {
+    if (
+      !options.actionSettled &&
+      lane?.dispatchReservation &&
+      isProcessAlive(lane.dispatchReservation.pid)
+    ) {
       return { status: "running" };
     }
     return { status: "session-created", clearReservation: true };
@@ -146,8 +151,9 @@ export function deriveLaneSessionState(
     const activeController =
       isProcessAlive(runtime?.controllerPid) || isProcessAlive(details?.runtime?.controllerPid);
     if (
-      activeController ||
-      (lane?.dispatchReservation && isProcessAlive(lane.dispatchReservation.pid))
+      !options.actionSettled &&
+      (activeController ||
+        (lane?.dispatchReservation && isProcessAlive(lane.dispatchReservation.pid)))
     ) {
       return { status: "running" };
     }
