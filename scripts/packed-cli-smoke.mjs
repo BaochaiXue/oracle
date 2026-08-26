@@ -72,6 +72,19 @@ try {
     }
   }
 
+  const batchHelp = run(process.execPath, [cliPath, "batch", "--help"], { cwd: installDir });
+  for (const expected of [
+    "validate <manifest.json5>",
+    "run [options] <manifest.json5>",
+    "status [options] [batch-id]",
+    "resume [options] <batch-id>",
+    "render [options] <batch-id>",
+  ]) {
+    if (!batchHelp.includes(expected)) {
+      throw new Error(`packed batch help is missing ${expected}`);
+    }
+  }
+
   const installHelp = run(process.execPath, [cliPath, "browser", "install", "--help"], {
     cwd: installDir,
   });

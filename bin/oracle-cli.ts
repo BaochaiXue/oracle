@@ -86,6 +86,7 @@ import {
   isTraceValueFlag,
 } from "../src/cli/perfTrace.js";
 import { resolveBrowserFollowupReference } from "../src/cli/followup.js";
+import { registerBatchCommand } from "../src/cli/batchCommand.js";
 
 interface CliOptions extends OptionValues {
   prompt?: string;
@@ -162,6 +163,7 @@ interface CliOptions extends OptionValues {
   browserInlineFiles?: boolean;
   browserBundleFiles?: boolean;
   browserBundleFormat?: "auto" | "text" | "zip";
+  bundleLabel?: string;
   remoteChrome?: string;
   browserPort?: number;
   browserDebugPort?: number;
@@ -908,6 +910,10 @@ program
     "Force start a new session even if an identical prompt is already running.",
     false,
   )
+  .option(
+    "--bundle-label <label>",
+    "Use a semantic provenance label for generated TXT/ZIP browser bundles.",
+  )
   .option("--debug-help", "Show the advanced/debug option set and exit.", false)
   .option(
     "--heartbeat <seconds>",
@@ -1352,6 +1358,8 @@ program
 
 const docsCommand = program.command("docs").description("Documentation maintenance utilities.");
 
+registerBatchCommand(program);
+
 docsCommand
   .command("check")
   .description("Check documented CLI flags against Commander help metadata.")
@@ -1578,6 +1586,7 @@ function buildRunOptions(
     browserInlineFiles: overrides.browserInlineFiles ?? options.browserInlineFiles ?? false,
     browserBundleFiles: overrides.browserBundleFiles ?? options.browserBundleFiles ?? false,
     browserBundleFormat: overrides.browserBundleFormat ?? options.browserBundleFormat ?? "auto",
+    bundleLabel: overrides.bundleLabel ?? options.bundleLabel,
     generateImage: overrides.generateImage ?? options.generateImage,
     outputPath: overrides.outputPath ?? options.output,
     browserFollowUps: overrides.browserFollowUps ?? options.browserFollowUp ?? [],
@@ -1881,6 +1890,7 @@ function buildRunOptionsFromMetadata(metadata: SessionMetadata): RunOracleOption
     browserInlineFiles: stored.browserInlineFiles,
     browserBundleFiles: stored.browserBundleFiles,
     browserBundleFormat: stored.browserBundleFormat,
+    bundleLabel: stored.bundleLabel,
     generateImage: stored.generateImage,
     outputPath: stored.outputPath,
     browserFollowUps: stored.browserFollowUps,
