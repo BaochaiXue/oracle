@@ -109,7 +109,11 @@ describe("batch synthesis", () => {
     expect((caught as Error).message).toContain("No truncation or summary child was used");
     expect(assemblePrompt).toHaveBeenCalledTimes(1);
     const files = assemblePrompt.mock.calls[0]![0].file as string[];
-    const authority = files.find((file) => file.includes("shared-authority/authority.md"));
+    const authority = files.find(
+      (file) =>
+        path.basename(file) === "authority.md" &&
+        path.basename(path.dirname(file)) === "shared-authority",
+    );
     expect(authority).toBeTruthy();
     expect(await fs.readFile(authority!, "utf8")).toBe("CANONICAL AUTHORITY");
     expect(files.filter((file) => file.endsWith("answer-receipt.json"))).toHaveLength(2);
