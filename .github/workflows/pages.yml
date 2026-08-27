@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - "docs/**"
-      - "assets/readme/**"
       - "scripts/build-docs-site.mjs"
       - "scripts/docs-site-assets.mjs"
       - ".github/workflows/pages.yml"

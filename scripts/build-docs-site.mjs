@@ -9,16 +9,16 @@ import { css, faviconSvg, js, preThemeScript, themeToggleHtml } from "./docs-sit
 const root = process.cwd();
 const docsDir = path.join(root, "docs");
 const outDir = path.join(root, "dist", "docs-site");
-const repoBase = "https://github.com/IndelibleVivi/oracle";
+const repoBase = "https://github.com/steipete/oracle";
 const repoEditBase = `${repoBase}/edit/main/docs`;
 const cname = readCname();
-const siteBase = cname ? `https://${cname}` : "https://indeliblevivi.github.io/oracle";
+const siteBase = cname ? `https://${cname}` : "";
 
 const productName = "oracle";
-const productTagline = "Recoverable GPT‑5.6 Pro consultations";
+const productTagline = "Whisper your prompt to a mythical pro agent";
 const productDescription =
   "Oracle bundles your prompt and files for its canonical ChatGPT GPT-5.6 Pro browser lane, with supported API routes kept separate.";
-const sourceInstall = "git clone https://github.com/IndelibleVivi/oracle.git";
+const brewInstall = "brew install steipete/tap/oracle";
 const codeTheme = "github-dark-dimmed";
 const highlighter = await createHighlighter({
   themes: [codeTheme],
@@ -108,7 +108,6 @@ for (const page of pages) {
 fs.writeFileSync(path.join(outDir, "favicon.svg"), faviconSvg(), "utf8");
 copyStaticAsset("social-card.svg");
 copyStaticAsset("social-card.png");
-copyRepoAsset("assets/readme/oracle-lockup.svg", "oracle-lockup.svg");
 fs.writeFileSync(path.join(outDir, ".nojekyll"), "", "utf8");
 if (cname) fs.writeFileSync(path.join(outDir, "CNAME"), cname, "utf8");
 validateLinks(outDir);
@@ -170,7 +169,7 @@ function docsInstallHint() {
   if (typeof installLine !== "undefined") return installLine;
   if (typeof installCmd !== "undefined") return installCmd;
   if (typeof installSnippet !== "undefined") return installSnippet;
-  if (typeof sourceInstall !== "undefined") return sourceInstall;
+  if (typeof brewInstall !== "undefined") return brewInstall;
   return "";
 }
 
@@ -193,10 +192,6 @@ function readCname() {
 function copyStaticAsset(name) {
   const source = path.join(docsDir, name);
   if (fs.existsSync(source)) fs.copyFileSync(source, path.join(outDir, name));
-}
-
-function copyRepoAsset(relativeSource, outputName) {
-  fs.copyFileSync(path.join(root, relativeSource), path.join(outDir, outputName));
 }
 
 function parseFrontmatter(raw) {
@@ -517,29 +512,33 @@ function homeHero(page) {
   const quickstartRel = pageMap.get("quickstart.md")?.outRel
     ? hrefToOutRel(pageMap.get("quickstart.md").outRel, page.outRel)
     : "quickstart.html";
-  const capabilities = [
-    { name: "Sealed context", core: true },
-    { name: "Exact-session recovery", core: true },
-    { name: "Declared batches", core: true },
-    { name: "Dedicated Chrome", core: true },
+  const services = [
+    { name: "GPT-5.6 Pro", pro: true },
+    { name: "GPT-5.5 Pro", pro: true },
+    { name: "Claude Opus 4.1", pro: true },
+    { name: "Deep Research", pro: true },
+    { name: "GPT-5.x" },
+    { name: "Claude Sonnet 4.6" },
+    { name: "OpenRouter" },
+    { name: "Azure OpenAI" },
   ];
   return `<header class="home-hero">
-        <p class="eyebrow">IndelibleVivi · public fork</p>
+        <p class="eyebrow">One CLI · Every Pro agent</p>
         <h1>${escapeHtml(productTagline)}</h1>
         <p class="lede">${escapeHtml(description)}</p>
         <div class="home-cta">
           <a class="btn btn-primary" href="${quickstartRel}">Quickstart</a>
           <a class="btn btn-ghost" href="${repoBase}" rel="noopener">GitHub</a>
-          <div class="home-install" aria-label="Clone this fork">
+          <div class="home-install" aria-label="Install with Homebrew">
             <span class="prompt" aria-hidden="true">$</span>
-            <code>${escapeHtml(sourceInstall)}</code>
+            <code>${escapeHtml(brewInstall)}</code>
           </div>
         </div>
-        <div class="home-services" aria-label="Fork capabilities">
-          ${capabilities.map((capability) => `<span${capability.core ? ' class="pill-core"' : ""}>${escapeHtml(capability.name)}</span>`).join("")}
+        <div class="home-services" aria-label="Supported models">
+          ${services.map((s) => `<span${s.pro ? ' class="pill-pro"' : ""}>${escapeHtml(s.name)}</span>`).join("")}
         </div>
         <p class="muted"><a href="${installRel}">Other install options →</a></p>
-        <img class="home-visual" src="social-card.png" width="1600" height="760" alt="Oracle visual identity and recoverable-consultation capabilities">
+        <img class="home-visual" src="social-card.png" width="1200" height="630" alt="oracle command-line preview">
       </header>`;
 }
 
@@ -581,8 +580,8 @@ function layout({ page, html, toc, prev, next, sectionName }) {
     ["meta", "property", "og:description", "content", description],
     ["meta", "property", "og:url", "content", canonicalUrl],
     ["meta", "property", "og:image", "content", socialImage],
-    ["meta", "property", "og:image:width", "content", "1600"],
-    ["meta", "property", "og:image:height", "content", "760"],
+    ["meta", "property", "og:image:width", "content", "1200"],
+    ["meta", "property", "og:image:height", "content", "630"],
     ["meta", "name", "twitter:card", "content", "summary_large_image"],
     ["meta", "name", "twitter:title", "content", titleSuffix],
     ["meta", "name", "twitter:description", "content", description],
@@ -613,7 +612,8 @@ function layout({ page, html, toc, prev, next, sectionName }) {
     <aside class="sidebar">
       <div class="sidebar-head">
         <a class="brand" href="${hrefToOutRel("index.html", page.outRel)}" aria-label="${productName} docs home">
-          <img class="brand-lockup" src="${rootPrefix}oracle-lockup.svg" alt="Oracle">
+          <span class="mark" aria-hidden="true"></span>
+          <span><strong>${escapeHtml(productName)}</strong><small>askoracle.sh</small></span>
         </a>
         ${themeToggleHtml()}
       </div>

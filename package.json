@@ -25,17 +25,14 @@
     "vendor/oracle-notifier/OracleNotifier.swift",
     "vendor/oracle-notifier/OracleNotifier.app/**",
     "vendor/oracle-notifier/build-notifier.sh",
-    "assets/readme/*.svg",
     "README.md",
-    "README.en.md",
     "LICENSE"
   ],
   "type": "module",
   "main": "dist/bin/oracle-cli.js",
   "scripts": {
     "docs:list": "tsx scripts/docs-list.ts",
-    "docs:readme-sync": "node scripts/check-readme-sync.mjs",
-    "docs:check": "pnpm run docs:readme-sync && node --no-deprecation --import tsx bin/oracle-cli.ts docs check",
+    "docs:check": "node --no-deprecation --import tsx bin/oracle-cli.ts docs check",
     "docs:site": "node scripts/build-docs-site.mjs",
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && pnpm run build:vendor && pnpm run build:bins",
     "build:bins": "node -e \"for(const file of ['dist/bin/oracle-cli.js','dist/bin/oracle-mcp.js']) require('fs').chmodSync(file,0o755)\"",
