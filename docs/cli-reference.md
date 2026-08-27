@@ -7,17 +7,46 @@ This is the curated cheatsheet. The authoritative source is always `oracle --hel
 
 ## Commands
 
-| Command                        | What it does                                                       |
-| ------------------------------ | ------------------------------------------------------------------ |
-| `oracle [flags] -p "<prompt>"` | Run a consult.                                                     |
-| `oracle status`                | List recent sessions (see [Sessions](sessions.md)).                |
-| `oracle session <id>`          | Replay or block on a stored session.                               |
-| `oracle restart <id>`          | Re-run with the same prompt + files.                               |
-| `oracle docs check`            | Check documented flags against CLI help metadata.                  |
-| `oracle serve`                 | Run the remote browser host (see [Browser Mode](browser-mode.md)). |
-| `oracle bridge claude-config`  | Emit a `.mcp.json` for Claude Code (see [MCP](mcp.md)).            |
-| `oracle tui`                   | Interactive TUI (humans only).                                     |
-| `oracle-mcp`                   | Stdio MCP server entrypoint.                                       |
+| Command                        | What it does                                                                    |
+| ------------------------------ | ------------------------------------------------------------------------------- |
+| `oracle [flags] -p "<prompt>"` | Run a consult.                                                                  |
+| `oracle status`                | List recent sessions (see [Sessions](sessions.md)).                             |
+| `oracle session <id>`          | Replay or block on an ordinary stored session; inspect a Batch child read-only. |
+| `oracle restart <id>`          | Re-run an ordinary session with the same prompt + files.                        |
+| `oracle batch …`               | Validate, run, close, resume, inspect, or render a parallel batch.              |
+| `oracle docs check`            | Check documented flags against CLI help metadata.                               |
+| `oracle serve`                 | Run the remote browser host (see [Browser Mode](browser-mode.md)).              |
+| `oracle bridge claude-config`  | Emit a `.mcp.json` for Claude Code (see [MCP](mcp.md)).                         |
+| `oracle tui`                   | Interactive TUI (humans only).                                                  |
+| `oracle-mcp`                   | Stdio MCP server entrypoint.                                                    |
+
+## Batch Oracle
+
+| Command                                                              | Purpose                                                                                          |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `oracle batch validate <manifest.json5>`                             | Strictly validate JSON5, paths, duplicate lanes, and child caps without dispatch.                |
+| `oracle batch run <manifest.json5>`                                  | Seal all first-stage lanes, create child mappings, and dispatch the blind ready set in parallel. |
+| `oracle batch status [batch-id] [--json]`                            | Reconcile child sessions and show one batch, or list recent batches.                             |
+| `oracle batch resume <batch-id>`                                     | Reattach original sessions and retry only proven unsubmitted, uncommitted, retry-safe attempts.  |
+| `oracle batch accept-missing <batch-id> --lane <id> --reason <text>` | Preserve the session and record an explicit owner closure for one unavailable lane.              |
+| `oracle batch accept-missing <batch-id> --synthesis --reason <text>` | Preserve an unavailable terminal synthesis and close the parent honestly as `partial`.           |
+| `oracle batch resume <batch-id> --allow-partial`                     | Cross the barrier after every unavailable lane has an `accept-missing` decision.                 |
+| `oracle batch render <batch-id> [--lane <id>\|--all]`                | Render status, one raw answer, or all raw answers in manifest order followed by synthesis.       |
+
+`batch run --max-parallel <count>` can only lower the effective manifest,
+user-config, and browser capacity. Batch v1 always uses local dedicated-profile
+direct CDP, `gpt-5-pro`, and the Pro reasoning tier. See
+[Batch Oracle v1](batch-oracle.md).
+
+Batch child inspection is read-only: status/metadata, existing log/artifact
+rendering, and paths may be read by ID. Plain attach returns one snapshot
+without waiting, reattaching, repairing capture, writing session evidence, or
+terminalizing. Generic `session --live|--harvest`, `--followup <batch-child>`,
+`restart <batch-child>`, and stored-session execution are rejected before they
+can touch the conversation or create a new session. This applies to lanes and
+synthesis, including an owner-abandoned synthesis. Perform all recovery, retry,
+completion, and owner closure through the Batch parent so canonical answers,
+receipts, and barrier state advance together.
 
 ## Core consult flags
 
@@ -41,6 +70,9 @@ This is the curated cheatsheet. The authoritative source is always `oracle --hel
 | ------------------------------- | ----------------------------------------------------------------------- |
 | `--followup <id\|slug\|resp_…>` | Continue a saved ChatGPT browser or OpenAI/Azure Responses API session. |
 | `--followup-model <model>`      | Pick API lineage when the parent used `--models`.                       |
+
+`--followup` accepts ordinary sessions only. A Batch child fails closed before
+conversation URL resolution; use `oracle batch resume <batch-id>`.
 
 ## Run control
 
@@ -111,6 +143,7 @@ Profile lifecycle commands:
 | `--browser-headless`, `--browser-hide-window`                                  | Visibility controls.                                                                                                         |
 | `--browser-attachments <auto\|never\|always>`                                  | Attach files inline vs upload.                                                                                               |
 | `--browser-bundle-files`, `--browser-bundle-format <auto\|text\|zip>`          | Bundle browser uploads as text or byte-preserving ZIP.                                                                       |
+| `--bundle-label <label>`                                                       | Give generated TXT/ZIP attachments a stable semantic label before the content-derived ID.                                    |
 | `--browser-chrome-path`, `--browser-cookie-path`                               | Override Chrome / cookie store discovery (Linux / Windows).                                                                  |
 
 See [Browser Mode](browser-mode.md) for usage.
@@ -156,3 +189,4 @@ See [Browser Mode](browser-mode.md) for usage.
 - `oracle --help` — short usage.
 - `oracle --help --verbose` — every flag, including hidden ones.
 - [Configuration](configuration.md) — `~/.oracle/config.json` and project `.oracle/config.json` defaults.
+- [Batch Oracle v1](batch-oracle.md) — strict manifests, stage barriers, recovery, and synthesis.

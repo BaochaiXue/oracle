@@ -1,10 +1,10 @@
 ---
 title: Oracle × Dedicated Chrome
 permalink: /
-description: "A recoverable ChatGPT GPT-5.6 Pro lane using an Oracle-only persistent Chrome profile and loopback CDP, with OpenCLI retained as an explicit alternative."
+description: "Recoverable GPT-5.6 Pro consultations: one session or a declared parallel batch, using an Oracle-only persistent Chrome profile and loopback CDP."
 ---
 
-# GPT-5.6 Pro without personal-browser babysitting
+# Recoverable GPT-5.6 Pro consultations
 
 This fork gives Oracle an official Chrome for Testing app plus its own
 persistent profile. The operator signs in to ChatGPT once; later browser
@@ -119,6 +119,9 @@ Deep Research, image generation, and render/copy are separate documented paths.
   response timing, privacy boundary, and recovery invariants.
 - **Run a consultation.** [Quickstart](quickstart.md) covers first setup, direct
   CDP, API, render, and reattach.
+- **Run independent reviews in parallel.** [Batch Oracle v1](batch-oracle.md)
+  covers snapshot-first admission, blind lanes, verified answers, barrier
+  synthesis, and same-session recovery.
 - **See every browser feature.** [Browser Mode](browser-mode.md) covers direct
   CDP, remote/attach-running paths, Deep Research, files, images, and OpenCLI.
 - **Wire a coding agent.** [Agents](agents.md) covers Codex, Claude Code,

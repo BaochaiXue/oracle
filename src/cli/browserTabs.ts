@@ -18,7 +18,9 @@ import {
   recoverConversationTab,
   type RecoveredConversation,
 } from "../browser/recoverConversation.js";
+import { reconcileOwnedBrowserTargets } from "../browser/lifecycleReconciler.js";
 import { resolveOutputPath } from "./writeOutputPath.js";
+import { assertGenericSessionActionAllowed } from "../batch/sessionAuthority.js";
 
 const LIVE_POLL_MS = 2000;
 const DEFAULT_STALL_THRESHOLD_MS = 60_000;
@@ -162,29 +164,145 @@ export function resolveSessionTabRefForTest(meta: SessionMetadata): string {
 
 async function persistHarvest(
   sessionId: string,
-  meta: SessionMetadata,
   harvested: ChatGptTabSummary,
-): Promise<void> {
+): Promise<SessionMetadata | null> {
   const hash = createHash("sha1")
     .update(harvested.lastAssistantMarkdown ?? harvested.lastAssistantText ?? "")
     .digest("hex");
-  const browser = {
-    ...(meta.browser ?? {}),
-    harvest: {
-      targetId: harvested.targetId,
-      url: harvested.url,
-      conversationId: harvested.conversationId ?? extractConversationIdFromUrl(harvested.url),
-      harvestedAt: new Date().toISOString(),
-      assistantHash: hash,
-      state: harvested.state,
-      stopExists: harvested.stopExists,
-      sendExists: harvested.sendExists,
-      assistantCount: harvested.assistantCount,
-      currentModelLabel: harvested.currentModelLabel,
-      lastAssistantSnippet: harvested.lastAssistantSnippet,
+  return sessionStore.updateExistingSession(sessionId, (current) => ({
+    ...current,
+    browser: {
+      ...(current.browser ?? {}),
+      harvest: {
+        targetId: harvested.targetId,
+        url: harvested.url,
+        conversationId: harvested.conversationId ?? extractConversationIdFromUrl(harvested.url),
+        harvestedAt: new Date().toISOString(),
+        assistantHash: hash,
+        state: harvested.state,
+        stopExists: harvested.stopExists,
+        sendExists: harvested.sendExists,
+        assistantCount: harvested.assistantCount,
+        currentModelLabel: harvested.currentModelLabel,
+        lastAssistantSnippet: harvested.lastAssistantSnippet,
+      },
     },
-  };
-  await sessionStore.updateSession(sessionId, { browser });
+  }));
+}
+
+interface CompletedOwnedHarvestDeps {
+  readSession?: typeof sessionStore.readSession;
+  updateExistingSession?: typeof sessionStore.updateExistingSession;
+  reconcile?: typeof reconcileOwnedBrowserTargets;
+}
+
+function ownedCompletedRuntime(
+  current: SessionMetadata,
+  harvested: ChatGptTabSummary,
+  endpoint: { host: string; port: number },
+) {
+  const runtime = current.browser?.runtime;
+  if (
+    !runtime?.userDataDir ||
+    !runtime.chromeHost ||
+    !runtime.chromePort ||
+    !runtime.chromeTargetId ||
+    runtime.chromeHost !== endpoint.host ||
+    runtime.chromePort !== endpoint.port ||
+    runtime.chromeTargetId !== harvested.targetId
+  ) {
+    return null;
+  }
+  const harvestedConversationId =
+    harvested.conversationId ?? extractConversationIdFromUrl(harvested.url);
+  if (runtime.conversationId && runtime.conversationId !== harvestedConversationId) {
+    return null;
+  }
+  return runtime;
+}
+
+async function finishCompletedOwnedLiveHarvest(
+  sessionId: string,
+  harvested: ChatGptTabSummary,
+  endpoint: { host: string; port: number },
+  explicitBrowserTabRef: string | undefined,
+  deps: CompletedOwnedHarvestDeps = {},
+): Promise<boolean> {
+  if (
+    harvested.state !== "completed" ||
+    !isRecoveredConversationHarvestReady(harvested) ||
+    explicitBrowserTabRef
+  ) {
+    return false;
+  }
+  const readSession = deps.readSession ?? sessionStore.readSession.bind(sessionStore);
+  const updateExistingSession =
+    deps.updateExistingSession ?? sessionStore.updateExistingSession.bind(sessionStore);
+  const reconcile = deps.reconcile ?? reconcileOwnedBrowserTargets;
+  const current = await readSession(sessionId);
+  if (!current || !ownedCompletedRuntime(current, harvested, endpoint)) return false;
+  const terminalized = await updateExistingSession(sessionId, (live) => {
+    const runtime = ownedCompletedRuntime(live, harvested, endpoint);
+    if (!runtime) return null;
+    return {
+      ...live,
+      browser: {
+        ...live.browser,
+        runtime: {
+          ...runtime,
+          browserDisposition: "completed" as const,
+          recoveryKind: undefined,
+          recoveryExpiresAt: undefined,
+          reconcileNeeded: undefined,
+        },
+      },
+    };
+  });
+  const runtime = terminalized?.browser?.runtime;
+  if (!runtime?.userDataDir || !runtime.chromeTargetId) return false;
+
+  try {
+    const receipt = await reconcile({
+      profileDir: runtime.userDataDir,
+      host: endpoint.host,
+      port: endpoint.port,
+      logger: () => {},
+      ensureSentinel: true,
+    });
+    if (
+      receipt.status === "complete" &&
+      (receipt.closedTargetIds.includes(runtime.chromeTargetId) ||
+        !receipt.targetSnapshots[runtime.chromeTargetId])
+    ) {
+      return true;
+    }
+  } catch {
+    // The terminal lifecycle state is already durable; cold-start reconciliation retries cleanup.
+  }
+
+  const afterFailure = await readSession(sessionId);
+  if (!afterFailure || !ownedCompletedRuntime(afterFailure, harvested, endpoint)) {
+    return false;
+  }
+  await updateExistingSession(sessionId, (live) => {
+    const runtime = ownedCompletedRuntime(live, harvested, endpoint);
+    return runtime
+      ? {
+          ...live,
+          browser: {
+            ...live.browser,
+            runtime: {
+              ...runtime,
+              browserDisposition: "completed",
+              recoveryKind: undefined,
+              recoveryExpiresAt: undefined,
+              reconcileNeeded: true,
+            },
+          },
+        }
+      : null;
+  });
+  return false;
 }
 
 function printHarvestSummary(sessionId: string, harvested: ChatGptTabSummary): void {
@@ -268,6 +386,7 @@ export async function harvestSessionBrowserOutput(
   if (!meta) {
     throw new Error(`No session found with ID ${sessionId}.`);
   }
+  assertGenericSessionActionAllowed(meta, "harvest");
   const recordedEndpoint = sessionBrowserEndpoint(meta);
   const initialEndpoint = recordedEndpoint ?? {
     host: DEFAULT_REMOTE_CHROME_HOST,
@@ -309,7 +428,7 @@ export async function harvestSessionBrowserOutput(
       });
     }
 
-    await persistHarvest(sessionId, meta, harvested);
+    const persisted = await persistHarvest(sessionId, harvested);
     recoveryDisposition = harvested.state === "completed" ? "completed" : "recoverable";
     printHarvestSummary(sessionId, harvested);
     const output = harvested.lastAssistantMarkdown ?? harvested.lastAssistantText ?? "";
@@ -318,6 +437,14 @@ export async function harvestSessionBrowserOutput(
     }
     if (!options.quietOutput && output) {
       process.stdout.write(`${output}${output.endsWith("\n") ? "" : "\n"}`);
+    }
+    if (!recoveredConversation && persisted) {
+      await finishCompletedOwnedLiveHarvest(
+        sessionId,
+        harvested,
+        initialEndpoint,
+        options.browserTabRef,
+      );
     }
     return harvested;
   } finally {
@@ -337,6 +464,7 @@ export async function liveTailSessionBrowserOutput(
   if (!meta) {
     throw new Error(`No session found with ID ${sessionId}.`);
   }
+  assertGenericSessionActionAllowed(meta, "live");
   const recordedEndpoint = sessionBrowserEndpoint(meta);
   let endpoint = recordedEndpoint ?? {
     host: DEFAULT_REMOTE_CHROME_HOST,
@@ -405,7 +533,7 @@ export async function liveTailSessionBrowserOutput(
           `send=${harvested.sendExists ? "yes" : "no"} model=${harvested.currentModelLabel || "(unknown)"} ` +
           `snippet=${snippet(harvested.lastAssistantSnippet || fullText, 160)}`;
         console.log(statusLine);
-        await persistHarvest(sessionId, meta, harvested);
+        await persistHarvest(sessionId, harvested);
       }
 
       const derivedState = harvested.stopExists
@@ -426,7 +554,7 @@ export async function liveTailSessionBrowserOutput(
           ...harvested,
           state: derivedState,
         };
-        await persistHarvest(sessionId, meta, finalHarvest);
+        const persisted = await persistHarvest(sessionId, finalHarvest);
         printHarvestSummary(sessionId, finalHarvest);
         const output = finalHarvest.lastAssistantMarkdown ?? finalHarvest.lastAssistantText ?? "";
         if (options.writeOutputPath) {
@@ -434,6 +562,14 @@ export async function liveTailSessionBrowserOutput(
         }
         if (output) {
           process.stdout.write(`${output}${output.endsWith("\n") ? "" : "\n"}`);
+        }
+        if (!recoveredConversation && persisted) {
+          await finishCompletedOwnedLiveHarvest(
+            sessionId,
+            finalHarvest,
+            endpoint,
+            options.browserTabRef,
+          );
         }
         return finalHarvest;
       }
@@ -448,3 +584,8 @@ export async function liveTailSessionBrowserOutput(
     );
   }
 }
+
+// biome-ignore lint/style/useNamingConvention: test-only export used in vitest suite
+export const __test__ = {
+  finishCompletedOwnedLiveHarvest,
+};

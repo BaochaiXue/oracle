@@ -191,7 +191,7 @@ Expect a near-instant response (no Thinking spinner) and confirm the composer pi
 `pnpm run oracle -- --engine browser --model gpt-5-pro --write-output response.txt --prompt "Say Hi!"`
 Confirm the logs report model `GPT-5.6 Sol` followed by `Thinking time: Pro`, the tiny answer populates `response.txt`, and runtime metadata records dispatch-to-answer elapsed time even when it completes in under a minute. Then repeat with a bundle above 256 estimated input tokens and confirm a first stable answer below 60 seconds fails closed with `pro-fast-substantive-response-untrusted`. Exercise both a tab starting on another model and a retained tab where GPT-5.6 Sol is already selected. Never click ChatGPT's "Answer now" shortcut while the Pro response is thinking.
 
-For direct-CDP follow-ups, also run a tiny initial prompt followed by a substantive prompt. Confirm the stored runtime advances `proTurnIndex`, preserves the accepted initial receipt in `proResponseTimingReceipts`, records the follow-up's own token estimate and dispatch, and rejects a sub-60-second substantive follow-up before writing a trusted multi-turn transcript. Reverse the workloads once to confirm a tiny follow-up is classified by its own receipt rather than the initial prompt's workload. For a committed follow-up that times out, reattach once and confirm `proTurnCommitted`, `proCommittedTurnIndex`, and `proPromptSha256` select the exact user turn before its assistant answer. An uncommitted turn, digest mismatch, missing active workload field, or indeterminate timing marker must be terminal rather than recovering an older answer.
+For direct-CDP follow-ups, also run a tiny initial prompt followed by a substantive prompt. Confirm the stored runtime advances `proTurnIndex`, preserves the accepted initial receipt in `proResponseTimingReceipts`, records the follow-up's own token estimate and dispatch, and rejects a sub-60-second substantive follow-up before writing a trusted multi-turn transcript. Every new completed receipt must include its own `promptSha256`, `committedUserTurnIndex`, and literal `commitVerification: "verified"`; the chain must report `proResponseTimingProvenance: "verified"`. Reverse the workloads once to confirm a tiny follow-up is classified by its own receipt rather than the initial prompt's workload. During an in-flight follow-up, confirm the active scalar may be exactly one turn beyond the latest completed receipt without being treated as corruption. For a committed follow-up that times out, reattach once and confirm the validator binds every new-format historical receipt plus the active/latest scalar to its exact DOM user turn. Replace the first receipt's digest with another valid 64-character digest, then separately replace its committed DOM index with another valid non-negative index; both real A/B reattach fixtures must fail closed. Also present valid prompt hashes with reversed `[4,2]` and duplicate `[2,2]` committed DOM indices, and place a committed active scalar one turn beyond the completed chain at or below the last verified historical index; each case must fail closed before DOM prompt acceptance. An uncommitted turn, non-contiguous chain, digest/index mismatch, missing active workload field, or indeterminate timing marker must be terminal rather than recovering an older answer. A legacy identity-less or mixed receipt chain remains readable but must report `legacy-partial` and must never be described as fully reverified.
 
 3. **GPT-5.5 + attachment**
    Prepare `/tmp/browser-md.txt` with a short note, then run
@@ -309,6 +309,31 @@ Use this when you need to inspect the live ChatGPT composer (DOM state, markdown
    - `pkill -f oracle-browser-<slug>` if Chrome is still running.
 
 > **Tip:** Running `npx chrome-devtools-mcp@latest --help` lists additional switches (custom Chrome binary, headless, viewport, etc.).
+
+## Batch authority and owner-closure checks
+
+Use an isolated fixture Batch rather than a valuable live consultation.
+
+1. Inspect a Batch child with `oracle session <child-id>` and confirm metadata
+   remains readable. Then try `--harvest` and `--live`; both must reject with the
+   parent `oracle batch resume <batch-id>` command before connecting to CDP.
+2. In a test fixture, remove the session after the generic harvest command's
+   initial read but before answer persistence. Confirm no session metadata is
+   recreated and no target reconciliation runs. Repeat after reassigning the
+   live session from target A to target B; harvest metadata may be recorded, but
+   runtime ownership must remain B and target A must stay open.
+3. For a batch whose first-stage lanes are complete and synthesis is
+   `recoverable`, run:
+
+   ```bash
+   oracle batch accept-missing <batch-id> \
+     --synthesis \
+     --reason "bounded recovery exhausted"
+   ```
+
+   Confirm the synthesis child and conversation remain, synthesis becomes
+   `abandoned`, the parent/report become `partial`, raw lane answers still
+   render, and a later `batch resume` sends nothing.
 
 ## Responses API Live Smoke Tests
 

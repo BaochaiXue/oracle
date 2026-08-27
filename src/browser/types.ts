@@ -206,6 +206,7 @@ export interface BrowserRunResult {
   proPromptSha256?: string;
   proCommittedTurnIndex?: number;
   proResponseTimingReceipts?: ProResponseTimingReceipt[];
+  proResponseTimingProvenance?: BrowserRuntimeMetadata["proResponseTimingProvenance"];
   opencliOperationRef?: string;
   opencliVersion?: string;
   opencliPayloadSha256?: string;

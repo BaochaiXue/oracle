@@ -29,6 +29,7 @@ import { formatElapsed } from "./oracle/format.js";
 import { safeModelSlug } from "./oracle/modelResolver.js";
 import { getOracleHomeDir } from "./oracleHome.js";
 import { assertOracleModelsAllowed } from "./oracle/forkPolicy.js";
+import { resolveBatchSessionAuthority } from "./batch/sessionAuthority.js";
 
 export type SessionMode = "api" | "browser";
 
@@ -43,7 +44,15 @@ export interface ProResponseTimingReceipt {
   inputTokens: number;
   /** Bytes uploaded with this submitted turn. */
   attachmentBytes: number;
+  /** SHA-256 of this completed turn's normalized prompt identity. Omitted only by legacy receipts. */
+  promptSha256?: string;
+  /** Zero-based DOM index of this completed turn's verified user message. Omitted only by legacy receipts. */
+  committedUserTurnIndex?: number;
+  /** Closed commit evidence for a new-format accepted receipt. Omitted only by legacy receipts. */
+  commitVerification?: "verified";
 }
+
+export type ProResponseTimingProvenance = "verified" | "legacy-partial";
 
 export interface BrowserSessionConfig {
   transport?: BrowserTransport;
@@ -146,6 +155,8 @@ export interface BrowserRuntimeMetadata {
   proCommittedTurnIndex?: number;
   /** Accepted direct-CDP turns, each bound to its own timing and workload receipt. */
   proResponseTimingReceipts?: ProResponseTimingReceipt[];
+  /** Whether every completed direct-CDP turn has self-contained commit identity. */
+  proResponseTimingProvenance?: ProResponseTimingProvenance;
   /** Oracle-owned operation reference for this OpenCLI dispatch attempt. */
   opencliOperationRef?: string;
   /** OpenCLI version verified before dispatch. */
@@ -296,6 +307,7 @@ export interface StoredRunOptions {
   browserInlineFiles?: boolean;
   browserBundleFiles?: boolean;
   browserBundleFormat?: BrowserBundleFormat;
+  bundleLabel?: string;
   background?: boolean;
   search?: boolean;
   provider?: ApiProviderMode;
@@ -346,6 +358,15 @@ export interface SessionMetadata {
   transport?: SessionTransportMetadata;
   error?: SessionUserErrorMetadata;
   lifecycle?: SessionLifecycleMetadata;
+  batch?: SessionBatchContext;
+}
+
+export interface SessionBatchContext {
+  batchId: string;
+  laneId: string;
+  role: "lane" | "synthesis";
+  attempt: number;
+  inputManifestSha256: string;
 }
 
 export type SessionStatus = "pending" | "running" | "completed" | "partial" | "error" | "cancelled";
@@ -744,6 +765,7 @@ export async function initializeSession(
       browserInlineFiles: options.browserInlineFiles,
       browserBundleFiles: options.browserBundleFiles,
       browserBundleFormat: options.browserBundleFormat,
+      bundleLabel: options.bundleLabel,
       background: options.background,
       search: options.search,
       provider: options.provider,
@@ -811,6 +833,23 @@ export async function updateSessionMetadata(
   return next;
 }
 
+export async function updateExistingSessionMetadata(
+  sessionId: string,
+  update: (current: SessionMetadata) => SessionMetadata | null,
+): Promise<SessionMetadata | null> {
+  const existing = await readRawSessionMetadata(sessionId);
+  if (!existing) return null;
+  const next = update(existing);
+  if (!next) return null;
+  if (next.id !== sessionId) {
+    throw new Error(
+      `Session update identity mismatch: expected ${sessionId}, received ${next.id}.`,
+    );
+  }
+  await writeSessionMetadataFile(sessionId, next);
+  return next;
+}
+
 interface ReadSessionMetadataOptions {
   reconcile: boolean;
   persist: boolean;
@@ -858,6 +897,9 @@ async function reconcileSessionMetadata(
   meta: SessionMetadata,
   { persist }: { persist: boolean },
 ): Promise<SessionMetadata> {
+  if (resolveBatchSessionAuthority(meta, "status")) {
+    return meta;
+  }
   let current = meta;
   const workerPid = current.lifecycle?.workerPid;
   if (workerPid) {
@@ -1025,8 +1067,14 @@ export async function deleteSessionsOlderThan({
   }
   const cutoff = includeAll ? Number.NEGATIVE_INFINITY : Date.now() - hours * 60 * 60 * 1000;
   let deleted = 0;
+  const protectedBatchSessions = await import("./batch/store.js").then(
+    ({ listProtectedBatchSessionIds }) => listProtectedBatchSessionIds(),
+  );
 
   for (const entry of entries) {
+    if (protectedBatchSessions.has(entry)) {
+      continue;
+    }
     const dir = sessionDir(entry);
     let createdMs: number | undefined;
     const meta = await readSessionMetadata(entry);

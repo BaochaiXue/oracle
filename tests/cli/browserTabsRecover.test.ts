@@ -41,6 +41,21 @@ const completedHarvest = {
   lastUserSnippet: "original prompt",
 } as const;
 
+const ownedMeta = {
+  ...baseMeta,
+  status: "error",
+  browser: {
+    ...baseMeta.browser,
+    runtime: {
+      ...baseMeta.browser?.runtime,
+      chromeTargetId: "target-x",
+      userDataDir: "/tmp/recover-profile",
+      browserDisposition: "recoverable",
+      recoveryKind: "draft-retained",
+    },
+  },
+} as SessionMetadata;
+
 describe("harvestSessionBrowserOutput recovery fallback", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -65,8 +80,11 @@ describe("harvestSessionBrowserOutput recovery fallback", () => {
       finish,
     }));
 
-    const updateSession = vi.fn(async () => {});
     const readSession = vi.fn(async () => baseMeta);
+    const updateExistingSession = vi.fn(
+      async (_id: string, update: (meta: SessionMetadata) => SessionMetadata | null) =>
+        update(baseMeta),
+    );
 
     vi.doMock("../../src/browser/liveTabs.js", () => ({
       collectChatGptTabs: vi.fn(),
@@ -82,7 +100,10 @@ describe("harvestSessionBrowserOutput recovery fallback", () => {
       recoverConversationTab,
     }));
     vi.doMock("../../src/sessionStore.js", () => ({
-      sessionStore: { readSession, updateSession },
+      sessionStore: {
+        readSession,
+        updateExistingSession,
+      },
     }));
 
     const { harvestSessionBrowserOutput } = await import("../../src/cli/browserTabs.js");
@@ -102,7 +123,7 @@ describe("harvestSessionBrowserOutput recovery fallback", () => {
       }),
     );
     expect(result.lastAssistantMarkdown).toBe(completedHarvest.lastAssistantMarkdown);
-    expect(updateSession).toHaveBeenCalled();
+    expect(updateExistingSession).toHaveBeenCalled();
     // Default closeAfterRecover is false — Chrome stays alive for the user.
     expect(fakeChrome.kill).not.toHaveBeenCalled();
     expect(fakeChrome.process.unref).toHaveBeenCalledTimes(1);
@@ -128,7 +149,14 @@ describe("harvestSessionBrowserOutput recovery fallback", () => {
       recoverConversationTab,
     }));
     vi.doMock("../../src/sessionStore.js", () => ({
-      sessionStore: { readSession: async () => baseMeta, updateSession: async () => {} },
+      sessionStore: {
+        readSession: async () => baseMeta,
+        updateSession: async () => {},
+        updateExistingSession: async (
+          _id: string,
+          update: (meta: SessionMetadata) => SessionMetadata | null,
+        ) => update(baseMeta),
+      },
     }));
 
     const { harvestSessionBrowserOutput } = await import("../../src/cli/browserTabs.js");
@@ -169,7 +197,14 @@ describe("harvestSessionBrowserOutput recovery fallback", () => {
       recoverConversationTab,
     }));
     vi.doMock("../../src/sessionStore.js", () => ({
-      sessionStore: { readSession: async () => baseMeta, updateSession: async () => {} },
+      sessionStore: {
+        readSession: async () => baseMeta,
+        updateSession: async () => {},
+        updateExistingSession: async (
+          _id: string,
+          update: (meta: SessionMetadata) => SessionMetadata | null,
+        ) => update(baseMeta),
+      },
     }));
 
     const { harvestSessionBrowserOutput } = await import("../../src/cli/browserTabs.js");
@@ -207,7 +242,14 @@ describe("harvestSessionBrowserOutput recovery fallback", () => {
       })),
     }));
     vi.doMock("../../src/sessionStore.js", () => ({
-      sessionStore: { readSession: async () => baseMeta, updateSession: async () => {} },
+      sessionStore: {
+        readSession: async () => baseMeta,
+        updateSession: async () => {},
+        updateExistingSession: async (
+          _id: string,
+          update: (meta: SessionMetadata) => SessionMetadata | null,
+        ) => update(baseMeta),
+      },
     }));
 
     const { harvestSessionBrowserOutput } = await import("../../src/cli/browserTabs.js");
@@ -239,7 +281,14 @@ describe("harvestSessionBrowserOutput recovery fallback", () => {
       recoverConversationTab,
     }));
     vi.doMock("../../src/sessionStore.js", () => ({
-      sessionStore: { readSession: async () => baseMeta, updateSession: async () => {} },
+      sessionStore: {
+        readSession: async () => baseMeta,
+        updateSession: async () => {},
+        updateExistingSession: async (
+          _id: string,
+          update: (meta: SessionMetadata) => SessionMetadata | null,
+        ) => update(baseMeta),
+      },
     }));
 
     const { harvestSessionBrowserOutput } = await import("../../src/cli/browserTabs.js");
@@ -251,4 +300,162 @@ describe("harvestSessionBrowserOutput recovery fallback", () => {
     ).rejects.toThrow(/explicit-ref/);
     expect(recoverConversationTab).not.toHaveBeenCalled();
   });
+
+  test("does not recreate a session deleted between initial read and completed harvest persistence", async () => {
+    let current: SessionMetadata | null = ownedMeta;
+    const harvestChatGptTab = vi.fn(async () => {
+      current = null;
+      return completedHarvest;
+    });
+    const readSession = vi.fn(async () => current);
+    const updateSession = vi.fn(async (_id: string, updates: Partial<SessionMetadata>) => {
+      current = { id: ownedMeta.id, ...updates } as SessionMetadata;
+      return current;
+    });
+    const updateExistingSession = vi.fn(
+      async (_id: string, update: (meta: SessionMetadata) => SessionMetadata | null) => {
+        if (!current) return null;
+        const next = update(current);
+        if (next) current = next;
+        return next;
+      },
+    );
+    const reconcileOwnedBrowserTargets = vi.fn();
+
+    vi.doMock("../../src/browser/liveTabs.js", () => ({
+      collectChatGptTabs: vi.fn(),
+      DEFAULT_REMOTE_CHROME_HOST: "127.0.0.1",
+      DEFAULT_REMOTE_CHROME_PORT: 9222,
+      extractConversationIdFromUrl: (url: string) =>
+        url.includes("/c/") ? url.split("/c/")[1] : null,
+      formatBrowserTabState: () => "completed",
+      harvestChatGptTab,
+      sessionMatchesTab: () => false,
+    }));
+    vi.doMock("../../src/browser/recoverConversation.js", () => ({
+      isRecoveredConversationHarvestReady: () => true,
+      recoverConversationTab: vi.fn(),
+    }));
+    vi.doMock("../../src/browser/lifecycleReconciler.js", () => ({
+      reconcileOwnedBrowserTargets,
+    }));
+    vi.doMock("../../src/sessionStore.js", () => ({
+      sessionStore: { readSession, updateSession, updateExistingSession },
+    }));
+
+    const { harvestSessionBrowserOutput } = await import("../../src/cli/browserTabs.js");
+    await harvestSessionBrowserOutput(ownedMeta.id, { quietOutput: true });
+
+    expect(current).toBeNull();
+    expect(updateSession).not.toHaveBeenCalled();
+    expect(reconcileOwnedBrowserTargets).not.toHaveBeenCalled();
+  });
+
+  test("does not let completed harvest persistence restore stale target ownership", async () => {
+    const reassigned = {
+      ...ownedMeta,
+      browser: {
+        ...ownedMeta.browser,
+        runtime: { ...ownedMeta.browser?.runtime, chromeTargetId: "target-y" },
+      },
+    } as SessionMetadata;
+    let current: SessionMetadata | null = ownedMeta;
+    const harvestChatGptTab = vi.fn(async () => {
+      current = reassigned;
+      return completedHarvest;
+    });
+    const readSession = vi.fn(async () => current);
+    const updateSession = vi.fn(async (_id: string, updates: Partial<SessionMetadata>) => {
+      current = { ...current, ...updates } as SessionMetadata;
+      return current;
+    });
+    const updateExistingSession = vi.fn(
+      async (_id: string, update: (meta: SessionMetadata) => SessionMetadata | null) => {
+        if (!current) return null;
+        const next = update(current);
+        if (next) current = next;
+        return next;
+      },
+    );
+    const reconcileOwnedBrowserTargets = vi.fn();
+
+    vi.doMock("../../src/browser/liveTabs.js", () => ({
+      collectChatGptTabs: vi.fn(),
+      DEFAULT_REMOTE_CHROME_HOST: "127.0.0.1",
+      DEFAULT_REMOTE_CHROME_PORT: 9222,
+      extractConversationIdFromUrl: (url: string) =>
+        url.includes("/c/") ? url.split("/c/")[1] : null,
+      formatBrowserTabState: () => "completed",
+      harvestChatGptTab,
+      sessionMatchesTab: () => false,
+    }));
+    vi.doMock("../../src/browser/recoverConversation.js", () => ({
+      isRecoveredConversationHarvestReady: () => true,
+      recoverConversationTab: vi.fn(),
+    }));
+    vi.doMock("../../src/browser/lifecycleReconciler.js", () => ({
+      reconcileOwnedBrowserTargets,
+    }));
+    vi.doMock("../../src/sessionStore.js", () => ({
+      sessionStore: { readSession, updateSession, updateExistingSession },
+    }));
+
+    const { harvestSessionBrowserOutput } = await import("../../src/cli/browserTabs.js");
+    await harvestSessionBrowserOutput(ownedMeta.id, { quietOutput: true });
+
+    expect(current?.browser?.runtime?.chromeTargetId).toBe("target-y");
+    expect(current?.browser?.harvest?.targetId).toBe("target-x");
+    expect(updateSession).not.toHaveBeenCalled();
+    expect(reconcileOwnedBrowserTargets).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ["--harvest", "harvestSessionBrowserOutput"],
+    ["--live", "liveTailSessionBrowserOutput"],
+  ])(
+    "blocks generic %s recovery for a Batch child before touching its tab",
+    async (_flag, name) => {
+      const batchMeta = {
+        ...ownedMeta,
+        batch: {
+          batchId: "batch-123",
+          laneId: "constitution",
+          role: "lane",
+          attempt: 1,
+          inputManifestSha256: "a".repeat(64),
+        },
+      } as SessionMetadata;
+      const harvestChatGptTab = vi.fn(async () => completedHarvest);
+      vi.doMock("../../src/browser/liveTabs.js", () => ({
+        collectChatGptTabs: vi.fn(),
+        DEFAULT_REMOTE_CHROME_HOST: "127.0.0.1",
+        DEFAULT_REMOTE_CHROME_PORT: 9222,
+        extractConversationIdFromUrl: () => "saved-conversation",
+        formatBrowserTabState: () => "completed",
+        harvestChatGptTab,
+        sessionMatchesTab: () => false,
+      }));
+      vi.doMock("../../src/browser/recoverConversation.js", () => ({
+        isRecoveredConversationHarvestReady: () => true,
+        recoverConversationTab: vi.fn(),
+      }));
+      vi.doMock("../../src/sessionStore.js", () => ({
+        sessionStore: {
+          readSession: vi.fn(async () => batchMeta),
+          updateSession: vi.fn(),
+          updateExistingSession: vi.fn(),
+        },
+      }));
+
+      const browserTabs = await import("../../src/cli/browserTabs.js");
+      const run = browserTabs[name as "harvestSessionBrowserOutput"] as (
+        id: string,
+        options: { quietOutput?: boolean },
+      ) => Promise<unknown>;
+      await expect(run(batchMeta.id, { quietOutput: true })).rejects.toThrow(
+        /batchId=batch-123, laneId=constitution, role=lane.*oracle batch resume batch-123/su,
+      );
+      expect(harvestChatGptTab).not.toHaveBeenCalled();
+    },
+  );
 });

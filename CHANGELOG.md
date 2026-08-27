@@ -2,6 +2,22 @@
 
 ## 0.17.3 — Unreleased
 
+### Added
+
+- Batch Oracle v1: declare two or more independent GPT-5.6 Pro review lanes in
+  a strict JSON5 manifest, atomically snapshot admitted sources before sealing
+  the blind first-stage ready set, run within owner/browser concurrency caps,
+  recover each original child session without duplicating committed or
+  indeterminate prompts, and optionally launch a contradiction-first synthesis
+  after the durable barrier. New `oracle batch
+validate|run|status|resume|accept-missing|render` commands, atomic action
+  claims, explicit missing-lane and unavailable-synthesis owner decisions,
+  three-layer TXT/ZIP artifact identity, verified answer receipts, and
+  manifest-order rendering keep the workflow inspectable and fail closed on
+  evidence mismatch. A bounded nonterminal synthesis can now be preserved and
+  explicitly abandoned without resend, closing the parent honestly as
+  `partial` while retaining verified lane answers.
+
 ### Changed
 
 - Browser: preserve completed ChatGPT conversations by default so users can
@@ -11,6 +27,11 @@
 
 ### Fixed
 
+- Batch mutation locks: preserve a newly created lock directory while its owner
+  receipt is still being published, so a concurrent stale-lock contender cannot
+  quarantine an active claim and acquire the same batch simultaneously. Truly
+  abandoned empty lock directories remain recoverable after a bounded
+  publication grace.
 - Direct CDP submission recovery: after a nominal Send leaves the exact prompt
   staged with no new turn or streaming evidence, revalidate the original target
   and page state atomically before issuing at most one page-side Send click. Only
@@ -24,6 +45,21 @@
   recovery holds, and unowned meaningful pages are preserved. Failed close
   confirmation records reconciliation work without spawning another blank tab;
   cold start retries exact owned cleanup and never falls back to the first page.
+  A completed `oracle session <id> --live` or `--harvest` of an already-live,
+  exactly recorded session target now terminalizes and reconciles that target
+  too, including a draft the operator deliberately sent by hand; overrides and
+  ownership mismatches remain open. Action-time cleanup now also requires the
+  session to still exist and any stable stored conversation ID to be present
+  and identical in the harvested tab, so a vanished session or ambiguous
+  conversation can never be recreated merely to close a tab. Harvest metadata
+  now merges only into current existing session state; stale command-start
+  metadata cannot recreate a deleted session or restore superseded target
+  ownership. Batch child session inspection is now centrally read-only:
+  status/render/path/log/artifact reads cannot wait, auto-reattach, repair, or
+  mutate the child. Generic `session --live|--harvest`, follow-up, restart, and
+  stored-session execution reject every Batch role before tab/conversation
+  access or new-session creation, so only the parent can recover, retry, accept
+  answers, write receipts, advance the barrier, or record owner closure.
 - Dedicated browser targets: register ChatGPT, Project Sources, Gemini, recovery,
   and sentinel targets in one durable ownership registry. Completed sessions
   close their exact targets, including `keepBrowser:true` Gemini runs, while
@@ -44,12 +80,17 @@
   follow-ups. Each submitted turn now carries its own dispatch, first-answer
   elapsed time, input estimate, verified upload bytes, commit state, and
   privacy-safe prompt identity and must pass admission before Oracle can format
-  a multi-turn transcript. Reattach matches the stored prompt digest to the
-  exact committed user turn. Once any new turn-receipt identity marker exists,
-  every commit, digest, index, workload, and timing field is required even when
-  resolved config is stale; partial active workload and indeterminate timing
-  fail closed, while older scalar and OpenCLI receipts keep their explicit
-  migration policy.
+  a multi-turn transcript. Every completed turn now archives that prompt digest,
+  committed DOM user-turn index, and verified commit evidence in its own
+  receipt; reattach validates the full new-format historical chain, not only
+  the latest scalar. Once any new turn-receipt identity marker exists, every
+  commit, digest, index, workload, and timing field in that receipt is required
+  even when resolved config is stale. Verified committed DOM user-turn indices
+  must strictly advance without duplicates, and a committed active turn one
+  position beyond the completed chain must advance beyond its last verified
+  historical DOM index. Legacy identity-less and mixed chains remain readable
+  as `legacy-partial` without inferred backfill, while partial active workload
+  and indeterminate timing fail closed.
 - Direct CDP submission: background-open the dedicated Chrome through macOS
   LaunchServices, create each new tab with `focus:false`, and use page-side
   focus emulation for trusted input. Oracle now verifies exact composer identity

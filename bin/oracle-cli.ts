@@ -86,6 +86,8 @@ import {
   isTraceValueFlag,
 } from "../src/cli/perfTrace.js";
 import { resolveBrowserFollowupReference } from "../src/cli/followup.js";
+import { registerBatchCommand } from "../src/cli/batchCommand.js";
+import { assertGenericSessionActionAllowed } from "../src/batch/sessionAuthority.js";
 
 interface CliOptions extends OptionValues {
   prompt?: string;
@@ -162,6 +164,7 @@ interface CliOptions extends OptionValues {
   browserInlineFiles?: boolean;
   browserBundleFiles?: boolean;
   browserBundleFormat?: "auto" | "text" | "zip";
+  bundleLabel?: string;
   remoteChrome?: string;
   browserPort?: number;
   browserDebugPort?: number;
@@ -908,6 +911,10 @@ program
     "Force start a new session even if an identical prompt is already running.",
     false,
   )
+  .option(
+    "--bundle-label <label>",
+    "Use a semantic provenance label for generated TXT/ZIP browser bundles.",
+  )
   .option("--debug-help", "Show the advanced/debug option set and exit.", false)
   .option(
     "--heartbeat <seconds>",
@@ -1352,6 +1359,8 @@ program
 
 const docsCommand = program.command("docs").description("Documentation maintenance utilities.");
 
+registerBatchCommand(program);
+
 docsCommand
   .command("check")
   .description("Check documented CLI flags against Commander help metadata.")
@@ -1578,6 +1587,7 @@ function buildRunOptions(
     browserInlineFiles: overrides.browserInlineFiles ?? options.browserInlineFiles ?? false,
     browserBundleFiles: overrides.browserBundleFiles ?? options.browserBundleFiles ?? false,
     browserBundleFormat: overrides.browserBundleFormat ?? options.browserBundleFormat ?? "auto",
+    bundleLabel: overrides.bundleLabel ?? options.bundleLabel,
     generateImage: overrides.generateImage ?? options.generateImage,
     outputPath: overrides.outputPath ?? options.output,
     browserFollowUps: overrides.browserFollowUps ?? options.browserFollowUp ?? [],
@@ -1785,6 +1795,7 @@ async function resolveFollowupReference(
       `No session found with ID ${trimmed}.${suggestionText} Run "oracle status --hours 72 --limit 20" to list recent sessions.`,
     );
   }
+  assertGenericSessionActionAllowed(meta, "followup");
   const fromMetadata = extractResponseIdFromSession(meta, followupModel);
   if (fromMetadata) {
     return { responseId: fromMetadata, sessionId: meta.id };
@@ -1881,6 +1892,7 @@ function buildRunOptionsFromMetadata(metadata: SessionMetadata): RunOracleOption
     browserInlineFiles: stored.browserInlineFiles,
     browserBundleFiles: stored.browserBundleFiles,
     browserBundleFormat: stored.browserBundleFormat,
+    bundleLabel: stored.bundleLabel,
     generateImage: stored.generateImage,
     outputPath: stored.outputPath,
     browserFollowUps: stored.browserFollowUps,
@@ -2214,6 +2226,10 @@ async function runRootCommand(options: CliOptions): Promise<void> {
   }
 
   if (options.execSession) {
+    const storedSession = await sessionStore.readSession(options.execSession);
+    if (storedSession) {
+      assertGenericSessionActionAllowed(storedSession, "execute");
+    }
     await waitForDetachedStartGate();
     await executeSession(options.execSession);
     return;
@@ -2753,6 +2769,8 @@ async function restartSession(sessionId: string, options: RestartCommandOptions)
     return;
   }
 
+  assertGenericSessionActionAllowed(metadata, "restart");
+
   const runOptions = buildRunOptionsFromMetadata(metadata);
   if (!runOptions.prompt) {
     console.error(chalk.red(`Session ${sessionId} has no stored prompt; cannot restart.`));
@@ -2940,6 +2958,7 @@ async function executeSession(sessionId: string) {
     if (!metadata) {
       throw new Error(`No session found with ID ${sessionId}`);
     }
+    assertGenericSessionActionAllowed(metadata, "execute");
     if (
       process.env.ORACLE_DETACHED_START_GATE === "1" &&
       metadata.lifecycle?.workerPid !== process.pid

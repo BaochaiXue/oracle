@@ -45,6 +45,7 @@ import { resumeOpenCliBrowserSession } from "./opencliTransport.js";
 import { ensureDedicatedBrowserProfileDirectory } from "./manualLoginProfile.js";
 import { BrowserAutomationError } from "../oracle/errors.js";
 import {
+  assertProResponseTimingReceiptChain,
   hasProResponseTimingReceiptMarker,
   verifyStoredProResponseWorkloadTiming,
 } from "./proResponseTiming.js";
@@ -626,6 +627,7 @@ async function verifyCommittedProTurnIdentity(
   if (!hasProResponseTimingReceiptMarker(runtime)) {
     return null;
   }
+  assertProResponseTimingReceiptChain(runtime);
   if (runtime.proTurnCommitted !== true) {
     throwUncommittedProTurn(runtime);
   }
@@ -633,6 +635,8 @@ async function verifyCommittedProTurnIdentity(
   const committedTurnIndex = runtime.proCommittedTurnIndex;
   const expectedSha256 = runtime.proPromptSha256;
   if (
+    !Number.isSafeInteger(runtime.proTurnIndex) ||
+    (runtime.proTurnIndex as number) < 0 ||
     !Number.isSafeInteger(committedTurnIndex) ||
     (committedTurnIndex as number) < 0 ||
     typeof expectedSha256 !== "string" ||
@@ -648,10 +652,24 @@ async function verifyCommittedProTurnIdentity(
     );
   }
 
+  const expectedTurns = (runtime.proResponseTimingReceipts ?? [])
+    .filter((receipt) => receipt.commitVerification === "verified")
+    .map((receipt) => ({
+      turnIndex: receipt.turnIndex,
+      committedUserTurnIndex: receipt.committedUserTurnIndex as number,
+      promptSha256: receipt.promptSha256 as string,
+    }));
+  if (!expectedTurns.some((entry) => entry.turnIndex === runtime.proTurnIndex)) {
+    expectedTurns.push({
+      turnIndex: runtime.proTurnIndex as number,
+      committedUserTurnIndex: committedTurnIndex as number,
+      promptSha256: expectedSha256,
+    });
+  }
+
   const { result } = await Runtime.evaluate({
     expression: `(async () => {
-      const turnIndex = ${committedTurnIndex};
-      const expectedSha256 = ${JSON.stringify(expectedSha256)};
+      const expectedTurns = ${JSON.stringify(expectedTurns)};
       const normalize = (value) => {
         let text = String(value || '').toLowerCase();
         text = text.replace(/\`\`\`[^\\n]*\\n([\\s\\S]*?)\`\`\`/g, ' $1 ');
@@ -660,25 +678,28 @@ async function verifyCommittedProTurnIdentity(
         return text.replace(/\\s+/g, ' ').trim();
       };
       const turns = ${buildConversationTurnListExpression()};
-      const node = turns[turnIndex];
-      if (!node) return false;
-      const role = String(
-        node.getAttribute?.('data-message-author-role') ||
-        node.getAttribute?.('data-turn') ||
-        node.dataset?.turn ||
-        '',
-      ).toLowerCase();
-      const roleNode = role === 'user'
-        ? node
-        : node.querySelector?.('[data-message-author-role="user"], [data-turn="user"]');
-      if (!roleNode) return false;
-      const messageNode = roleNode.querySelector?.('.whitespace-pre-wrap') || roleNode;
-      const normalized = normalize(messageNode.innerText || messageNode.textContent || '');
-      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
-      const actualSha256 = Array.from(new Uint8Array(digest))
-        .map((byte) => byte.toString(16).padStart(2, '0'))
-        .join('');
-      return actualSha256 === expectedSha256;
+      for (const expected of expectedTurns) {
+        const node = turns[expected.committedUserTurnIndex];
+        if (!node) return false;
+        const role = String(
+          node.getAttribute?.('data-message-author-role') ||
+          node.getAttribute?.('data-turn') ||
+          node.dataset?.turn ||
+          '',
+        ).toLowerCase();
+        const roleNode = role === 'user'
+          ? node
+          : node.querySelector?.('[data-message-author-role="user"], [data-turn="user"]');
+        if (!roleNode) return false;
+        const messageNode = roleNode.querySelector?.('.whitespace-pre-wrap') || roleNode;
+        const normalized = normalize(messageNode.innerText || messageNode.textContent || '');
+        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
+        const actualSha256 = Array.from(new Uint8Array(digest))
+          .map((byte) => byte.toString(16).padStart(2, '0'))
+          .join('');
+        if (actualSha256 !== expected.promptSha256) return false;
+      }
+      return true;
     })()`,
     returnByValue: true,
     awaitPromise: true,
@@ -692,6 +713,7 @@ async function verifyCommittedProTurnIdentity(
         runtime,
         committedTurnIndex,
         promptSha256: expectedSha256,
+        verifiedReceiptTurnIndices: expectedTurns.map((entry) => entry.turnIndex),
       },
     );
   }

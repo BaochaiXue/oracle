@@ -117,6 +117,86 @@ selection verification cannot rely on a detached stale node.
 - Performance trace:
   - `npx -y @steipete/oracle --perf-trace --perf-trace-path /tmp/oracle-perf.json --dry-run summary -p "<task>" --file "src/**"`
 
+## Parallel-first Batch Oracle
+
+Use a declared batch when one difficult decision contains at least two
+independent, decision-relevant questions whose prompts and evidence can be
+sealed before either answer is known.
+
+For every lane, state its mandate, why it exists, falsification target,
+authority/files, exact prompt, and output contract. Do not fan out an identical
+prompt for voting or manufacture distinction through reviewer personas alone.
+
+Before dispatch, determine the ready set. A lane belongs in the current
+parallel stage whenever its complete input can already be sealed. Dispatch all
+ready lanes concurrently up to the owner's configured capacity. Do not
+serialize independent work for procedural convenience.
+
+Resolve the ready-set membership, copy each admitted source exactly once into
+the owner-only batch snapshot, and assemble every first-stage lane from that
+published snapshot. Seal every lane before dispatching any of them.
+Independent lanes receive a blind first pass and never see sibling answers
+while the stage is open.
+
+Arrival order is transport state, not epistemic priority. Persist each raw
+answer and receipt as it arrives, but do not perform rolling synthesis, rewrite
+sibling prompts, or choose a direction before the barrier closes.
+
+A batch owns one recoverable logical session per lane. Reattach quiet,
+detached, or timed-out work within that lane. Create another attempt only when
+durable evidence proves the prior prompt was unsubmitted, uncommitted, and
+retry-safe. Once `dispatchStartedAt` exists, missing runtime evidence is
+indeterminate rather than permission to send again.
+
+Close the first-stage barrier only after every required lane is terminal.
+Partial synthesis requires two explicit owner actions: record each unavailable
+lane with `oracle batch accept-missing <batch-id> --lane <lane-id> --reason
+"<reason>"`, then resume with `--allow-partial`. It must name missing lanes and
+weakened conclusions.
+
+Batch child sessions may be inspected by ID, where inspection means only
+reading status/metadata, rendering existing logs/artifacts, or printing paths.
+A plain `oracle session <child-id>` attach must return one read-only snapshot:
+never wait, auto-reattach, repair capture, append logs/artifacts, update a model
+run/session, or terminalize. Completed children remain renderable.
+
+Never complete, recover, continue, or clone a Batch child with generic
+`session --live|--harvest`, `--followup <child-id>`, or `restart <child-id>`.
+Those paths fail closed before tab access, conversation URL resolution, or new
+session creation, including for an owner-abandoned synthesis. Use `oracle batch
+resume <batch-id>` for recovery/retry/completion and the parent
+`batch accept-missing` commands for owner closure. Start a new ordinary Oracle
+run explicitly when the desired consultation must be independent of the Batch
+lineage.
+
+A synthesis session receives canonical shared-authority bytes plus each
+verified answer, its immutable receipt, and its sealed input manifest. It must
+preserve dissent, identify unsupported agreement, produce a contradiction
+matrix, expose owner-pending decisions, and propose one bounded next experiment
+with kill criteria. Never decide by majority vote alone.
+
+When every first-stage lane is accepted but synthesis remains `recoverable`,
+`error`, or `indeterminate` after bounded exact recovery, the owner may preserve
+that child and close the stage with `oracle batch accept-missing <batch-id>
+--synthesis --reason "<reason>"`. This marks synthesis `abandoned` and the
+parent `partial`; it never resends and does not discard verified lane answers.
+
+Keep raw answers durable and loadable on demand. Do not permanently inject
+every long child answer into the host's working context. During an open stage,
+retain only batch status, lane identities, receipts, and paths.
+
+Batch v1 has one independent parallel stage plus one optional synthesis stage.
+Do not recursively spawn batches or grow an undeclared workflow DAG. Use only
+the owner's configured capacity. Stop and report allowance or request-frequency
+gates; never bypass them by changing model, transport, provider, account, or
+engine.
+
+Use `oracle batch validate <manifest.json5>` before the first real run when the
+manifest or file scope is new. Continue with `oracle batch run`, then recover
+the parent through `oracle batch status` and `oracle batch resume`; do not
+restart individual Batch children. Load raw answers only when needed through
+`oracle batch render --lane` or `--all`.
+
 ## Attaching files
 
 `--file` accepts files, directories, and globs. Pass it multiple times or use

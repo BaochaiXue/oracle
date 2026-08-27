@@ -532,8 +532,12 @@ describe("runBrowserSessionExecution", () => {
                   responseElapsedMs: 10_000,
                   inputTokens: 2,
                   attachmentBytes: 0,
+                  promptSha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  committedUserTurnIndex: 0,
+                  commitVerification: "verified",
                 },
               ],
+              proResponseTimingProvenance: "verified",
             });
             return {
               answerText: "private multi-turn transcript",
@@ -550,6 +554,19 @@ describe("runBrowserSessionExecution", () => {
               proTurnCommitted: true,
               proPromptSha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
               proCommittedTurnIndex: 2,
+              proResponseTimingReceipts: [
+                {
+                  turnIndex: 0,
+                  dispatchAt: "2026-08-15T00:00:00.000Z",
+                  responseElapsedMs: 10_000,
+                  inputTokens: 2,
+                  attachmentBytes: 0,
+                  promptSha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  committedUserTurnIndex: 0,
+                  commitVerification: "verified" as const,
+                },
+              ],
+              proResponseTimingProvenance: "verified" as const,
             };
           }),
           persistRuntimeHint,

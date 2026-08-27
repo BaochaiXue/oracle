@@ -229,6 +229,32 @@ describe("session lifecycle", () => {
     expect(sessionFiles.filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
+  test("updateExistingSessionMetadata merges from live state and never creates a missing session", async () => {
+    const meta = await sessionModule.initializeSession(
+      { prompt: "Update existing", model: "gpt-5.2-pro" },
+      "/tmp/cwd",
+    );
+    await sessionModule.updateSessionMetadata(meta.id, { promptPreview: "live value" });
+
+    const updated = await sessionModule.updateExistingSessionMetadata(meta.id, (current) => ({
+      ...current,
+      status: "completed",
+      promptPreview: `${current.promptPreview} preserved`,
+    }));
+    expect(updated).toEqual(
+      expect.objectContaining({ status: "completed", promptPreview: "live value preserved" }),
+    );
+
+    await rm(path.join(sessionModule.getSessionsDir(), meta.id), { recursive: true, force: true });
+    expect(
+      await sessionModule.updateExistingSessionMetadata(meta.id, (current) => ({
+        ...current,
+        status: "completed",
+      })),
+    ).toBeNull();
+    expect(await sessionModule.readSessionMetadata(meta.id)).toBeNull();
+  });
+
   test("createSessionLogWriter appends logs and supports chunk writes", async () => {
     const meta = await sessionModule.initializeSession(
       { prompt: "Log history", model: "gpt-5.2-pro" },

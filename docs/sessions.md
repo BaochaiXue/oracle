@@ -18,6 +18,22 @@ Every Oracle run gets an id, a slug, and a folder. You can list runs, render the
 
 Override the root with `ORACLE_HOME_DIR=/some/path`.
 
+Batch Oracle adds a parent store beside ordinary sessions:
+
+```text
+~/.oracle/batches/<batch-id>/
+├── state.json
+├── report.md
+├── inputs/       # admitted source snapshot, sealed prompts, bytes, provenance
+└── outputs/      # manifest-ordered raw answers and immutable receipts
+```
+
+Every Batch lane and optional synthesis remains an ordinary child session under
+`~/.oracle/sessions/`, with `batchId`, `laneId`, role, attempt, and sealed input
+digest in its metadata. The parent coordinates the stage; child session/browser
+metadata remains execution and reattach authority. Nonterminal batch children
+are protected from time-based session pruning.
+
 ## Listing
 
 ```bash
@@ -87,13 +103,59 @@ oracle --engine browser \
 
 See [Browser Mode](browser-mode.md) for the full set.
 
+For a declared parallel batch, resume the parent instead of restarting a child:
+
+```bash
+oracle batch status <batch-id> --json
+oracle batch resume <batch-id>
+```
+
+Batch resume reuses the original recoverable child session. It creates a new
+attempt only when the previous child has durable evidence that no prompt was
+submitted or committed and the failure is retry-safe. Every generic mutation
+surface rejects Batch children: `oracle restart <child>`, `--followup <child>`,
+and `oracle session <child> --live|--harvest`. These paths cannot own parent
+reservations, canonical answers, receipts, or the stage barrier.
+
+A Batch child remains inspectable with `oracle session <child>`, `oracle status
+<child>`, `oracle session <child> --path`, or stored log/artifact rendering.
+Here **inspect** is strictly read-only. Plain attach displays one current
+snapshot and returns; it does not wait, auto-reattach, repair capture, append a
+log, create an artifact, update model/session state, or terminalize. This is
+true for running, recoverable, completed, and owner-abandoned synthesis
+children. All recovery, retry, completion, and owner closure must pass through
+the Batch parent. See [Batch Oracle v1](batch-oracle.md).
+
+If an unavailable lane must be omitted, preserve its session and record the
+owner decision before partial synthesis:
+
+```bash
+oracle batch accept-missing <batch-id> --lane <lane-id> --reason "<reason>"
+oracle batch resume <batch-id> --allow-partial
+```
+
+If every first-stage lane is accepted but synthesis remains nonterminal after
+bounded recovery, close it without resending while preserving its session and
+conversation:
+
+```bash
+oracle batch accept-missing <batch-id> --synthesis --reason "<reason>"
+```
+
+The parent becomes terminal `partial`, the report records synthesis as
+unavailable, and verified raw lane answers remain usable.
+
 ## Restart
 
 ```bash
 oracle restart <id>            # re-run with the same prompt + files
 ```
 
-Useful when a transient browser/API error truncated the answer. Restart copies the bundle, opens a new session, and links lineage back.
+Useful when a transient ordinary browser/API error truncated the answer.
+Restart copies the bundle, opens a new session, and links lineage back. Batch
+children are rejected before options are cloned or a new session is created;
+use `oracle batch resume <batch-id>`, or create a deliberately independent
+ordinary Oracle run without Batch lineage.
 
 ## Follow up
 
@@ -104,7 +166,12 @@ oracle --followup <id> -p "Re-evaluate with these files" \
   --file "src/migrations/**"
 ```
 
-Browser followup reopens the exact saved conversation and inherits its browser configuration and model. For multi-model API parents, pick the lineage with `--followup-model`. See [Followup](followup.md) for the full flow and the formats `--followup` accepts (session ids, slugs, or `resp_…` response ids).
+Browser followup reopens the exact saved conversation and inherits its browser
+configuration and model. A Batch child is rejected before Oracle resolves or
+opens its conversation URL; Batch conversations can only advance through the
+parent. For multi-model API parents, pick the lineage with `--followup-model`.
+See [Followup](followup.md) for the full ordinary-session flow and the formats
+`--followup` accepts (session ids, slugs, or `resp_…` response ids).
 
 ## Background mode
 
@@ -123,7 +190,12 @@ GPT-5.x Pro defaults to background; non-Pro models block by default. Override pe
 oracle status --clear --hours 168   # delete sessions older than a week
 ```
 
-`--clear` is destructive — preview without it first. Sessions are local files, so `rm -rf ~/.oracle/sessions/<id>` works too.
+`--clear` is destructive — preview without it first. Time-based pruning skips
+child sessions referenced by a nonterminal Batch Oracle parent. Batch state is
+separate under `~/.oracle/batches`; if any batch state is unreadable, pruning
+fails closed rather than guessing that its children are unprotected. Inspect a
+batch report and lineage before removing any corresponding ordinary child
+session manually.
 
 ## Stale / zombie detection
 

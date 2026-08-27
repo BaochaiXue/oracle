@@ -376,12 +376,29 @@ For a direct-CDP multi-turn invocation, `proTurnIndex` plus the scalar
 `proAttachmentBytes`, `proTurnCommitted`, `proPromptSha256`, and
 `proCommittedTurnIndex` describe the active or latest turn. Each accepted turn
 is also appended to `proResponseTimingReceipts` with its own turn index,
-dispatch, elapsed time, input estimate, and uploaded bytes. The initial answer
-and every follow-up pass timing admission before transcript formatting, so
-neither a tiny first prompt nor a tiny final prompt can launder another turn's
-rejected answer. Reattach verifies the normalized prompt digest at the exact
-committed user-turn index before accepting a following assistant answer; it
-does not reuse a previous turn's workload or identity.
+dispatch, elapsed time, input estimate, uploaded bytes, normalized prompt
+digest, committed DOM user-turn index, and literal `commitVerification` value
+`"verified"`. Completed receipt indices are unique, contiguous, and strictly
+ordered. Within the verified receipts, committed DOM user-turn indices must
+also strictly advance without duplicates. The active scalar may identify the
+latest completed receipt or one in-flight follow-up exactly one index beyond
+it; if that next turn is already committed, its DOM user-turn index must be
+greater than the last verified historical index. If a receipt for the active
+scalar turn already exists, their timing, workload, and commit identities must
+agree.
+The initial answer and every follow-up pass timing admission before transcript
+formatting, so neither a tiny first prompt nor a tiny final prompt can launder
+another turn's rejected answer. Reattach verifies every self-contained receipt
+against the exact committed DOM user turn before accepting a following
+assistant answer; it does not reuse a previous turn's workload or identity.
+
+Historical receipts written before the self-contained identity fields remain
+readable as `legacy-partial` provenance. Oracle never backfills their prompt
+digest or committed DOM index from previews, transcripts, or turn position. A
+complete active/latest scalar may still be verified for recovery, but that does
+not upgrade earlier identity-less receipts. Mixed chains therefore remain
+`legacy-partial`; only a chain whose every completed receipt is self-contained
+can be represented as `verified` multi-turn provenance.
 
 Attachment bytes are established before each primary or fallback dispatch,
 using the supplied size only when it is a valid non-negative safe integer and

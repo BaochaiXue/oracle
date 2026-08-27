@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
@@ -302,7 +303,9 @@ describe("assembleBrowserPrompt", () => {
       );
 
       expect(result.attachments).toHaveLength(10);
-      expect(result.attachments[0]?.displayPath).toMatch(/attachments-bundle\.txt$/);
+      expect(result.attachments[0]?.displayPath).toMatch(
+        /--sources--artifact-[a-f0-9]{8}--[a-f0-9]{8}\.txt$/u,
+      );
       expect(result.bundled?.format).toBe("text");
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
@@ -449,7 +452,9 @@ describe("assembleBrowserPrompt", () => {
     });
 
     expect(result.attachments).toHaveLength(1);
-    expect(result.attachments[0]?.displayPath).toMatch(/attachments-bundle\.txt$/);
+    expect(result.attachments[0]?.displayPath).toMatch(
+      /repo--session--sources--artifact-[a-f0-9]{8}--[a-f0-9]{8}\.txt$/u,
+    );
     expect(result.attachments[0]?.generatedBundle).toBe(true);
     const bundleText = await fs.readFile(result.attachments[0]!.path, "utf8");
     expect(bundleText).toContain("### File: file1.txt");
@@ -459,11 +464,13 @@ describe("assembleBrowserPrompt", () => {
       true,
     );
     expect(result.inlineFileCount).toBe(0);
-    expect(result.bundled).toEqual({
-      originalCount: 11,
-      bundlePath: result.attachments[0]?.displayPath,
-      format: "text",
-    });
+    expect(result.bundled).toEqual(
+      expect.objectContaining({
+        originalCount: 11,
+        bundlePath: result.attachments[0]?.displayPath,
+        format: "text",
+      }),
+    );
   });
 
   test("supports opt-in ZIP bundles for browser uploads", async () => {
@@ -489,18 +496,29 @@ describe("assembleBrowserPrompt", () => {
       });
 
       expect(result.attachments).toHaveLength(1);
-      expect(result.attachments[0]?.displayPath).toMatch(/attachments-bundle\.zip$/);
+      expect(result.attachments[0]?.displayPath).toMatch(
+        /--sources--artifact-[a-f0-9]{8}--[a-f0-9]{8}\.zip$/u,
+      );
       expect(result.attachments[0]?.generatedBundle).toBe(true);
-      expect(result.bundled).toEqual({
-        originalCount: 2,
-        bundlePath: result.attachments[0]?.displayPath,
-        format: "zip",
-      });
+      expect(result.bundled).toEqual(
+        expect.objectContaining({
+          originalCount: 2,
+          bundlePath: result.attachments[0]?.displayPath,
+          format: "zip",
+        }),
+      );
       const zipBytes = await fs.readFile(result.attachments[0]!.path);
+      expect(result.bundled?.identity?.artifactSha256).toBe(
+        createHash("sha256").update(zipBytes).digest("hex"),
+      );
       expect(zipBytes.subarray(0, 4).toString("hex")).toBe("504b0304");
       const entries = readStoredZipEntries(zipBytes);
-      expect(entries.get("src/a.ts")?.toString("utf8")).toBe("content for src/a.ts");
-      expect(entries.get("src/b.ts")?.toString("utf8")).toBe("content for src/b.ts");
+      const root = path.basename(result.attachments[0]!.path, ".zip");
+      expect(entries.get(`${root}/src/a.ts`)?.toString("utf8")).toBe("content for src/a.ts");
+      expect(entries.get(`${root}/src/b.ts`)?.toString("utf8")).toBe("content for src/b.ts");
+      expect(
+        JSON.parse(entries.get(`${root}/ORACLE_BUNDLE_MANIFEST.json`)!.toString("utf8")),
+      ).toEqual(expect.objectContaining({ label: result.bundled?.identity?.label }));
       expect(zipBytes.toString("utf8")).not.toContain("1 | content for src/a.ts");
       expect(tokenizedContents.some((content) => content.includes("content for src/a.ts"))).toBe(
         true,
@@ -541,15 +559,20 @@ describe("assembleBrowserPrompt", () => {
       );
 
       expect(result.attachments).toHaveLength(1);
-      expect(result.attachments[0]?.displayPath).toMatch(/attachments-bundle\.zip$/);
-      expect(result.bundled).toEqual({
-        originalCount: 2,
-        bundlePath: result.attachments[0]?.displayPath,
-        format: "zip",
-      });
+      expect(result.attachments[0]?.displayPath).toMatch(
+        /--sources--artifact-[a-f0-9]{8}--[a-f0-9]{8}\.zip$/u,
+      );
+      expect(result.bundled).toEqual(
+        expect.objectContaining({
+          originalCount: 2,
+          bundlePath: result.attachments[0]?.displayPath,
+          format: "zip",
+        }),
+      );
       const entries = readStoredZipEntries(await fs.readFile(result.attachments[0]!.path));
-      expect(entries.get("note.txt")).toEqual(noteBytes);
-      expect(entries.get("inner.zip")).toEqual(archiveBytes);
+      const root = path.basename(result.attachments[0]!.path, ".zip");
+      expect(entries.get(`${root}/note.txt`)).toEqual(noteBytes);
+      expect(entries.get(`${root}/inner.zip`)).toEqual(archiveBytes);
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
@@ -585,15 +608,20 @@ describe("assembleBrowserPrompt", () => {
       );
 
       expect(result.attachments).toHaveLength(1);
-      expect(result.attachments[0]?.displayPath).toMatch(/attachments-bundle\.zip$/);
-      expect(result.bundled).toEqual({
-        originalCount: 2,
-        bundlePath: result.attachments[0]?.displayPath,
-        format: "zip",
-      });
+      expect(result.attachments[0]?.displayPath).toMatch(
+        /--sources--artifact-[a-f0-9]{8}--[a-f0-9]{8}\.zip$/u,
+      );
+      expect(result.bundled).toEqual(
+        expect.objectContaining({
+          originalCount: 2,
+          bundlePath: result.attachments[0]?.displayPath,
+          format: "zip",
+        }),
+      );
       const entries = readStoredZipEntries(await fs.readFile(result.attachments[0]!.path));
-      expect(entries.get("source/note.txt")).toEqual(noteBytes);
-      expect(entries.get("source/inner.zip")).toEqual(archiveBytes);
+      const root = path.basename(result.attachments[0]!.path, ".zip");
+      expect(entries.get(`${root}/source/note.txt`)).toEqual(noteBytes);
+      expect(entries.get(`${root}/source/inner.zip`)).toEqual(archiveBytes);
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
@@ -624,10 +652,13 @@ describe("assembleBrowserPrompt", () => {
       );
 
       expect(result.attachments).toHaveLength(1);
-      expect(result.attachments[0]?.displayPath).toMatch(/attachments-bundle\.zip$/);
+      expect(result.attachments[0]?.displayPath).toMatch(
+        /--sources--artifact-[a-f0-9]{8}--[a-f0-9]{8}\.zip$/u,
+      );
       const entries = readStoredZipEntries(await fs.readFile(result.attachments[0]!.path));
-      expect(entries.get("src/a.ts")).toEqual(textBytes);
-      expect(entries.get("artifact.gz")).toEqual(gzipBytes);
+      const root = path.basename(result.attachments[0]!.path, ".zip");
+      expect(entries.get(`${root}/src/a.ts`)).toEqual(textBytes);
+      expect(entries.get(`${root}/artifact.gz`)).toEqual(gzipBytes);
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }

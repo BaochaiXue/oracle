@@ -13,6 +13,9 @@ import {
 import chalk from "chalk";
 
 const waitMock = vi.hoisted(() => vi.fn());
+const resumeBrowserSessionMock = vi.hoisted(() => vi.fn());
+const saveBrowserTranscriptArtifactMock = vi.hoisted(() => vi.fn());
+const saveDeepResearchReportArtifactMock = vi.hoisted(() => vi.fn());
 const sessionStoreMock = vi.hoisted(() => ({
   readSession: vi.fn(),
   readLog: vi.fn(),
@@ -20,6 +23,7 @@ const sessionStoreMock = vi.hoisted(() => ({
   readRequest: vi.fn(),
   updateSession: vi.fn(),
   updateModelRun: vi.fn(),
+  createLogWriter: vi.fn(),
   listSessions: vi.fn(),
   filterSessions: vi.fn(),
   getPaths: vi.fn(),
@@ -33,6 +37,19 @@ vi.mock("../../src/sessionStore.ts", () => ({
 
 vi.mock("../../src/sessionManager.ts", () => ({
   wait: vi.fn(),
+}));
+
+vi.mock("../../src/browser/reattach.ts", () => ({
+  resumeBrowserSession: resumeBrowserSessionMock,
+}));
+
+vi.mock("../../src/browser/artifacts.ts", () => ({
+  appendArtifacts: (
+    existing: SessionMetadata["artifacts"],
+    additions: Array<SessionMetadata["artifacts"] extends Array<infer T> ? T | null : never>,
+  ) => [...(existing ?? []), ...additions.filter(Boolean)],
+  saveBrowserTranscriptArtifact: saveBrowserTranscriptArtifactMock,
+  saveDeepResearchReportArtifact: saveDeepResearchReportArtifactMock,
 }));
 
 vi.mock("../../src/cli/markdownRenderer.ts", () => {
@@ -56,6 +73,9 @@ beforeEach(() => {
   vi.useFakeTimers();
   process.exitCode = undefined;
   waitMock.mockClear();
+  resumeBrowserSessionMock.mockReset();
+  saveBrowserTranscriptArtifactMock.mockReset();
+  saveDeepResearchReportArtifactMock.mockReset();
   Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
   chalk.level = 1;
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
@@ -309,6 +329,141 @@ describe("attachSession rendering", () => {
 
     expect(logSpy).toHaveBeenCalledWith("Execution: api/bg (detached)");
     expect(logSpy).toHaveBeenCalledWith("Reattach: oracle session sess");
+  });
+
+  test("renders a recoverable Batch child read-only without reattach or mutation", async () => {
+    const metadata: SessionMetadata = {
+      ...baseMeta,
+      status: "error",
+      mode: "browser",
+      model: "gpt-5-pro",
+      response: { status: "incomplete", incompleteReason: "chrome-disconnected" },
+      browser: {
+        runtime: {
+          controllerPid: 2_147_483_647,
+          promptSubmitted: true,
+          tabUrl: "https://chatgpt.com/c/batch-child",
+          conversationId: "batch-child",
+        },
+      },
+      artifacts: [{ kind: "transcript", path: "artifacts/transcript.md" }],
+      batch: {
+        batchId: "batch-123",
+        laneId: "constitution",
+        role: "lane",
+        attempt: 1,
+        inputManifestSha256: "a".repeat(64),
+      },
+    };
+    readSessionMetadataMock.mockResolvedValue(metadata);
+    readSessionLogMock.mockResolvedValue("Answer:\nretained Batch evidence");
+    readSessionRequestMock.mockResolvedValue({ prompt: "Sealed prompt" });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const writeSpy = vi.spyOn(process.stdout, "write");
+
+    await attachSession(metadata.id, { renderMarkdown: false });
+
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /batchId=batch-123, laneId=constitution, role=lane.*read-only.*oracle batch resume batch-123/s,
+      ),
+    );
+    expect(logSpy).toHaveBeenCalledWith("Status: error");
+    expect(logSpy).toHaveBeenCalledWith("Artifacts:");
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("artifacts/transcript.md"));
+    expect(writeSpy).toHaveBeenCalledWith(expect.stringContaining("retained Batch evidence"));
+    expect(resumeBrowserSessionMock).not.toHaveBeenCalled();
+    expect(waitMock).not.toHaveBeenCalled();
+    expect(sessionStoreMock.createLogWriter).not.toHaveBeenCalled();
+    expect(sessionStoreMock.updateModelRun).not.toHaveBeenCalled();
+    expect(sessionStoreMock.updateSession).not.toHaveBeenCalled();
+    expect(saveBrowserTranscriptArtifactMock).not.toHaveBeenCalled();
+    expect(saveDeepResearchReportArtifactMock).not.toHaveBeenCalled();
+  });
+
+  test("shows a running Batch child once without waiting or terminalizing it", async () => {
+    const metadata: SessionMetadata = {
+      ...baseMeta,
+      status: "running",
+      mode: "browser",
+      model: "gpt-5-pro",
+      batch: {
+        batchId: "batch-running",
+        laneId: "cognition",
+        role: "lane",
+        attempt: 1,
+        inputManifestSha256: "b".repeat(64),
+      },
+    };
+    readSessionMetadataMock.mockResolvedValue(metadata);
+    readSessionLogMock.mockResolvedValue("response streaming");
+    readSessionRequestMock.mockResolvedValue({ prompt: "Sealed prompt" });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await attachSession(metadata.id, { renderMarkdown: false, suppressMetadata: true });
+
+    expect(waitMock).not.toHaveBeenCalled();
+    expect(resumeBrowserSessionMock).not.toHaveBeenCalled();
+    expect(sessionStoreMock.updateSession).not.toHaveBeenCalled();
+    expect(sessionStoreMock.updateModelRun).not.toHaveBeenCalled();
+    expect(readSessionLogMock).toHaveBeenCalled();
+  });
+
+  test("renders a completed Batch child from stored output", async () => {
+    const metadata: SessionMetadata = {
+      ...baseMeta,
+      status: "completed",
+      mode: "browser",
+      model: "gpt-5-pro",
+      batch: {
+        batchId: "batch-completed",
+        laneId: "tribunal",
+        role: "lane",
+        attempt: 1,
+        inputManifestSha256: "c".repeat(64),
+      },
+    };
+    readSessionMetadataMock.mockResolvedValue(metadata);
+    readSessionLogMock.mockResolvedValue("Answer:\n**verified lane answer**");
+    readSessionRequestMock.mockResolvedValue({ prompt: "Sealed prompt" });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const writeSpy = vi.spyOn(process.stdout, "write");
+
+    await attachSession(metadata.id, { renderMarkdown: true });
+
+    expect(markdownMock.renderMarkdownAnsi).toHaveBeenCalledWith(
+      "Answer:\n**verified lane answer**",
+    );
+    expect(writeSpy).toHaveBeenCalledWith("RENDER:Answer:\n**verified lane answer**");
+    expect(resumeBrowserSessionMock).not.toHaveBeenCalled();
+    expect(sessionStoreMock.updateSession).not.toHaveBeenCalled();
+  });
+
+  test("keeps ordinary recoverable session auto-reattach behavior", async () => {
+    const metadata: SessionMetadata = {
+      ...baseMeta,
+      status: "error",
+      mode: "browser",
+      model: "gpt-5-pro",
+      response: { status: "incomplete", incompleteReason: "chrome-disconnected" },
+      browser: {
+        runtime: {
+          controllerPid: 2_147_483_647,
+          promptSubmitted: true,
+          tabUrl: "https://chatgpt.com/c/ordinary-recoverable",
+          conversationId: "ordinary-recoverable",
+        },
+      },
+    };
+    readSessionMetadataMock.mockResolvedValue(metadata);
+    readSessionLogMock.mockResolvedValue("response interrupted");
+    readSessionRequestMock.mockResolvedValue({ prompt: "Ordinary prompt" });
+    resumeBrowserSessionMock.mockRejectedValueOnce(new Error("test recovery stop"));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await attachSession(metadata.id, { renderMarkdown: false });
+
+    expect(resumeBrowserSessionMock).toHaveBeenCalledTimes(1);
   });
 
   test("propagates a detached worker failure only when requested", async () => {
