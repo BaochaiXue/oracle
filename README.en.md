@@ -19,6 +19,8 @@ Oracle owns the prompt bundle, browser actions, session truth, recovery, and fol
 
 `GPT-5.6 Pro` is the current human-facing target. The CLI uses the stable alias `gpt-5-pro` and selects and verifies the current GPT-5.6 Sol + Pro combination in the submission tab.
 
+→ [Read the bilingual public launch note: why every Pro consultation needs a way back](./LAUNCH.md)
+
 <!-- readme-sync:modes -->
 
 ## Two primary paths

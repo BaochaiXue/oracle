@@ -26,6 +26,7 @@
     "vendor/oracle-notifier/OracleNotifier.app/**",
     "vendor/oracle-notifier/build-notifier.sh",
     "assets/readme/*.svg",
+    "LAUNCH.md",
     "README.md",
     "README.en.md",
     "LICENSE"

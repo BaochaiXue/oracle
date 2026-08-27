@@ -19,6 +19,8 @@ Oracle 负责 prompt bundle、browser action、session truth、恢复和 follow-
 
 `GPT-5.6 Pro` 是当前的人类可读目标。CLI 使用稳定别名 `gpt-5-pro`，并在提交标签页中选择和核验当前的 GPT-5.6 Sol + Pro 组合。
 
+→ [阅读双语公开发布说明：为什么每一次 Pro consultation 都该有一条回来的路](./LAUNCH.md)
+
 <!-- readme-sync:modes -->
 
 ## 两条主要路径
