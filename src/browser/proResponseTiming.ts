@@ -298,6 +298,7 @@ export function assertProResponseTimingReceiptChain(
 ): NonNullable<BrowserRuntimeMetadata["proResponseTimingProvenance"]> {
   const receipts = runtime.proResponseTimingReceipts ?? [];
   let hasLegacyReceipt = false;
+  let lastVerifiedCommittedUserTurnIndex: number | undefined;
   for (const [index, receipt] of receipts.entries()) {
     if (
       receipt.turnIndex !== index ||
@@ -323,6 +324,23 @@ export function assertProResponseTimingReceiptChain(
           { receiptTurnIndex: receipt.turnIndex },
         );
       }
+      const committedUserTurnIndex = receipt.committedUserTurnIndex as number;
+      if (
+        lastVerifiedCommittedUserTurnIndex !== undefined &&
+        committedUserTurnIndex <= lastVerifiedCommittedUserTurnIndex
+      ) {
+        throwInvalidReceiptChain(
+          "Oracle found historical Pro receipts whose committed DOM user-turn indices did not strictly advance.",
+          runtime,
+          "pro-turn-identity-mismatch",
+          {
+            receiptTurnIndex: receipt.turnIndex,
+            committedUserTurnIndex,
+            previousCommittedUserTurnIndex: lastVerifiedCommittedUserTurnIndex,
+          },
+        );
+      }
+      lastVerifiedCommittedUserTurnIndex = committedUserTurnIndex;
     } else {
       hasLegacyReceipt = true;
     }
@@ -357,7 +375,31 @@ export function assertProResponseTimingReceiptChain(
   }
 
   const matchingReceipt = receipts[activeTurnIndex];
-  if (!matchingReceipt) return provenance;
+  if (!matchingReceipt) {
+    if (runtime.proTurnCommitted === true && lastVerifiedCommittedUserTurnIndex !== undefined) {
+      if (!isValidWorkloadValue(runtime.proCommittedTurnIndex)) {
+        throwInvalidReceiptChain(
+          "Oracle found a committed active Pro turn without a valid DOM user-turn index.",
+          runtime,
+          "pro-turn-identity-missing",
+          { activeTurnIndex },
+        );
+      }
+      if (runtime.proCommittedTurnIndex <= lastVerifiedCommittedUserTurnIndex) {
+        throwInvalidReceiptChain(
+          "Oracle found a committed active Pro turn whose DOM user-turn index did not advance beyond verified history.",
+          runtime,
+          "pro-turn-identity-mismatch",
+          {
+            activeTurnIndex,
+            committedUserTurnIndex: runtime.proCommittedTurnIndex,
+            previousCommittedUserTurnIndex: lastVerifiedCommittedUserTurnIndex,
+          },
+        );
+      }
+    }
+    return provenance;
+  }
   if (
     runtime.proDispatchAt !== matchingReceipt.dispatchAt ||
     runtime.proResponseElapsedMs !== matchingReceipt.responseElapsedMs ||

@@ -3,6 +3,44 @@ import { __test__, resolveSessionTabRefForTest } from "../../src/cli/browserTabs
 import type { ChatGptTabSummary } from "../../src/browser/liveTabs.js";
 import type { SessionMetadata } from "../../src/sessionStore.js";
 
+function manualSendMeta(): SessionMetadata {
+  return {
+    id: "manual-send-session",
+    createdAt: "2026-08-26T00:00:00.000Z",
+    status: "error",
+    options: {},
+    mode: "browser",
+    browser: {
+      runtime: {
+        chromeHost: "127.0.0.1",
+        chromePort: 9333,
+        chromeTargetId: "owned-target",
+        userDataDir: "/oracle/profile",
+        tabUrl: "https://chatgpt.com/c/manual-send",
+        conversationId: "manual-send",
+        promptSubmitted: false,
+        browserDisposition: "recoverable",
+        recoveryKind: "draft-retained",
+      },
+    },
+  } as SessionMetadata;
+}
+
+function completedManualHarvest(overrides: Partial<ChatGptTabSummary> = {}): ChatGptTabSummary {
+  return {
+    targetId: "owned-target",
+    url: "https://chatgpt.com/c/manual-send",
+    conversationId: "manual-send",
+    state: "completed",
+    assistantCount: 1,
+    assistantFollowsLatestUser: true,
+    lastAssistantText: "completed answer",
+    lastUserTurnIndex: 0,
+    lastAssistantTurnIndex: 1,
+    ...overrides,
+  } as ChatGptTabSummary;
+}
+
 describe("browser tab CLI helpers", () => {
   test("prefers stable conversation URLs over stale Chrome target ids", () => {
     const meta = {
@@ -66,7 +104,6 @@ describe("browser tab CLI helpers", () => {
     await expect(
       __test__.finishCompletedOwnedLiveHarvest(
         meta.id,
-        meta,
         harvested,
         { host: "127.0.0.1", port: 9333 },
         undefined,
@@ -133,7 +170,6 @@ describe("browser tab CLI helpers", () => {
     await expect(
       __test__.finishCompletedOwnedLiveHarvest(
         meta.id,
-        meta,
         {
           targetId: "owned-target",
           url: "https://chatgpt.com/c/manual-send",
@@ -155,5 +191,183 @@ describe("browser tab CLI helpers", () => {
     ).resolves.toBe(false);
     expect(updateSession).not.toHaveBeenCalled();
     expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  test("does not recreate a session missing at the action-time ownership read", async () => {
+    const meta = manualSendMeta();
+    const readSession = vi.fn(async () => null);
+    const updateSession = vi.fn();
+    const reconcile = vi.fn();
+
+    await expect(
+      __test__.finishCompletedOwnedLiveHarvest(
+        meta.id,
+        completedManualHarvest(),
+        { host: "127.0.0.1", port: 9333 },
+        undefined,
+        {
+          readSession: readSession as never,
+          updateSession: updateSession as never,
+          reconcile: reconcile as never,
+        },
+      ),
+    ).resolves.toBe(false);
+    expect(updateSession).not.toHaveBeenCalled();
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  test("preserves a stable-conversation session when the harvested conversation id is missing", async () => {
+    const meta = manualSendMeta();
+    const readSession = vi.fn(async () => meta);
+    const updateSession = vi.fn();
+    const reconcile = vi.fn();
+
+    await expect(
+      __test__.finishCompletedOwnedLiveHarvest(
+        meta.id,
+        completedManualHarvest({ conversationId: undefined, url: "https://chatgpt.com/" }),
+        { host: "127.0.0.1", port: 9333 },
+        undefined,
+        {
+          readSession: readSession as never,
+          updateSession: updateSession as never,
+          reconcile: reconcile as never,
+        },
+      ),
+    ).resolves.toBe(false);
+    expect(updateSession).not.toHaveBeenCalled();
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  test("preserves a stable-conversation session when the harvested conversation id differs", async () => {
+    const meta = manualSendMeta();
+    const readSession = vi.fn(async () => meta);
+    const updateSession = vi.fn();
+    const reconcile = vi.fn();
+
+    await expect(
+      __test__.finishCompletedOwnedLiveHarvest(
+        meta.id,
+        completedManualHarvest({
+          conversationId: "another-conversation",
+          url: "https://chatgpt.com/c/another-conversation",
+        }),
+        { host: "127.0.0.1", port: 9333 },
+        undefined,
+        {
+          readSession: readSession as never,
+          updateSession: updateSession as never,
+          reconcile: reconcile as never,
+        },
+      ),
+    ).resolves.toBe(false);
+    expect(updateSession).not.toHaveBeenCalled();
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  test("preserves the tab when an explicit browser tab override was used", async () => {
+    const meta = manualSendMeta();
+    const readSession = vi.fn();
+    const updateSession = vi.fn();
+    const reconcile = vi.fn();
+
+    await expect(
+      __test__.finishCompletedOwnedLiveHarvest(
+        meta.id,
+        completedManualHarvest(),
+        { host: "127.0.0.1", port: 9333 },
+        "owned-target",
+        {
+          readSession: readSession as never,
+          updateSession: updateSession as never,
+          reconcile: reconcile as never,
+        },
+      ),
+    ).resolves.toBe(false);
+    expect(readSession).not.toHaveBeenCalled();
+    expect(updateSession).not.toHaveBeenCalled();
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  test("preserves the tab when the action-time endpoint does not match", async () => {
+    const meta = manualSendMeta();
+    const readSession = vi.fn(async () => meta);
+    const updateSession = vi.fn();
+    const reconcile = vi.fn();
+
+    await expect(
+      __test__.finishCompletedOwnedLiveHarvest(
+        meta.id,
+        completedManualHarvest(),
+        { host: "127.0.0.1", port: 9444 },
+        undefined,
+        {
+          readSession: readSession as never,
+          updateSession: updateSession as never,
+          reconcile: reconcile as never,
+        },
+      ),
+    ).resolves.toBe(false);
+    expect(updateSession).not.toHaveBeenCalled();
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  test("marks reconciliation work when exact-target cleanup fails and the session still exists", async () => {
+    const meta = manualSendMeta();
+    const readSession = vi.fn(async () => meta);
+    const updateSession = vi.fn(async () => meta);
+    const reconcile = vi.fn(async () => {
+      throw new Error("cleanup failed");
+    });
+
+    await expect(
+      __test__.finishCompletedOwnedLiveHarvest(
+        meta.id,
+        completedManualHarvest(),
+        { host: "127.0.0.1", port: 9333 },
+        undefined,
+        {
+          readSession: readSession as never,
+          updateSession: updateSession as never,
+          reconcile: reconcile as never,
+        },
+      ),
+    ).resolves.toBe(false);
+    expect(updateSession).toHaveBeenCalledTimes(2);
+    expect(updateSession).toHaveBeenLastCalledWith(
+      meta.id,
+      expect.objectContaining({
+        browser: expect.objectContaining({
+          runtime: expect.objectContaining({
+            browserDisposition: "completed",
+            reconcileNeeded: true,
+          }),
+        }),
+      }),
+    );
+  });
+
+  test("does not recreate a session deleted after reconciliation failure", async () => {
+    const meta = manualSendMeta();
+    const readSession = vi.fn().mockResolvedValueOnce(meta).mockResolvedValueOnce(null);
+    const updateSession = vi.fn(async () => meta);
+    const reconcile = vi.fn(async () => {
+      throw new Error("cleanup failed");
+    });
+
+    await expect(
+      __test__.finishCompletedOwnedLiveHarvest(
+        meta.id,
+        completedManualHarvest(),
+        { host: "127.0.0.1", port: 9333 },
+        undefined,
+        {
+          readSession: readSession as never,
+          updateSession: updateSession as never,
+          reconcile: reconcile as never,
+        },
+      ),
+    ).resolves.toBe(false);
+    expect(updateSession).toHaveBeenCalledTimes(1);
   });
 });

@@ -396,6 +396,98 @@ describe("Pro response timing", () => {
     );
   });
 
+  test.each([
+    { label: "reversed", committedUserTurnIndices: [4, 2] },
+    { label: "duplicate", committedUserTurnIndices: [2, 2] },
+  ])("rejects $label verified historical DOM indices", ({ committedUserTurnIndices }) => {
+    const receipts = committedUserTurnIndices.map((committedUserTurnIndex, turnIndex) => ({
+      turnIndex,
+      dispatchAt: `2026-08-13T00:0${turnIndex}:00.000Z`,
+      responseElapsedMs: 90_000,
+      inputTokens: 8,
+      attachmentBytes: 0,
+      promptSha256: hashProPromptIdentity(`historical prompt ${turnIndex}`),
+      committedUserTurnIndex,
+      commitVerification: "verified" as const,
+    }));
+
+    expect(() =>
+      assertProResponseTimingReceiptChain({
+        proResponseTimingProvenance: "verified",
+        proResponseTimingReceipts: receipts,
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        details: expect.objectContaining({ code: "pro-turn-identity-mismatch" }),
+      }),
+    );
+  });
+
+  test.each([2, 4])(
+    "rejects committed active DOM index %i that does not advance beyond verified history",
+    (proCommittedTurnIndex) => {
+      expect(() =>
+        assertProResponseTimingReceiptChain({
+          proTurnIndex: 2,
+          proTurnCommitted: true,
+          proPromptSha256: hashProPromptIdentity("active follow-up"),
+          proCommittedTurnIndex,
+          proResponseTimingProvenance: "verified",
+          proResponseTimingReceipts: [
+            {
+              turnIndex: 0,
+              dispatchAt: "2026-08-13T00:00:00.000Z",
+              responseElapsedMs: 90_000,
+              inputTokens: 8,
+              attachmentBytes: 0,
+              promptSha256: hashProPromptIdentity("historical prompt 0"),
+              committedUserTurnIndex: 2,
+              commitVerification: "verified",
+            },
+            {
+              turnIndex: 1,
+              dispatchAt: "2026-08-13T00:01:00.000Z",
+              responseElapsedMs: 90_000,
+              inputTokens: 8,
+              attachmentBytes: 0,
+              promptSha256: hashProPromptIdentity("historical prompt 1"),
+              committedUserTurnIndex: 4,
+              commitVerification: "verified",
+            },
+          ],
+        }),
+      ).toThrowError(
+        expect.objectContaining({
+          details: expect.objectContaining({ code: "pro-turn-identity-mismatch" }),
+        }),
+      );
+    },
+  );
+
+  test("allows a committed active DOM index that advances beyond verified history", () => {
+    expect(
+      assertProResponseTimingReceiptChain({
+        proTurnIndex: 1,
+        proTurnCommitted: true,
+        proPromptSha256: hashProPromptIdentity("active follow-up"),
+        proCommittedTurnIndex: 4,
+        proResponseTimingProvenance: "verified",
+        proResponseTimingReceipts: [
+          {
+            turnIndex: 0,
+            dispatchAt: "2026-08-13T00:00:00.000Z",
+            responseElapsedMs: 90_000,
+            inputTokens: 8,
+            attachmentBytes: 0,
+            promptSha256: hashProPromptIdentity("historical prompt"),
+            committedUserTurnIndex: 2,
+            commitVerification: "verified",
+          },
+        ],
+      }),
+    ).toBe("verified");
+  });
+
   test("keeps two substantive follow-ups on independent dispatch clocks", () => {
     let runtime = beginProResponseTimingTurn(
       {},

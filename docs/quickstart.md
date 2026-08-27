@@ -167,9 +167,13 @@ If Oracle retained a prepared draft and you deliberately pressed **Send** in
 that exact owned tab, `oracle session <id> --live` can tail the same turn. After
 a completed answer is persisted and printed, Oracle marks only the recorded
 session target terminal and reconciles it closed; other tabs and the shared
-Chrome process remain independent. An explicit `--browser-tab`, a target or
-endpoint mismatch, or incomplete ownership evidence disables this automatic
-close rather than risking another tab.
+Chrome process remain independent. The action-time session must still exist;
+if it already records a stable conversation ID, the harvested tab must supply
+that same ID. A missing session or conversation ID, an explicit
+`--browser-tab`, a target, conversation, or endpoint mismatch, or incomplete
+ownership evidence disables this automatic close rather than risking another
+tab. A failed reconciliation never recreates a session that disappeared while
+cleanup was running.
 
 Continue the same conversation explicitly:
 

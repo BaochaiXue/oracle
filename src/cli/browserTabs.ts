@@ -196,7 +196,6 @@ interface CompletedOwnedHarvestDeps {
 
 async function finishCompletedOwnedLiveHarvest(
   sessionId: string,
-  meta: SessionMetadata,
   harvested: ChatGptTabSummary,
   endpoint: { host: string; port: number },
   explicitBrowserTabRef: string | undefined,
@@ -212,7 +211,10 @@ async function finishCompletedOwnedLiveHarvest(
   const readSession = deps.readSession ?? sessionStore.readSession.bind(sessionStore);
   const updateSession = deps.updateSession ?? sessionStore.updateSession.bind(sessionStore);
   const reconcile = deps.reconcile ?? reconcileOwnedBrowserTargets;
-  const current = (await readSession(sessionId)) ?? meta;
+  const current = await readSession(sessionId);
+  if (!current) {
+    return false;
+  }
   const runtime = current.browser?.runtime;
   if (
     !runtime?.userDataDir ||
@@ -227,11 +229,7 @@ async function finishCompletedOwnedLiveHarvest(
   }
   const harvestedConversationId =
     harvested.conversationId ?? extractConversationIdFromUrl(harvested.url);
-  if (
-    runtime.conversationId &&
-    harvestedConversationId &&
-    runtime.conversationId !== harvestedConversationId
-  ) {
+  if (runtime.conversationId && runtime.conversationId !== harvestedConversationId) {
     return false;
   }
 
@@ -244,7 +242,7 @@ async function finishCompletedOwnedLiveHarvest(
   };
   await updateSession(sessionId, {
     browser: {
-      ...(current.browser ?? meta.browser),
+      ...current.browser,
       runtime: completedRuntime,
     },
   });
@@ -268,12 +266,15 @@ async function finishCompletedOwnedLiveHarvest(
     // The terminal lifecycle state is already durable; cold-start reconciliation retries cleanup.
   }
 
-  const afterFailure = (await readSession(sessionId)) ?? current;
+  const afterFailure = await readSession(sessionId);
+  if (!afterFailure?.browser?.runtime) {
+    return false;
+  }
   await updateSession(sessionId, {
     browser: {
-      ...(afterFailure.browser ?? current.browser),
+      ...afterFailure.browser,
       runtime: {
-        ...(afterFailure.browser?.runtime ?? completedRuntime),
+        ...afterFailure.browser.runtime,
         browserDisposition: "completed",
         recoveryKind: undefined,
         recoveryExpiresAt: undefined,
@@ -419,7 +420,6 @@ export async function harvestSessionBrowserOutput(
     if (!recoveredConversation) {
       await finishCompletedOwnedLiveHarvest(
         sessionId,
-        meta,
         harvested,
         initialEndpoint,
         options.browserTabRef,
@@ -544,7 +544,6 @@ export async function liveTailSessionBrowserOutput(
         if (!recoveredConversation) {
           await finishCompletedOwnedLiveHarvest(
             sessionId,
-            meta,
             finalHarvest,
             endpoint,
             options.browserTabRef,

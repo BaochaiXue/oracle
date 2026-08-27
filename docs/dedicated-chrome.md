@@ -379,9 +379,13 @@ is also appended to `proResponseTimingReceipts` with its own turn index,
 dispatch, elapsed time, input estimate, uploaded bytes, normalized prompt
 digest, committed DOM user-turn index, and literal `commitVerification` value
 `"verified"`. Completed receipt indices are unique, contiguous, and strictly
-ordered. The active scalar may identify the latest completed receipt or one
-in-flight follow-up exactly one index beyond it; if a receipt for that scalar
-turn already exists, their timing, workload, and commit identities must agree.
+ordered. Within the verified receipts, committed DOM user-turn indices must
+also strictly advance without duplicates. The active scalar may identify the
+latest completed receipt or one in-flight follow-up exactly one index beyond
+it; if that next turn is already committed, its DOM user-turn index must be
+greater than the last verified historical index. If a receipt for the active
+scalar turn already exists, their timing, workload, and commit identities must
+agree.
 The initial answer and every follow-up pass timing admission before transcript
 formatting, so neither a tiny first prompt nor a tiny final prompt can launder
 another turn's rejected answer. Reattach verifies every self-contained receipt
