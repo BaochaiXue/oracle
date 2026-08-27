@@ -37,6 +37,7 @@ import {
   resolveSessionBrowserModelDisplayName,
 } from "../browser/modelDisplay.js";
 import { isTerminalProResponseTimingCode } from "../browser/proResponseTiming.js";
+import { resolveBatchSessionAuthority } from "../batch/sessionAuthority.js";
 
 const isTty = (): boolean => Boolean(process.stdout.isTTY);
 const dim = (text: string): string => (isTty() ? kleur.dim(text) : text);
@@ -253,7 +254,16 @@ export async function attachSession(
     process.exitCode = 1;
     return;
   }
-  if (metadata.mode === "browser" && metadata.status === "running" && !metadata.browser?.runtime) {
+  const batchAuthority = resolveBatchSessionAuthority(metadata, "attach");
+  if (batchAuthority) {
+    console.log(chalk.yellow(batchAuthority.guidance));
+  }
+  if (
+    !batchAuthority &&
+    metadata.mode === "browser" &&
+    metadata.status === "running" &&
+    !metadata.browser?.runtime
+  ) {
     await wait(250);
     const refreshed = await sessionStore.readSession(sessionId);
     if (refreshed) {
@@ -291,6 +301,7 @@ export async function attachSession(
     runtime?.conversationId,
   );
   const deepResearchPlaceholderCapture =
+    !batchAuthority &&
     isDeepResearchBrowserSession(metadata) &&
     hasFallbackSessionInfo &&
     isDeepResearchPlaceholderCapture(
@@ -305,6 +316,7 @@ export async function attachSession(
     (runtime?.chromePort || runtime?.chromeBrowserWSEndpoint || runtime?.chromeProfileRoot),
   );
   const canReattach =
+    !batchAuthority &&
     (statusAllowsReattach || completedDeepResearchPlaceholder) &&
     metadata.mode === "browser" &&
     hasFallbackSessionInfo &&
@@ -471,7 +483,11 @@ export async function attachSession(
     if (metadata.lifecycle) {
       const attached = metadata.lifecycle.attached ? "attached" : "detached";
       console.log(`Execution: ${formatSessionExecutionLabel(metadata)} (${attached})`);
-      console.log(`Reattach: ${metadata.lifecycle.reattachCommand}`);
+      console.log(
+        batchAuthority
+          ? `Recovery: ${batchAuthority.resumeCommand}`
+          : `Reattach: ${metadata.lifecycle.reattachCommand}`,
+      );
     }
     if (metadata.models && metadata.models.length > 0) {
       console.log("Models:");
@@ -529,7 +545,10 @@ export async function attachSession(
   }
 
   const shouldTrimIntro =
-    initialStatus === "completed" || initialStatus === "partial" || initialStatus === "error";
+    Boolean(batchAuthority) ||
+    initialStatus === "completed" ||
+    initialStatus === "partial" ||
+    initialStatus === "error";
   if (options?.renderPrompt !== false) {
     const prompt = await readStoredPrompt(sessionId);
     if (prompt) {

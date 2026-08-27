@@ -154,10 +154,20 @@ lane with `oracle batch accept-missing <batch-id> --lane <lane-id> --reason
 "<reason>"`, then resume with `--allow-partial`. It must name missing lanes and
 weakened conclusions.
 
-Batch child sessions may be inspected by ID, but never complete or recover one
-with generic `oracle session <child-id> --live` or `--harvest`. Those paths do
-not own canonical Batch answers, receipts, or the parent barrier and therefore
-fail closed. Use `oracle batch resume <batch-id>`.
+Batch child sessions may be inspected by ID, where inspection means only
+reading status/metadata, rendering existing logs/artifacts, or printing paths.
+A plain `oracle session <child-id>` attach must return one read-only snapshot:
+never wait, auto-reattach, repair capture, append logs/artifacts, update a model
+run/session, or terminalize. Completed children remain renderable.
+
+Never complete, recover, continue, or clone a Batch child with generic
+`session --live|--harvest`, `--followup <child-id>`, or `restart <child-id>`.
+Those paths fail closed before tab access, conversation URL resolution, or new
+session creation, including for an owner-abandoned synthesis. Use `oracle batch
+resume <batch-id>` for recovery/retry/completion and the parent
+`batch accept-missing` commands for owner closure. Start a new ordinary Oracle
+run explicitly when the desired consultation must be independent of the Batch
+lineage.
 
 A synthesis session receives canonical shared-authority bytes plus each
 verified answer, its immutable receipt, and its sealed input manifest. It must

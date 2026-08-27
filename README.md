@@ -360,9 +360,12 @@ already admitted workspace file are reported as `admittedSourceDrift`; they
 never cause silent resealing or change the snapshot consumed by a child.
 
 Batch child sessions remain inspectable with `oracle session <child-id>`, but
-their completion and recovery authority stays with the parent. Generic
-`session --live` and `session --harvest` reject Batch children before touching
-the browser tab; use `oracle batch resume <batch-id>` instead. After bounded
+inspection is a read-only snapshot of stored status, paths, logs, and artifacts;
+it never waits, auto-reattaches, repairs capture, or updates the child. Generic
+`session --live|--harvest`, `--followup`, restart, and stored-session execution
+reject Batch children before touching the conversation or creating a new
+session. Use `oracle batch resume <batch-id>` for recovery/retry/completion and
+the parent `accept-missing` commands for owner closure. After bounded
 exact recovery, an unavailable synthesis in `recoverable`, `error`, or
 `indeterminate` state can be closed explicitly with `accept-missing
 --synthesis`. Oracle preserves its session and conversation, marks synthesis

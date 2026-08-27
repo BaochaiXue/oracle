@@ -453,7 +453,7 @@ describe("harvestSessionBrowserOutput recovery fallback", () => {
         options: { quietOutput?: boolean },
       ) => Promise<unknown>;
       await expect(run(batchMeta.id, { quietOutput: true })).rejects.toThrow(
-        /belongs to Batch Oracle batch-123.*oracle batch resume batch-123/su,
+        /batchId=batch-123, laneId=constitution, role=lane.*oracle batch resume batch-123/su,
       );
       expect(harvestChatGptTab).not.toHaveBeenCalled();
     },

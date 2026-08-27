@@ -246,11 +246,23 @@ again. Only then may `resume --allow-partial` cross the barrier. The synthesis
 prompt, receipts, report, and final `partial` status all name missing lanes and
 weakened evidence.
 
-Child sessions may be inspected by ID, but the Batch parent owns acceptance,
-barrier progression, answer receipts, and recovery. Do not run generic `oracle
-session <child-id> --live` or `--harvest`; both commands fail closed before
-touching a Batch-owned tab. Use `oracle batch resume <batch-id>` so a completed
-answer passes through the canonical parent acceptance boundary.
+Child sessions may be inspected by ID, but the Batch parent owns dispatch,
+recovery, retry, completion, answer acceptance, barrier progression, and owner
+closure. For a Batch child, **inspect** means reading stored status/metadata,
+rendering its existing log and artifacts, or printing its paths. A plain
+`oracle session <child-id>` attach is a one-shot read-only snapshot: it does not
+wait, auto-reattach, repair a capture, write logs or artifacts, update a model
+run or session status, or terminalize the child. Completed children remain
+renderable.
+
+Generic `session --live`, `session --harvest`, `--followup <child-id>`, and
+`oracle restart <child-id>` fail closed for every Batch role, including an
+owner-abandoned synthesis. Follow-up refusal happens before conversation URL
+resolution; restart refusal happens before options are cloned or a new session
+is created. Use `oracle batch resume <batch-id>` for recovery and completion,
+and the parent `batch accept-missing` commands for owner closure. If an
+independent consultation is genuinely needed, start a new ordinary Oracle run
+instead of restarting the Batch lineage.
 
 If first-stage evidence is complete but a committed synthesis remains
 `recoverable`, `error`, or `indeterminate` after bounded exact recovery, the

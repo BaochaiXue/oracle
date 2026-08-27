@@ -7,18 +7,18 @@ This is the curated cheatsheet. The authoritative source is always `oracle --hel
 
 ## Commands
 
-| Command                        | What it does                                                       |
-| ------------------------------ | ------------------------------------------------------------------ |
-| `oracle [flags] -p "<prompt>"` | Run a consult.                                                     |
-| `oracle status`                | List recent sessions (see [Sessions](sessions.md)).                |
-| `oracle session <id>`          | Replay or block on a stored session.                               |
-| `oracle restart <id>`          | Re-run with the same prompt + files.                               |
-| `oracle batch …`               | Validate, run, close, resume, inspect, or render a parallel batch. |
-| `oracle docs check`            | Check documented flags against CLI help metadata.                  |
-| `oracle serve`                 | Run the remote browser host (see [Browser Mode](browser-mode.md)). |
-| `oracle bridge claude-config`  | Emit a `.mcp.json` for Claude Code (see [MCP](mcp.md)).            |
-| `oracle tui`                   | Interactive TUI (humans only).                                     |
-| `oracle-mcp`                   | Stdio MCP server entrypoint.                                       |
+| Command                        | What it does                                                                    |
+| ------------------------------ | ------------------------------------------------------------------------------- |
+| `oracle [flags] -p "<prompt>"` | Run a consult.                                                                  |
+| `oracle status`                | List recent sessions (see [Sessions](sessions.md)).                             |
+| `oracle session <id>`          | Replay or block on an ordinary stored session; inspect a Batch child read-only. |
+| `oracle restart <id>`          | Re-run an ordinary session with the same prompt + files.                        |
+| `oracle batch …`               | Validate, run, close, resume, inspect, or render a parallel batch.              |
+| `oracle docs check`            | Check documented flags against CLI help metadata.                               |
+| `oracle serve`                 | Run the remote browser host (see [Browser Mode](browser-mode.md)).              |
+| `oracle bridge claude-config`  | Emit a `.mcp.json` for Claude Code (see [MCP](mcp.md)).                         |
+| `oracle tui`                   | Interactive TUI (humans only).                                                  |
+| `oracle-mcp`                   | Stdio MCP server entrypoint.                                                    |
 
 ## Batch Oracle
 
@@ -38,9 +38,15 @@ user-config, and browser capacity. Batch v1 always uses local dedicated-profile
 direct CDP, `gpt-5-pro`, and the Pro reasoning tier. See
 [Batch Oracle v1](batch-oracle.md).
 
-`oracle session <batch-child> --live|--harvest` is intentionally rejected.
-Inspect child metadata by ID, but perform completion and recovery through the
-Batch parent so canonical answers, receipts, and barrier state advance together.
+Batch child inspection is read-only: status/metadata, existing log/artifact
+rendering, and paths may be read by ID. Plain attach returns one snapshot
+without waiting, reattaching, repairing capture, writing session evidence, or
+terminalizing. Generic `session --live|--harvest`, `--followup <batch-child>`,
+`restart <batch-child>`, and stored-session execution are rejected before they
+can touch the conversation or create a new session. This applies to lanes and
+synthesis, including an owner-abandoned synthesis. Perform all recovery, retry,
+completion, and owner closure through the Batch parent so canonical answers,
+receipts, and barrier state advance together.
 
 ## Core consult flags
 
@@ -64,6 +70,9 @@ Batch parent so canonical answers, receipts, and barrier state advance together.
 | ------------------------------- | ----------------------------------------------------------------------- |
 | `--followup <id\|slug\|resp_…>` | Continue a saved ChatGPT browser or OpenAI/Azure Responses API session. |
 | `--followup-model <model>`      | Pick API lineage when the parent used `--models`.                       |
+
+`--followup` accepts ordinary sessions only. A Batch child fails closed before
+conversation URL resolution; use `oracle batch resume <batch-id>`.
 
 ## Run control
 

@@ -46,6 +46,10 @@ or maintainer-only release instructions.
 - Synthesis starts only after the durable barrier. Partial synthesis is an
   explicit two-step owner decision (`accept-missing`, then `--allow-partial`)
   and must preserve missing-lane provenance.
+- Generic session inspection of a Batch child is read-only: status, render,
+  paths, logs, and artifacts only. Attach must not wait or repair. Generic
+  live/harvest, follow-up, restart, or stored-session execution must fail closed;
+  recovery, retry, completion, and owner closure stay with the Batch parent.
 
 ## Verification
 

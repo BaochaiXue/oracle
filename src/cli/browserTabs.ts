@@ -20,6 +20,7 @@ import {
 } from "../browser/recoverConversation.js";
 import { reconcileOwnedBrowserTargets } from "../browser/lifecycleReconciler.js";
 import { resolveOutputPath } from "./writeOutputPath.js";
+import { assertGenericSessionActionAllowed } from "../batch/sessionAuthority.js";
 
 const LIVE_POLL_MS = 2000;
 const DEFAULT_STALL_THRESHOLD_MS = 60_000;
@@ -304,13 +305,6 @@ async function finishCompletedOwnedLiveHarvest(
   return false;
 }
 
-function assertGenericBrowserHarvestAllowed(meta: SessionMetadata): void {
-  if (!meta.batch) return;
-  throw new Error(
-    `Session ${meta.id} belongs to Batch Oracle ${meta.batch.batchId}. Recover it with: oracle batch resume ${meta.batch.batchId}`,
-  );
-}
-
 function printHarvestSummary(sessionId: string, harvested: ChatGptTabSummary): void {
   console.log(chalk.bold(`Session: ${sessionId}`));
   console.log(`Target: ${harvested.targetId}`);
@@ -392,7 +386,7 @@ export async function harvestSessionBrowserOutput(
   if (!meta) {
     throw new Error(`No session found with ID ${sessionId}.`);
   }
-  assertGenericBrowserHarvestAllowed(meta);
+  assertGenericSessionActionAllowed(meta, "harvest");
   const recordedEndpoint = sessionBrowserEndpoint(meta);
   const initialEndpoint = recordedEndpoint ?? {
     host: DEFAULT_REMOTE_CHROME_HOST,
@@ -470,7 +464,7 @@ export async function liveTailSessionBrowserOutput(
   if (!meta) {
     throw new Error(`No session found with ID ${sessionId}.`);
   }
-  assertGenericBrowserHarvestAllowed(meta);
+  assertGenericSessionActionAllowed(meta, "live");
   const recordedEndpoint = sessionBrowserEndpoint(meta);
   let endpoint = recordedEndpoint ?? {
     host: DEFAULT_REMOTE_CHROME_HOST,

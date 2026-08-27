@@ -54,9 +54,12 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   conversation can never be recreated merely to close a tab. Harvest metadata
   now merges only into current existing session state; stale command-start
   metadata cannot recreate a deleted session or restore superseded target
-  ownership. Generic `session --live|--harvest` also rejects Batch child
-  sessions before touching their tabs so only the parent can accept answers,
-  write receipts, and advance the barrier.
+  ownership. Batch child session inspection is now centrally read-only:
+  status/render/path/log/artifact reads cannot wait, auto-reattach, repair, or
+  mutate the child. Generic `session --live|--harvest`, follow-up, restart, and
+  stored-session execution reject every Batch role before tab/conversation
+  access or new-session creation, so only the parent can recover, retry, accept
+  answers, write receipts, advance the barrier, or record owner closure.
 - Dedicated browser targets: register ChatGPT, Project Sources, Gemini, recovery,
   and sentinel targets in one durable ownership registry. Completed sessions
   close their exact targets, including `keepBrowser:true` Gemini runs, while

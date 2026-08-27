@@ -87,6 +87,7 @@ import {
 } from "../src/cli/perfTrace.js";
 import { resolveBrowserFollowupReference } from "../src/cli/followup.js";
 import { registerBatchCommand } from "../src/cli/batchCommand.js";
+import { assertGenericSessionActionAllowed } from "../src/batch/sessionAuthority.js";
 
 interface CliOptions extends OptionValues {
   prompt?: string;
@@ -1794,6 +1795,7 @@ async function resolveFollowupReference(
       `No session found with ID ${trimmed}.${suggestionText} Run "oracle status --hours 72 --limit 20" to list recent sessions.`,
     );
   }
+  assertGenericSessionActionAllowed(meta, "followup");
   const fromMetadata = extractResponseIdFromSession(meta, followupModel);
   if (fromMetadata) {
     return { responseId: fromMetadata, sessionId: meta.id };
@@ -2224,6 +2226,10 @@ async function runRootCommand(options: CliOptions): Promise<void> {
   }
 
   if (options.execSession) {
+    const storedSession = await sessionStore.readSession(options.execSession);
+    if (storedSession) {
+      assertGenericSessionActionAllowed(storedSession, "execute");
+    }
     await waitForDetachedStartGate();
     await executeSession(options.execSession);
     return;
@@ -2763,6 +2769,8 @@ async function restartSession(sessionId: string, options: RestartCommandOptions)
     return;
   }
 
+  assertGenericSessionActionAllowed(metadata, "restart");
+
   const runOptions = buildRunOptionsFromMetadata(metadata);
   if (!runOptions.prompt) {
     console.error(chalk.red(`Session ${sessionId} has no stored prompt; cannot restart.`));
@@ -2950,6 +2958,7 @@ async function executeSession(sessionId: string) {
     if (!metadata) {
       throw new Error(`No session found with ID ${sessionId}`);
     }
+    assertGenericSessionActionAllowed(metadata, "execute");
     if (
       process.env.ORACLE_DETACHED_START_GATE === "1" &&
       metadata.lifecycle?.workerPid !== process.pid

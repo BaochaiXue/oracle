@@ -5,6 +5,7 @@ import { resolveRecoveryUrl } from "../browser/recoverConversation.js";
 import { isRecoverableChatGptConversationUrl } from "../browser/reattachability.js";
 import { DEFAULT_MODEL } from "../oracle/config.js";
 import type { ModelName } from "../oracle/types.js";
+import { assertGenericSessionActionAllowed } from "../batch/sessionAuthority.js";
 
 export interface BrowserFollowupResolution {
   sessionId: string;
@@ -62,6 +63,7 @@ export async function resolveBrowserFollowupReference(
   if (!metadata) {
     return null;
   }
+  assertGenericSessionActionAllowed(metadata, "followup");
   const mode = metadata.mode ?? metadata.options?.mode;
   const hasBrowserMetadata = Boolean(
     metadata.browser?.runtime || metadata.browser?.config || metadata.options?.browserConfig,

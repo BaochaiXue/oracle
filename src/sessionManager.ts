@@ -29,6 +29,7 @@ import { formatElapsed } from "./oracle/format.js";
 import { safeModelSlug } from "./oracle/modelResolver.js";
 import { getOracleHomeDir } from "./oracleHome.js";
 import { assertOracleModelsAllowed } from "./oracle/forkPolicy.js";
+import { resolveBatchSessionAuthority } from "./batch/sessionAuthority.js";
 
 export type SessionMode = "api" | "browser";
 
@@ -896,6 +897,9 @@ async function reconcileSessionMetadata(
   meta: SessionMetadata,
   { persist }: { persist: boolean },
 ): Promise<SessionMetadata> {
+  if (resolveBatchSessionAuthority(meta, "status")) {
+    return meta;
+  }
   let current = meta;
   const workerPid = current.lifecycle?.workerPid;
   if (workerPid) {

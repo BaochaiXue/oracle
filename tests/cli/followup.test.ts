@@ -70,6 +70,36 @@ describe("browser follow-up resolution", () => {
     });
   });
 
+  test("rejects an abandoned Batch synthesis before reading its conversation URL", async () => {
+    const conversationRead = vi.fn(() => {
+      throw new Error("conversation URL should not be inspected");
+    });
+    const runtime = Object.defineProperty({}, "conversationId", {
+      enumerable: true,
+      get: conversationRead,
+    });
+    const metadata: SessionMetadata = {
+      ...baseMetadata,
+      id: "batch-synthesis",
+      status: "error",
+      mode: "browser",
+      browser: { runtime },
+      batch: {
+        batchId: "batch-123",
+        laneId: "adjudication",
+        role: "synthesis",
+        attempt: 1,
+        inputManifestSha256: "d".repeat(64),
+      },
+    } as SessionMetadata;
+    const store = { readSession: vi.fn(async () => metadata) };
+
+    await expect(resolveBrowserFollowupReference(metadata.id, store)).rejects.toThrow(
+      /batchId=batch-123, laneId=adjudication, role=synthesis.*browser follow-up.*oracle batch resume batch-123/s,
+    );
+    expect(conversationRead).not.toHaveBeenCalled();
+  });
+
   test("leaves stored API sessions on the existing API follow-up path", async () => {
     const metadata: SessionMetadata = {
       ...baseMetadata,

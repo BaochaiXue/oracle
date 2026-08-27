@@ -112,12 +112,19 @@ oracle batch resume <batch-id>
 
 Batch resume reuses the original recoverable child session. It creates a new
 attempt only when the previous child has durable evidence that no prompt was
-submitted or committed and the failure is retry-safe. `oracle restart <child>`
-is not the Batch recovery path because it bypasses parent reservations and the
-stage barrier. A child remains inspectable with `oracle session <child>`, but
-generic `--live` and `--harvest` are also rejected because they cannot write the
-parent answer receipt or advance its barrier. See [Batch Oracle
-v1](batch-oracle.md).
+submitted or committed and the failure is retry-safe. Every generic mutation
+surface rejects Batch children: `oracle restart <child>`, `--followup <child>`,
+and `oracle session <child> --live|--harvest`. These paths cannot own parent
+reservations, canonical answers, receipts, or the stage barrier.
+
+A Batch child remains inspectable with `oracle session <child>`, `oracle status
+<child>`, `oracle session <child> --path`, or stored log/artifact rendering.
+Here **inspect** is strictly read-only. Plain attach displays one current
+snapshot and returns; it does not wait, auto-reattach, repair capture, append a
+log, create an artifact, update model/session state, or terminalize. This is
+true for running, recoverable, completed, and owner-abandoned synthesis
+children. All recovery, retry, completion, and owner closure must pass through
+the Batch parent. See [Batch Oracle v1](batch-oracle.md).
 
 If an unavailable lane must be omitted, preserve its session and record the
 owner decision before partial synthesis:
@@ -144,7 +151,11 @@ unavailable, and verified raw lane answers remain usable.
 oracle restart <id>            # re-run with the same prompt + files
 ```
 
-Useful when a transient browser/API error truncated the answer. Restart copies the bundle, opens a new session, and links lineage back.
+Useful when a transient ordinary browser/API error truncated the answer.
+Restart copies the bundle, opens a new session, and links lineage back. Batch
+children are rejected before options are cloned or a new session is created;
+use `oracle batch resume <batch-id>`, or create a deliberately independent
+ordinary Oracle run without Batch lineage.
 
 ## Follow up
 
@@ -155,7 +166,12 @@ oracle --followup <id> -p "Re-evaluate with these files" \
   --file "src/migrations/**"
 ```
 
-Browser followup reopens the exact saved conversation and inherits its browser configuration and model. For multi-model API parents, pick the lineage with `--followup-model`. See [Followup](followup.md) for the full flow and the formats `--followup` accepts (session ids, slugs, or `resp_…` response ids).
+Browser followup reopens the exact saved conversation and inherits its browser
+configuration and model. A Batch child is rejected before Oracle resolves or
+opens its conversation URL; Batch conversations can only advance through the
+parent. For multi-model API parents, pick the lineage with `--followup-model`.
+See [Followup](followup.md) for the full ordinary-session flow and the formats
+`--followup` accepts (session ids, slugs, or `resp_…` response ids).
 
 ## Background mode
 
