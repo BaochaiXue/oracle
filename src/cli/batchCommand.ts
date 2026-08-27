@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import {
   acceptMissingBatchLane,
+  acceptMissingBatchSynthesis,
   getBatchStatus,
   listRecentBatches,
   renderStoredBatch,
@@ -97,17 +98,28 @@ export function registerBatchCommand(program: Command): void {
   batch
     .command("accept-missing <batch-id>")
     .description(
-      "Record an explicit owner decision to abandon one unavailable lane without re-sending it.",
+      "Record an explicit owner decision to abandon one unavailable lane or terminal synthesis without re-sending it.",
     )
-    .requiredOption("--lane <lane-id>", "Lane to close as accepted-missing.")
+    .option("--lane <lane-id>", "Lane to close as accepted-missing.")
+    .option("--synthesis", "Close a recoverable, error, or indeterminate synthesis stage.", false)
     .requiredOption("--reason <text>", "Durable owner reason for accepting the missing evidence.")
-    .action(async (batchId: string, options: { lane: string; reason: string }) => {
-      const state = await acceptMissingBatchLane(batchId, options.lane, options.reason);
-      console.log(
-        `Batch ${batchId}: lane ${options.lane} accepted missing; status=${state.status}`,
-      );
-      console.log(`Next: oracle batch resume ${batchId} --allow-partial`);
-    });
+    .action(
+      async (batchId: string, options: { lane?: string; synthesis?: boolean; reason: string }) => {
+        if (Boolean(options.lane) === Boolean(options.synthesis)) {
+          throw new Error("Choose exactly one accept-missing target: --lane <id> or --synthesis.");
+        }
+        if (options.synthesis) {
+          const state = await acceptMissingBatchSynthesis(batchId, options.reason);
+          console.log(`Batch ${batchId}: synthesis accepted unavailable; status=${state.status}`);
+          return;
+        }
+        const state = await acceptMissingBatchLane(batchId, options.lane!, options.reason);
+        console.log(
+          `Batch ${batchId}: lane ${options.lane} accepted missing; status=${state.status}`,
+        );
+        console.log(`Next: oracle batch resume ${batchId} --allow-partial`);
+      },
+    );
 
   batch
     .command("render <batch-id>")

@@ -9,6 +9,7 @@ import {
   initializeSession,
   readSessionMetadata,
   updateSessionMetadata,
+  updateExistingSessionMetadata,
   createSessionLogWriter,
   readSessionLog,
   readModelLog,
@@ -32,6 +33,10 @@ export interface SessionStore {
   ): Promise<SessionMetadata>;
   readSession(sessionId: string): Promise<SessionMetadata | null>;
   updateSession(sessionId: string, updates: Partial<SessionMetadata>): Promise<SessionMetadata>;
+  updateExistingSession(
+    sessionId: string,
+    update: (current: SessionMetadata) => SessionMetadata | null,
+  ): Promise<SessionMetadata | null>;
   createLogWriter(sessionId: string, model?: string): ReturnType<typeof createSessionLogWriter>;
   updateModelRun(
     sessionId: string,
@@ -76,6 +81,13 @@ class FileSessionStore implements SessionStore {
 
   updateSession(sessionId: string, updates: Partial<SessionMetadata>): Promise<SessionMetadata> {
     return updateSessionMetadata(sessionId, updates);
+  }
+
+  updateExistingSession(
+    sessionId: string,
+    update: (current: SessionMetadata) => SessionMetadata | null,
+  ): Promise<SessionMetadata | null> {
+    return updateExistingSessionMetadata(sessionId, update);
   }
 
   createLogWriter(sessionId: string, model?: string): ReturnType<typeof createSessionLogWriter> {

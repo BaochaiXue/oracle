@@ -269,6 +269,9 @@ export function classifyParentStatus(state: BatchStateV1): BatchStateV1["status"
   }
   if (required.every((lane) => lane.status === "completed")) {
     if (state.synthesis) {
+      if (state.synthesis.acceptedMissing || state.synthesis.status === "abandoned") {
+        return "partial";
+      }
       if (state.synthesis.status === "completed") {
         return state.ownerDecisions?.some((decision) => decision.type === "allow-partial")
           ? "partial"

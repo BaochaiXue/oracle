@@ -318,6 +318,8 @@ export async function acceptMissingBatchLane(
           type: "accept-missing" as const,
           decidedAt,
           laneId,
+          stageId: laneId,
+          stageRole: "lane" as const,
           reason: normalizedReason,
           sessionId: lane.sessionId,
           missingLaneIds: [laneId],
@@ -325,6 +327,74 @@ export async function acceptMissingBatchLane(
       ],
     };
   });
+}
+
+export async function acceptMissingBatchSynthesis(
+  batchId: string,
+  reason: string,
+): Promise<BatchStateV1> {
+  const normalizedReason = reason.trim();
+  if (!normalizedReason) throw new Error("accept-missing requires a non-empty owner reason.");
+  const state = await mutateBatchState(batchId, (current) => {
+    const synthesis = current.synthesis;
+    if (!synthesis) throw new Error(`Batch ${batchId} has no synthesis stage.`);
+    if (synthesis.status === "completed") {
+      throw new Error(`Synthesis ${synthesis.id} already completed.`);
+    }
+    if (synthesis.acceptedMissing || synthesis.status === "abandoned") return current;
+    if (
+      !current.barrierClosedAt ||
+      current.lanes.some((lane) => lane.status !== "completed" && !lane.acceptedMissing)
+    ) {
+      throw new Error("Synthesis cannot be closed before the first-stage barrier is complete.");
+    }
+    if (synthesis.dispatchReservation && isProcessAlive(synthesis.dispatchReservation.pid)) {
+      throw new Error(
+        `Synthesis ${synthesis.id} is actively claimed; stop or reconcile it before closure.`,
+      );
+    }
+    if (!["recoverable", "error", "indeterminate"].includes(synthesis.status)) {
+      throw new Error(
+        `Synthesis ${synthesis.id} is ${synthesis.status}; owner closure requires recoverable, error, or indeterminate state.`,
+      );
+    }
+    const decidedAt = new Date().toISOString();
+    return {
+      ...current,
+      status: "partial",
+      synthesis: {
+        ...synthesis,
+        status: "abandoned",
+        acceptedMissing: true,
+        abandonedAt: decidedAt,
+        dispatchReservation: undefined,
+        attempts: synthesis.attempts.map((attempt, index) =>
+          index === synthesis.attempts.length - 1
+            ? { ...attempt, phase: "abandoned" as const }
+            : attempt,
+        ),
+        lastError: {
+          code: "batch-synthesis-accepted-missing",
+          message: normalizedReason,
+          retrySafe: false,
+        },
+      },
+      ownerDecisions: [
+        ...(current.ownerDecisions ?? []),
+        {
+          type: "accept-missing" as const,
+          decidedAt,
+          stageId: synthesis.id,
+          stageRole: "synthesis" as const,
+          reason: normalizedReason,
+          sessionId: synthesis.sessionId,
+          missingLaneIds: [],
+        },
+      ],
+    };
+  });
+  await finalizeReport(state);
+  return state;
 }
 
 export async function getBatchStatus(batchId: string, store: SessionStore = sessionStore) {

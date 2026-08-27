@@ -58,6 +58,14 @@ export async function renderBatch(
       const verified = await readVerifiedBatchAnswer(state.batchId, state.synthesis);
       lines.push("", verified.answer.toString("utf8"));
     }
+    if (state.synthesis.status === "abandoned") {
+      lines.push(
+        `- First-stage outcome: ${state.lanes.every((lane) => lane.status === "completed" || lane.acceptedMissing) ? "all lanes completed or owner-accepted" : "incomplete"}`,
+        `- Synthesis unavailable: ${state.synthesis.lastError?.message ?? "closed by explicit owner decision"}`,
+      );
+    } else if (state.synthesis.lastError) {
+      lines.push(`- Error: ${state.synthesis.lastError.message}`);
+    }
   }
   const missing = state.lanes.filter((lane) => lane.status !== "completed");
   if (missing.length > 0) {
@@ -102,6 +110,8 @@ export function buildBatchStatusProjection(state: BatchStateV1) {
           status: state.synthesis.status,
           sessionId: state.synthesis.sessionId,
           outputPath: state.synthesis.outputPath,
+          acceptedMissing: state.synthesis.acceptedMissing ?? false,
+          abandonedAt: state.synthesis.abandonedAt,
           error: state.synthesis.lastError,
         }
       : null,
@@ -112,6 +122,12 @@ export function buildBatchStatusProjection(state: BatchStateV1) {
 
 function ownerAction(state: BatchStateV1): string | null {
   if (state.status === "awaiting-recovery" || state.status === "interrupted") {
+    if (
+      state.synthesis &&
+      state.lanes.every((lane) => lane.status === "completed" || lane.acceptedMissing)
+    ) {
+      return `Run: oracle batch resume ${state.batchId}; or close unavailable synthesis with: oracle batch accept-missing ${state.batchId} --synthesis --reason <reason>`;
+    }
     return `Run: oracle batch resume ${state.batchId}`;
   }
   if (state.status === "awaiting-owner") {
@@ -121,7 +137,9 @@ function ownerAction(state: BatchStateV1): string | null {
     return state.synthesis
       ? unresolved
         ? `Resolve ${unresolved.id}, or explicitly close it with: oracle batch accept-missing ${state.batchId} --lane ${unresolved.id} --reason <reason>`
-        : `Continue accepted partial synthesis with: oracle batch resume ${state.batchId} --allow-partial`
+        : state.synthesis.status === "error" || state.synthesis.status === "indeterminate"
+          ? `Close unavailable synthesis with: oracle batch accept-missing ${state.batchId} --synthesis --reason <reason>`
+          : `Continue accepted partial synthesis with: oracle batch resume ${state.batchId} --allow-partial`
       : "Resolve failed lanes; this batch has no synthesis stage.";
   }
   return null;

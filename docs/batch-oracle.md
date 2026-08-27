@@ -133,6 +133,11 @@ oracle batch accept-missing <batch-id> \
 # Cross the barrier after every unavailable lane has an owner decision.
 oracle batch resume <batch-id> --allow-partial
 
+# After bounded exact recovery, close an unavailable terminal synthesis.
+oracle batch accept-missing <batch-id> \
+  --synthesis \
+  --reason "Committed synthesis remained nonterminal after bounded recovery."
+
 # Summary hides raw child answers; load one or all only on demand.
 oracle batch render <batch-id>
 oracle batch render <batch-id> --lane recovery
@@ -224,7 +229,9 @@ digest; mismatched digests, duplicate attempt numbers, or multiple possibly
 committed children are an ambiguity error rather than “latest wins.” State
 mutation locks are short-lived directory claims. Stale recovery uses an atomic
 rename to quarantine the old claim, so concurrent reclaimers cannot both own
-it. Locks are not held while GPT-5.6 Pro is thinking.
+it. A newly created directory is protected during bounded owner-receipt
+publication; an old empty directory remains reclaimable after that grace.
+Locks are not held while GPT-5.6 Pro is thinking.
 
 If ChatGPT raises a request-frequency gate before prompt commit, Oracle pauses
 new lane starts and preserves already committed siblings. It reports the batch
@@ -238,6 +245,22 @@ an `abandoned` terminal lane and durable owner decision, and never sends it
 again. Only then may `resume --allow-partial` cross the barrier. The synthesis
 prompt, receipts, report, and final `partial` status all name missing lanes and
 weakened evidence.
+
+Child sessions may be inspected by ID, but the Batch parent owns acceptance,
+barrier progression, answer receipts, and recovery. Do not run generic `oracle
+session <child-id> --live` or `--harvest`; both commands fail closed before
+touching a Batch-owned tab. Use `oracle batch resume <batch-id>` so a completed
+answer passes through the canonical parent acceptance boundary.
+
+If first-stage evidence is complete but a committed synthesis remains
+`recoverable`, `error`, or `indeterminate` after bounded exact recovery, the
+owner may close only that synthesis with `accept-missing --synthesis --reason
+<text>`. Oracle preserves the child session, conversation, attempts, and
+receipts; marks synthesis `abandoned`; never sends it again; records the owner
+reason in the report; and terminalizes the parent as `partial`. Verified raw
+lane answers remain renderable. Because `partial` is terminal, the batch no
+longer permanently protects its child sessions from the ordinary retention
+policy.
 
 Time-based session pruning is also fail-closed. If any batch state is unreadable,
 Oracle refuses the pruning pass instead of assuming that no child is protected.

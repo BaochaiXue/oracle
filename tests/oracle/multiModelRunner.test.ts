@@ -58,6 +58,7 @@ describe("runMultiModelApiSession", () => {
       createSession: async () => sessionMeta,
       readSession: async () => sessionMeta,
       updateSession: async () => sessionMeta,
+      updateExistingSession: async (_sessionId, update) => update(sessionMeta),
       createLogWriter: (sessionId: string, model?: string) => {
         const logPath = path.join(tmpRoot, sessionId, "models", `${model ?? "session"}.log`);
         fs.mkdirSync(path.dirname(logPath), { recursive: true });
@@ -162,6 +163,7 @@ describe("runMultiModelApiSession", () => {
       createSession: async () => sessionMeta,
       readSession: async () => sessionMeta,
       updateSession: async () => sessionMeta,
+      updateExistingSession: async (_sessionId, update) => update(sessionMeta),
       createLogWriter: (sessionId: string, model?: string) => {
         const logPath = path.join(tmpRoot, sessionId, "models", `${model ?? "session"}.log`);
         fs.mkdirSync(path.dirname(logPath), { recursive: true });
@@ -242,6 +244,7 @@ describe("runMultiModelApiSession", () => {
       createSession: async () => sessionMeta,
       readSession: async () => sessionMeta,
       updateSession: async () => sessionMeta,
+      updateExistingSession: async (_sessionId, update) => update(sessionMeta),
       createLogWriter: (sessionId: string, model?: string) => {
         const logPath = path.join(tmpRoot, sessionId, "models", `${model ?? "session"}.log`);
         fs.mkdirSync(path.dirname(logPath), { recursive: true });
@@ -321,6 +324,7 @@ describe("runMultiModelApiSession", () => {
       createSession: async () => sessionMeta,
       readSession: async () => sessionMeta,
       updateSession: async () => sessionMeta,
+      updateExistingSession: async (_sessionId, update) => update(sessionMeta),
       createLogWriter: (sessionId: string, model?: string) => {
         modelLogPath = path.join(tmpRoot, sessionId, "models", `${model ?? "session"}.log`);
         fs.mkdirSync(path.dirname(modelLogPath), { recursive: true });
@@ -406,6 +410,7 @@ describe("runMultiModelApiSession", () => {
       createSession: async () => sessionMeta,
       readSession: async () => sessionMeta,
       updateSession: async () => sessionMeta,
+      updateExistingSession: async (_sessionId, update) => update(sessionMeta),
       createLogWriter: (sessionId: string, model?: string) => {
         modelLogPath = path.join(tmpRoot, sessionId, "models", `${model ?? "session"}.log`);
         fs.mkdirSync(path.dirname(modelLogPath), { recursive: true });

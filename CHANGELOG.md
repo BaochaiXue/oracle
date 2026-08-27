@@ -11,9 +11,12 @@
   indeterminate prompts, and optionally launch a contradiction-first synthesis
   after the durable barrier. New `oracle batch
 validate|run|status|resume|accept-missing|render` commands, atomic action
-  claims, explicit missing-lane owner decisions, three-layer TXT/ZIP artifact
-  identity, verified answer receipts, and manifest-order rendering keep the
-  workflow inspectable and fail closed on evidence mismatch.
+  claims, explicit missing-lane and unavailable-synthesis owner decisions,
+  three-layer TXT/ZIP artifact identity, verified answer receipts, and
+  manifest-order rendering keep the workflow inspectable and fail closed on
+  evidence mismatch. A bounded nonterminal synthesis can now be preserved and
+  explicitly abandoned without resend, closing the parent honestly as
+  `partial` while retaining verified lane answers.
 
 ### Changed
 
@@ -24,6 +27,11 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
 
 ### Fixed
 
+- Batch mutation locks: preserve a newly created lock directory while its owner
+  receipt is still being published, so a concurrent stale-lock contender cannot
+  quarantine an active claim and acquire the same batch simultaneously. Truly
+  abandoned empty lock directories remain recoverable after a bounded
+  publication grace.
 - Direct CDP submission recovery: after a nominal Send leaves the exact prompt
   staged with no new turn or streaming evidence, revalidate the original target
   and page state atomically before issuing at most one page-side Send click. Only
@@ -43,7 +51,12 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   ownership mismatches remain open. Action-time cleanup now also requires the
   session to still exist and any stable stored conversation ID to be present
   and identical in the harvested tab, so a vanished session or ambiguous
-  conversation can never be recreated merely to close a tab.
+  conversation can never be recreated merely to close a tab. Harvest metadata
+  now merges only into current existing session state; stale command-start
+  metadata cannot recreate a deleted session or restore superseded target
+  ownership. Generic `session --live|--harvest` also rejects Batch child
+  sessions before touching their tabs so only the parent can accept answers,
+  write receipts, and advance the barrier.
 - Dedicated browser targets: register ChatGPT, Project Sources, Gemini, recovery,
   and sentinel targets in one durable ownership registry. Completed sessions
   close their exact targets, including `keepBrowser:true` Gemini runs, while

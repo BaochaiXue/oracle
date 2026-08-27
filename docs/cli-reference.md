@@ -29,6 +29,7 @@ This is the curated cheatsheet. The authoritative source is always `oracle --hel
 | `oracle batch status [batch-id] [--json]`                            | Reconcile child sessions and show one batch, or list recent batches.                             |
 | `oracle batch resume <batch-id>`                                     | Reattach original sessions and retry only proven unsubmitted, uncommitted, retry-safe attempts.  |
 | `oracle batch accept-missing <batch-id> --lane <id> --reason <text>` | Preserve the session and record an explicit owner closure for one unavailable lane.              |
+| `oracle batch accept-missing <batch-id> --synthesis --reason <text>` | Preserve an unavailable terminal synthesis and close the parent honestly as `partial`.           |
 | `oracle batch resume <batch-id> --allow-partial`                     | Cross the barrier after every unavailable lane has an `accept-missing` decision.                 |
 | `oracle batch render <batch-id> [--lane <id>\|--all]`                | Render status, one raw answer, or all raw answers in manifest order followed by synthesis.       |
 
@@ -36,6 +37,10 @@ This is the curated cheatsheet. The authoritative source is always `oracle --hel
 user-config, and browser capacity. Batch v1 always uses local dedicated-profile
 direct CDP, `gpt-5-pro`, and the Pro reasoning tier. See
 [Batch Oracle v1](batch-oracle.md).
+
+`oracle session <batch-child> --live|--harvest` is intentionally rejected.
+Inspect child metadata by ID, but perform completion and recovery through the
+Batch parent so canonical answers, receipts, and barrier state advance together.
 
 ## Core consult flags
 

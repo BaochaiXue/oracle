@@ -344,6 +344,7 @@ oracle batch status <batch-id> --json
 oracle batch resume <batch-id>
 oracle batch accept-missing <batch-id> --lane <lane-id> --reason "<owner reason>"
 oracle batch resume <batch-id> --allow-partial
+oracle batch accept-missing <batch-id> --synthesis --reason "<owner reason>"
 oracle batch render <batch-id> --all
 ```
 
@@ -357,6 +358,16 @@ outputs live owner-only under `~/.oracle/batches/<batch-id>/`. Inputs are copied
 once into a published source snapshot before any lane assembly. Changes to an
 already admitted workspace file are reported as `admittedSourceDrift`; they
 never cause silent resealing or change the snapshot consumed by a child.
+
+Batch child sessions remain inspectable with `oracle session <child-id>`, but
+their completion and recovery authority stays with the parent. Generic
+`session --live` and `session --harvest` reject Batch children before touching
+the browser tab; use `oracle batch resume <batch-id>` instead. After bounded
+exact recovery, an unavailable synthesis in `recoverable`, `error`, or
+`indeterminate` state can be closed explicitly with `accept-missing
+--synthesis`. Oracle preserves its session and conversation, marks synthesis
+`abandoned`, keeps the verified lane answers available, and closes the parent
+honestly as `partial` without resending.
 
 See [Batch Oracle v1](docs/batch-oracle.md) for the manifest, durable topology,
 recovery matrix, semantic bundle identity, and v1 boundaries.

@@ -192,6 +192,8 @@ export interface BatchOwnerDecision {
   decidedAt: string;
   missingLaneIds: string[];
   laneId?: string;
+  stageId?: string;
+  stageRole?: "lane" | "synthesis";
   reason?: string;
   sessionId?: string;
 }

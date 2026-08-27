@@ -52,6 +52,15 @@ describe("batch mutation lock", () => {
     await lock.release();
   });
 
+  test("recovers an empty lock directory after the owner publication grace expires", async () => {
+    const lockPath = path.join(getBatchPaths("fixture-batch").root, ".mutation.lock");
+    await fs.mkdir(lockPath);
+    const old = new Date(Date.now() - 2_000);
+    await fs.utimes(lockPath, old, old);
+    const lock = await acquireBatchMutationLock("fixture-batch", { staleMs: 1 });
+    await lock.release();
+  });
+
   test("allows exactly one contender to reclaim a stale lock", async () => {
     const lockPath = path.join(getBatchPaths("fixture-batch").root, ".mutation.lock");
     await fs.writeFile(

@@ -832,6 +832,23 @@ export async function updateSessionMetadata(
   return next;
 }
 
+export async function updateExistingSessionMetadata(
+  sessionId: string,
+  update: (current: SessionMetadata) => SessionMetadata | null,
+): Promise<SessionMetadata | null> {
+  const existing = await readRawSessionMetadata(sessionId);
+  if (!existing) return null;
+  const next = update(existing);
+  if (!next) return null;
+  if (next.id !== sessionId) {
+    throw new Error(
+      `Session update identity mismatch: expected ${sessionId}, received ${next.id}.`,
+    );
+  }
+  await writeSessionMetadataFile(sessionId, next);
+  return next;
+}
+
 interface ReadSessionMetadataOptions {
   reconcile: boolean;
   persist: boolean;

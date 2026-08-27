@@ -4,9 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { setOracleHomeDirOverrideForTest } from "../../src/oracleHome.js";
 import { sessionStore } from "../../src/sessionStore.js";
-import { getBatchPaths, readBatchState } from "../../src/batch/store.js";
+import {
+  getBatchPaths,
+  listProtectedBatchSessionIds,
+  readBatchState,
+} from "../../src/batch/store.js";
 import {
   acceptMissingBatchLane,
+  acceptMissingBatchSynthesis,
   renderStoredBatch,
   resumeBatch,
   runBatch,
@@ -365,6 +370,112 @@ describe("Batch Oracle runtime", () => {
       }),
     );
     expect(await fs.readFile(paths.report, "utf8")).toContain("Status: partial");
+  });
+
+  test("lets the owner terminalize a nonterminal synthesis without resending or losing lane evidence", async () => {
+    await fs.writeFile(
+      path.join(cwd, "batch.json5"),
+      JSON.stringify({
+        ...twoLaneManifest(),
+        policy: { maxParallel: 2, maxChildSessions: 3 },
+        synthesis: {
+          id: "adjudication",
+          title: "Adjudication",
+          prompt: "Resolve the contradiction.",
+          requiredOutput: ["contradiction matrix"],
+        },
+      }),
+      "utf8",
+    );
+    const dispatchChild = vi.fn(async (context: BatchChildExecutionContext) => {
+      if (context.role === "synthesis") {
+        await context.store.updateModelRun(context.sessionMeta.id, "gpt-5-pro", {
+          status: "error",
+          completedAt: new Date().toISOString(),
+        });
+        await context.store.updateSession(context.sessionMeta.id, {
+          status: "error",
+          errorMessage: "Committed synthesis remained nonterminal.",
+          browser: {
+            config: context.browserConfig,
+            runtime: {
+              promptSubmitted: true,
+              proTurnCommitted: true,
+              conversationId: "synthesis-conversation",
+              tabUrl: "https://chatgpt.com/c/synthesis-conversation",
+              browserDisposition: "recoverable",
+            },
+          },
+        });
+        return;
+      }
+      await fs.mkdir(path.dirname(context.outputPath), { recursive: true });
+      await fs.writeFile(context.outputPath, `answer ${context.laneId}`, "utf8");
+      await context.store.updateModelRun(context.sessionMeta.id, "gpt-5-pro", {
+        status: "completed",
+        completedAt: new Date().toISOString(),
+      });
+      await context.store.updateSession(context.sessionMeta.id, {
+        status: "completed",
+        completedAt: new Date().toISOString(),
+      });
+    });
+
+    const initial = await runBatch(
+      "batch.json5",
+      { cwd, log: () => undefined },
+      { buildBrowserConfig: async () => browserConfig, dispatchChild },
+    );
+    expect(initial.state.status).toBe("awaiting-recovery");
+    expect(initial.state.lanes.every((lane) => lane.status === "completed")).toBe(true);
+    expect(initial.state.synthesis).toEqual(
+      expect.objectContaining({ status: "recoverable", sessionId: expect.any(String) }),
+    );
+    const synthesisSessionId = initial.state.synthesis!.sessionId!;
+    const dispatchCount = dispatchChild.mock.calls.length;
+
+    const closed = await acceptMissingBatchSynthesis(
+      initial.state.batchId,
+      "Committed synthesis remained nonterminal after bounded exact recovery.",
+    );
+    expect(closed.status).toBe("partial");
+    expect(closed.synthesis).toEqual(
+      expect.objectContaining({
+        status: "abandoned",
+        acceptedMissing: true,
+        sessionId: synthesisSessionId,
+        abandonedAt: expect.any(String),
+        lastError: expect.objectContaining({
+          code: "batch-synthesis-accepted-missing",
+          retrySafe: false,
+        }),
+      }),
+    );
+    expect(closed.ownerDecisions?.at(-1)).toEqual(
+      expect.objectContaining({
+        type: "accept-missing",
+        stageId: "adjudication",
+        stageRole: "synthesis",
+        sessionId: synthesisSessionId,
+      }),
+    );
+    expect(await sessionStore.readSession(synthesisSessionId)).not.toBeNull();
+    expect(await listProtectedBatchSessionIds()).not.toContain(synthesisSessionId);
+    const report = await fs.readFile(getBatchPaths(closed.batchId).report, "utf8");
+    expect(report).toContain("Status: partial");
+    expect(report).toContain("First-stage outcome: all lanes completed or owner-accepted");
+    expect(report).toContain("Synthesis unavailable");
+    expect(report).toContain(
+      "Committed synthesis remained nonterminal after bounded exact recovery.",
+    );
+
+    const resumed = await resumeBatch(
+      closed.batchId,
+      { log: () => undefined },
+      { buildBrowserConfig: async () => browserConfig, dispatchChild },
+    );
+    expect(resumed.state.status).toBe("partial");
+    expect(dispatchChild).toHaveBeenCalledTimes(dispatchCount);
   });
 
   test("does not create duplicate synthesis when a concurrent resume sees a live reservation", async () => {

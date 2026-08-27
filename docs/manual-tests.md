@@ -310,6 +310,31 @@ Use this when you need to inspect the live ChatGPT composer (DOM state, markdown
 
 > **Tip:** Running `npx chrome-devtools-mcp@latest --help` lists additional switches (custom Chrome binary, headless, viewport, etc.).
 
+## Batch authority and owner-closure checks
+
+Use an isolated fixture Batch rather than a valuable live consultation.
+
+1. Inspect a Batch child with `oracle session <child-id>` and confirm metadata
+   remains readable. Then try `--harvest` and `--live`; both must reject with the
+   parent `oracle batch resume <batch-id>` command before connecting to CDP.
+2. In a test fixture, remove the session after the generic harvest command's
+   initial read but before answer persistence. Confirm no session metadata is
+   recreated and no target reconciliation runs. Repeat after reassigning the
+   live session from target A to target B; harvest metadata may be recorded, but
+   runtime ownership must remain B and target A must stay open.
+3. For a batch whose first-stage lanes are complete and synthesis is
+   `recoverable`, run:
+
+   ```bash
+   oracle batch accept-missing <batch-id> \
+     --synthesis \
+     --reason "bounded recovery exhausted"
+   ```
+
+   Confirm the synthesis child and conversation remain, synthesis becomes
+   `abandoned`, the parent/report become `partial`, raw lane answers still
+   render, and a later `batch resume` sends nothing.
+
 ## Responses API Live Smoke Tests
 
 These Vitest cases hit the real OpenAI API to exercise both transports:

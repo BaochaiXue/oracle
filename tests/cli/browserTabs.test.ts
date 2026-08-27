@@ -94,7 +94,14 @@ describe("browser tab CLI helpers", () => {
       lastAssistantTurnIndex: 1,
     } as ChatGptTabSummary;
     const readSession = vi.fn(async () => meta);
-    const updateSession = vi.fn(async () => undefined);
+    let current = meta;
+    const updateExistingSession = vi.fn(
+      async (_id: string, update: (value: SessionMetadata) => SessionMetadata | null) => {
+        const next = update(current);
+        if (next) current = next;
+        return next;
+      },
+    );
     const reconcile = vi.fn(async () => ({
       status: "complete" as const,
       closedTargetIds: ["owned-target"],
@@ -109,22 +116,18 @@ describe("browser tab CLI helpers", () => {
         undefined,
         {
           readSession: readSession as never,
-          updateSession: updateSession as never,
+          updateExistingSession: updateExistingSession as never,
           reconcile: reconcile as never,
         },
       ),
     ).resolves.toBe(true);
 
-    expect(updateSession).toHaveBeenCalledWith(
-      meta.id,
+    expect(updateExistingSession).toHaveBeenCalledTimes(1);
+    expect(current.browser?.runtime).toEqual(
       expect.objectContaining({
-        browser: expect.objectContaining({
-          runtime: expect.objectContaining({
-            browserDisposition: "completed",
-            recoveryKind: undefined,
-            recoveryExpiresAt: undefined,
-          }),
-        }),
+        browserDisposition: "completed",
+        recoveryKind: undefined,
+        recoveryExpiresAt: undefined,
       }),
     );
     expect(reconcile).toHaveBeenCalledWith(
@@ -164,7 +167,7 @@ describe("browser tab CLI helpers", () => {
       },
     } as SessionMetadata;
     const readSession = vi.fn(async () => current);
-    const updateSession = vi.fn();
+    const updateExistingSession = vi.fn();
     const reconcile = vi.fn();
 
     await expect(
@@ -184,19 +187,19 @@ describe("browser tab CLI helpers", () => {
         undefined,
         {
           readSession: readSession as never,
-          updateSession: updateSession as never,
+          updateExistingSession: updateExistingSession as never,
           reconcile: reconcile as never,
         },
       ),
     ).resolves.toBe(false);
-    expect(updateSession).not.toHaveBeenCalled();
+    expect(updateExistingSession).not.toHaveBeenCalled();
     expect(reconcile).not.toHaveBeenCalled();
   });
 
   test("does not recreate a session missing at the action-time ownership read", async () => {
     const meta = manualSendMeta();
     const readSession = vi.fn(async () => null);
-    const updateSession = vi.fn();
+    const updateExistingSession = vi.fn();
     const reconcile = vi.fn();
 
     await expect(
@@ -207,19 +210,19 @@ describe("browser tab CLI helpers", () => {
         undefined,
         {
           readSession: readSession as never,
-          updateSession: updateSession as never,
+          updateExistingSession: updateExistingSession as never,
           reconcile: reconcile as never,
         },
       ),
     ).resolves.toBe(false);
-    expect(updateSession).not.toHaveBeenCalled();
+    expect(updateExistingSession).not.toHaveBeenCalled();
     expect(reconcile).not.toHaveBeenCalled();
   });
 
   test("preserves a stable-conversation session when the harvested conversation id is missing", async () => {
     const meta = manualSendMeta();
     const readSession = vi.fn(async () => meta);
-    const updateSession = vi.fn();
+    const updateExistingSession = vi.fn();
     const reconcile = vi.fn();
 
     await expect(
@@ -230,19 +233,19 @@ describe("browser tab CLI helpers", () => {
         undefined,
         {
           readSession: readSession as never,
-          updateSession: updateSession as never,
+          updateExistingSession: updateExistingSession as never,
           reconcile: reconcile as never,
         },
       ),
     ).resolves.toBe(false);
-    expect(updateSession).not.toHaveBeenCalled();
+    expect(updateExistingSession).not.toHaveBeenCalled();
     expect(reconcile).not.toHaveBeenCalled();
   });
 
   test("preserves a stable-conversation session when the harvested conversation id differs", async () => {
     const meta = manualSendMeta();
     const readSession = vi.fn(async () => meta);
-    const updateSession = vi.fn();
+    const updateExistingSession = vi.fn();
     const reconcile = vi.fn();
 
     await expect(
@@ -256,19 +259,19 @@ describe("browser tab CLI helpers", () => {
         undefined,
         {
           readSession: readSession as never,
-          updateSession: updateSession as never,
+          updateExistingSession: updateExistingSession as never,
           reconcile: reconcile as never,
         },
       ),
     ).resolves.toBe(false);
-    expect(updateSession).not.toHaveBeenCalled();
+    expect(updateExistingSession).not.toHaveBeenCalled();
     expect(reconcile).not.toHaveBeenCalled();
   });
 
   test("preserves the tab when an explicit browser tab override was used", async () => {
     const meta = manualSendMeta();
     const readSession = vi.fn();
-    const updateSession = vi.fn();
+    const updateExistingSession = vi.fn();
     const reconcile = vi.fn();
 
     await expect(
@@ -279,20 +282,20 @@ describe("browser tab CLI helpers", () => {
         "owned-target",
         {
           readSession: readSession as never,
-          updateSession: updateSession as never,
+          updateExistingSession: updateExistingSession as never,
           reconcile: reconcile as never,
         },
       ),
     ).resolves.toBe(false);
     expect(readSession).not.toHaveBeenCalled();
-    expect(updateSession).not.toHaveBeenCalled();
+    expect(updateExistingSession).not.toHaveBeenCalled();
     expect(reconcile).not.toHaveBeenCalled();
   });
 
   test("preserves the tab when the action-time endpoint does not match", async () => {
     const meta = manualSendMeta();
     const readSession = vi.fn(async () => meta);
-    const updateSession = vi.fn();
+    const updateExistingSession = vi.fn();
     const reconcile = vi.fn();
 
     await expect(
@@ -303,19 +306,26 @@ describe("browser tab CLI helpers", () => {
         undefined,
         {
           readSession: readSession as never,
-          updateSession: updateSession as never,
+          updateExistingSession: updateExistingSession as never,
           reconcile: reconcile as never,
         },
       ),
     ).resolves.toBe(false);
-    expect(updateSession).not.toHaveBeenCalled();
+    expect(updateExistingSession).not.toHaveBeenCalled();
     expect(reconcile).not.toHaveBeenCalled();
   });
 
   test("marks reconciliation work when exact-target cleanup fails and the session still exists", async () => {
     const meta = manualSendMeta();
     const readSession = vi.fn(async () => meta);
-    const updateSession = vi.fn(async () => meta);
+    let current = meta;
+    const updateExistingSession = vi.fn(
+      async (_id: string, update: (value: SessionMetadata) => SessionMetadata | null) => {
+        const next = update(current);
+        if (next) current = next;
+        return next;
+      },
+    );
     const reconcile = vi.fn(async () => {
       throw new Error("cleanup failed");
     });
@@ -328,21 +338,16 @@ describe("browser tab CLI helpers", () => {
         undefined,
         {
           readSession: readSession as never,
-          updateSession: updateSession as never,
+          updateExistingSession: updateExistingSession as never,
           reconcile: reconcile as never,
         },
       ),
     ).resolves.toBe(false);
-    expect(updateSession).toHaveBeenCalledTimes(2);
-    expect(updateSession).toHaveBeenLastCalledWith(
-      meta.id,
+    expect(updateExistingSession).toHaveBeenCalledTimes(2);
+    expect(current.browser?.runtime).toEqual(
       expect.objectContaining({
-        browser: expect.objectContaining({
-          runtime: expect.objectContaining({
-            browserDisposition: "completed",
-            reconcileNeeded: true,
-          }),
-        }),
+        browserDisposition: "completed",
+        reconcileNeeded: true,
       }),
     );
   });
@@ -350,7 +355,10 @@ describe("browser tab CLI helpers", () => {
   test("does not recreate a session deleted after reconciliation failure", async () => {
     const meta = manualSendMeta();
     const readSession = vi.fn().mockResolvedValueOnce(meta).mockResolvedValueOnce(null);
-    const updateSession = vi.fn(async () => meta);
+    const updateExistingSession = vi.fn(
+      async (_id: string, update: (value: SessionMetadata) => SessionMetadata | null) =>
+        update(meta),
+    );
     const reconcile = vi.fn(async () => {
       throw new Error("cleanup failed");
     });
@@ -363,11 +371,11 @@ describe("browser tab CLI helpers", () => {
         undefined,
         {
           readSession: readSession as never,
-          updateSession: updateSession as never,
+          updateExistingSession: updateExistingSession as never,
           reconcile: reconcile as never,
         },
       ),
     ).resolves.toBe(false);
-    expect(updateSession).toHaveBeenCalledTimes(1);
+    expect(updateExistingSession).toHaveBeenCalledTimes(1);
   });
 });

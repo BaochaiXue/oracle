@@ -4,6 +4,7 @@ import path from "node:path";
 import { getOracleHomeDir } from "../oracleHome.js";
 
 const DEFAULT_STALE_MS = 5 * 60 * 1000;
+const OWNER_PUBLICATION_GRACE_MS = 1_000;
 
 export interface BatchMutationLock {
   release(): Promise<void>;
@@ -81,7 +82,12 @@ function ownedLock(lockPath: string, token: string): BatchMutationLock {
 
 async function isStaleLock(lockPath: string, staleMs: number): Promise<boolean> {
   const parsed = await readLockPayload(lockPath);
-  if (!parsed) return true;
+  if (!parsed) {
+    const stats = await fs.stat(lockPath).catch(() => null);
+    if (!stats) return true;
+    const age = Date.now() - stats.mtimeMs;
+    return !Number.isFinite(age) || age >= Math.max(staleMs, OWNER_PUBLICATION_GRACE_MS);
+  }
   if (Number.isFinite(parsed.pid)) return !isProcessAlive(parsed.pid);
   const age = Date.now() - Date.parse(parsed.createdAt ?? "");
   return !Number.isFinite(age) || age >= staleMs;

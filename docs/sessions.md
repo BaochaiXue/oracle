@@ -114,7 +114,10 @@ Batch resume reuses the original recoverable child session. It creates a new
 attempt only when the previous child has durable evidence that no prompt was
 submitted or committed and the failure is retry-safe. `oracle restart <child>`
 is not the Batch recovery path because it bypasses parent reservations and the
-stage barrier. See [Batch Oracle v1](batch-oracle.md).
+stage barrier. A child remains inspectable with `oracle session <child>`, but
+generic `--live` and `--harvest` are also rejected because they cannot write the
+parent answer receipt or advance its barrier. See [Batch Oracle
+v1](batch-oracle.md).
 
 If an unavailable lane must be omitted, preserve its session and record the
 owner decision before partial synthesis:
@@ -123,6 +126,17 @@ owner decision before partial synthesis:
 oracle batch accept-missing <batch-id> --lane <lane-id> --reason "<reason>"
 oracle batch resume <batch-id> --allow-partial
 ```
+
+If every first-stage lane is accepted but synthesis remains nonterminal after
+bounded recovery, close it without resending while preserving its session and
+conversation:
+
+```bash
+oracle batch accept-missing <batch-id> --synthesis --reason "<reason>"
+```
+
+The parent becomes terminal `partial`, the report records synthesis as
+unavailable, and verified raw lane answers remain usable.
 
 ## Restart
 

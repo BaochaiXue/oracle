@@ -154,11 +154,22 @@ lane with `oracle batch accept-missing <batch-id> --lane <lane-id> --reason
 "<reason>"`, then resume with `--allow-partial`. It must name missing lanes and
 weakened conclusions.
 
+Batch child sessions may be inspected by ID, but never complete or recover one
+with generic `oracle session <child-id> --live` or `--harvest`. Those paths do
+not own canonical Batch answers, receipts, or the parent barrier and therefore
+fail closed. Use `oracle batch resume <batch-id>`.
+
 A synthesis session receives canonical shared-authority bytes plus each
 verified answer, its immutable receipt, and its sealed input manifest. It must
 preserve dissent, identify unsupported agreement, produce a contradiction
 matrix, expose owner-pending decisions, and propose one bounded next experiment
 with kill criteria. Never decide by majority vote alone.
+
+When every first-stage lane is accepted but synthesis remains `recoverable`,
+`error`, or `indeterminate` after bounded exact recovery, the owner may preserve
+that child and close the stage with `oracle batch accept-missing <batch-id>
+--synthesis --reason "<reason>"`. This marks synthesis `abandoned` and the
+parent `partial`; it never resends and does not discard verified lane answers.
 
 Keep raw answers durable and loadable on demand. Do not permanently inject
 every long child answer into the host's working context. During an open stage,

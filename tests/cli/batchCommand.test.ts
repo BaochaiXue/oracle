@@ -34,6 +34,32 @@ describe("Batch Oracle CLI", () => {
     }
   });
 
+  test("offers owner closure for either an unavailable lane or synthesis", async () => {
+    const result = await execCli(["batch", "accept-missing", "--help"]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("--lane <lane-id>");
+    expect(result.stdout).toContain("--synthesis");
+    expect(result.stdout).toContain("--reason <text>");
+  });
+
+  test.each([
+    ["neither", []],
+    ["both", ["--lane", "one", "--synthesis"]],
+  ])("rejects %s accept-missing target selection", async (_label, targetArgs) => {
+    const result = await execCli([
+      "batch",
+      "accept-missing",
+      "fixture-batch",
+      ...targetArgs,
+      "--reason",
+      "owner closure",
+    ]);
+    expect(result.code).toBe(1);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(
+      "Choose exactly one accept-missing target",
+    );
+  });
+
   test("validates JSON5 and reports field-path errors without dispatch", async () => {
     await fs.writeFile(
       path.join(cwd, "valid.json5"),

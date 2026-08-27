@@ -163,35 +163,61 @@ export function resolveSessionTabRefForTest(meta: SessionMetadata): string {
 
 async function persistHarvest(
   sessionId: string,
-  meta: SessionMetadata,
   harvested: ChatGptTabSummary,
-): Promise<void> {
+): Promise<SessionMetadata | null> {
   const hash = createHash("sha1")
     .update(harvested.lastAssistantMarkdown ?? harvested.lastAssistantText ?? "")
     .digest("hex");
-  const browser = {
-    ...(meta.browser ?? {}),
-    harvest: {
-      targetId: harvested.targetId,
-      url: harvested.url,
-      conversationId: harvested.conversationId ?? extractConversationIdFromUrl(harvested.url),
-      harvestedAt: new Date().toISOString(),
-      assistantHash: hash,
-      state: harvested.state,
-      stopExists: harvested.stopExists,
-      sendExists: harvested.sendExists,
-      assistantCount: harvested.assistantCount,
-      currentModelLabel: harvested.currentModelLabel,
-      lastAssistantSnippet: harvested.lastAssistantSnippet,
+  return sessionStore.updateExistingSession(sessionId, (current) => ({
+    ...current,
+    browser: {
+      ...(current.browser ?? {}),
+      harvest: {
+        targetId: harvested.targetId,
+        url: harvested.url,
+        conversationId: harvested.conversationId ?? extractConversationIdFromUrl(harvested.url),
+        harvestedAt: new Date().toISOString(),
+        assistantHash: hash,
+        state: harvested.state,
+        stopExists: harvested.stopExists,
+        sendExists: harvested.sendExists,
+        assistantCount: harvested.assistantCount,
+        currentModelLabel: harvested.currentModelLabel,
+        lastAssistantSnippet: harvested.lastAssistantSnippet,
+      },
     },
-  };
-  await sessionStore.updateSession(sessionId, { browser });
+  }));
 }
 
 interface CompletedOwnedHarvestDeps {
   readSession?: typeof sessionStore.readSession;
-  updateSession?: typeof sessionStore.updateSession;
+  updateExistingSession?: typeof sessionStore.updateExistingSession;
   reconcile?: typeof reconcileOwnedBrowserTargets;
+}
+
+function ownedCompletedRuntime(
+  current: SessionMetadata,
+  harvested: ChatGptTabSummary,
+  endpoint: { host: string; port: number },
+) {
+  const runtime = current.browser?.runtime;
+  if (
+    !runtime?.userDataDir ||
+    !runtime.chromeHost ||
+    !runtime.chromePort ||
+    !runtime.chromeTargetId ||
+    runtime.chromeHost !== endpoint.host ||
+    runtime.chromePort !== endpoint.port ||
+    runtime.chromeTargetId !== harvested.targetId
+  ) {
+    return null;
+  }
+  const harvestedConversationId =
+    harvested.conversationId ?? extractConversationIdFromUrl(harvested.url);
+  if (runtime.conversationId && runtime.conversationId !== harvestedConversationId) {
+    return null;
+  }
+  return runtime;
 }
 
 async function finishCompletedOwnedLiveHarvest(
@@ -209,43 +235,30 @@ async function finishCompletedOwnedLiveHarvest(
     return false;
   }
   const readSession = deps.readSession ?? sessionStore.readSession.bind(sessionStore);
-  const updateSession = deps.updateSession ?? sessionStore.updateSession.bind(sessionStore);
+  const updateExistingSession =
+    deps.updateExistingSession ?? sessionStore.updateExistingSession.bind(sessionStore);
   const reconcile = deps.reconcile ?? reconcileOwnedBrowserTargets;
   const current = await readSession(sessionId);
-  if (!current) {
-    return false;
-  }
-  const runtime = current.browser?.runtime;
-  if (
-    !runtime?.userDataDir ||
-    !runtime.chromeHost ||
-    !runtime.chromePort ||
-    !runtime.chromeTargetId ||
-    runtime.chromeHost !== endpoint.host ||
-    runtime.chromePort !== endpoint.port ||
-    runtime.chromeTargetId !== harvested.targetId
-  ) {
-    return false;
-  }
-  const harvestedConversationId =
-    harvested.conversationId ?? extractConversationIdFromUrl(harvested.url);
-  if (runtime.conversationId && runtime.conversationId !== harvestedConversationId) {
-    return false;
-  }
-
-  const completedRuntime = {
-    ...runtime,
-    browserDisposition: "completed" as const,
-    recoveryKind: undefined,
-    recoveryExpiresAt: undefined,
-    reconcileNeeded: undefined,
-  };
-  await updateSession(sessionId, {
-    browser: {
-      ...current.browser,
-      runtime: completedRuntime,
-    },
+  if (!current || !ownedCompletedRuntime(current, harvested, endpoint)) return false;
+  const terminalized = await updateExistingSession(sessionId, (live) => {
+    const runtime = ownedCompletedRuntime(live, harvested, endpoint);
+    if (!runtime) return null;
+    return {
+      ...live,
+      browser: {
+        ...live.browser,
+        runtime: {
+          ...runtime,
+          browserDisposition: "completed" as const,
+          recoveryKind: undefined,
+          recoveryExpiresAt: undefined,
+          reconcileNeeded: undefined,
+        },
+      },
+    };
   });
+  const runtime = terminalized?.browser?.runtime;
+  if (!runtime?.userDataDir || !runtime.chromeTargetId) return false;
 
   try {
     const receipt = await reconcile({
@@ -267,22 +280,35 @@ async function finishCompletedOwnedLiveHarvest(
   }
 
   const afterFailure = await readSession(sessionId);
-  if (!afterFailure?.browser?.runtime) {
+  if (!afterFailure || !ownedCompletedRuntime(afterFailure, harvested, endpoint)) {
     return false;
   }
-  await updateSession(sessionId, {
-    browser: {
-      ...afterFailure.browser,
-      runtime: {
-        ...afterFailure.browser.runtime,
-        browserDisposition: "completed",
-        recoveryKind: undefined,
-        recoveryExpiresAt: undefined,
-        reconcileNeeded: true,
-      },
-    },
+  await updateExistingSession(sessionId, (live) => {
+    const runtime = ownedCompletedRuntime(live, harvested, endpoint);
+    return runtime
+      ? {
+          ...live,
+          browser: {
+            ...live.browser,
+            runtime: {
+              ...runtime,
+              browserDisposition: "completed",
+              recoveryKind: undefined,
+              recoveryExpiresAt: undefined,
+              reconcileNeeded: true,
+            },
+          },
+        }
+      : null;
   });
   return false;
+}
+
+function assertGenericBrowserHarvestAllowed(meta: SessionMetadata): void {
+  if (!meta.batch) return;
+  throw new Error(
+    `Session ${meta.id} belongs to Batch Oracle ${meta.batch.batchId}. Recover it with: oracle batch resume ${meta.batch.batchId}`,
+  );
 }
 
 function printHarvestSummary(sessionId: string, harvested: ChatGptTabSummary): void {
@@ -366,6 +392,7 @@ export async function harvestSessionBrowserOutput(
   if (!meta) {
     throw new Error(`No session found with ID ${sessionId}.`);
   }
+  assertGenericBrowserHarvestAllowed(meta);
   const recordedEndpoint = sessionBrowserEndpoint(meta);
   const initialEndpoint = recordedEndpoint ?? {
     host: DEFAULT_REMOTE_CHROME_HOST,
@@ -407,7 +434,7 @@ export async function harvestSessionBrowserOutput(
       });
     }
 
-    await persistHarvest(sessionId, meta, harvested);
+    const persisted = await persistHarvest(sessionId, harvested);
     recoveryDisposition = harvested.state === "completed" ? "completed" : "recoverable";
     printHarvestSummary(sessionId, harvested);
     const output = harvested.lastAssistantMarkdown ?? harvested.lastAssistantText ?? "";
@@ -417,7 +444,7 @@ export async function harvestSessionBrowserOutput(
     if (!options.quietOutput && output) {
       process.stdout.write(`${output}${output.endsWith("\n") ? "" : "\n"}`);
     }
-    if (!recoveredConversation) {
+    if (!recoveredConversation && persisted) {
       await finishCompletedOwnedLiveHarvest(
         sessionId,
         harvested,
@@ -443,6 +470,7 @@ export async function liveTailSessionBrowserOutput(
   if (!meta) {
     throw new Error(`No session found with ID ${sessionId}.`);
   }
+  assertGenericBrowserHarvestAllowed(meta);
   const recordedEndpoint = sessionBrowserEndpoint(meta);
   let endpoint = recordedEndpoint ?? {
     host: DEFAULT_REMOTE_CHROME_HOST,
@@ -511,7 +539,7 @@ export async function liveTailSessionBrowserOutput(
           `send=${harvested.sendExists ? "yes" : "no"} model=${harvested.currentModelLabel || "(unknown)"} ` +
           `snippet=${snippet(harvested.lastAssistantSnippet || fullText, 160)}`;
         console.log(statusLine);
-        await persistHarvest(sessionId, meta, harvested);
+        await persistHarvest(sessionId, harvested);
       }
 
       const derivedState = harvested.stopExists
@@ -532,7 +560,7 @@ export async function liveTailSessionBrowserOutput(
           ...harvested,
           state: derivedState,
         };
-        await persistHarvest(sessionId, meta, finalHarvest);
+        const persisted = await persistHarvest(sessionId, finalHarvest);
         printHarvestSummary(sessionId, finalHarvest);
         const output = finalHarvest.lastAssistantMarkdown ?? finalHarvest.lastAssistantText ?? "";
         if (options.writeOutputPath) {
@@ -541,7 +569,7 @@ export async function liveTailSessionBrowserOutput(
         if (output) {
           process.stdout.write(`${output}${output.endsWith("\n") ? "" : "\n"}`);
         }
-        if (!recoveredConversation) {
+        if (!recoveredConversation && persisted) {
           await finishCompletedOwnedLiveHarvest(
             sessionId,
             finalHarvest,
