@@ -1,9 +1,38 @@
 ---
 title: Install
-description: "Install Oracle via Homebrew, npm, or run on demand with npx. Node 24+ required."
+description: "Install the IndelibleVivi Oracle fork from source. Upstream Homebrew and npm packages are documented separately. Node 24+ required."
 ---
 
-## Homebrew (macOS / Linux)
+## Install this fork from source
+
+```bash
+git clone https://github.com/IndelibleVivi/oracle.git
+cd oracle
+corepack enable
+pnpm install
+pnpm build
+npm link
+```
+
+This is the installation path for the fork's dedicated Chrome defaults, GPT-5.6 Pro receipt
+contract, OpenCLI alternative, and Batch Oracle. It requires Node **24 or newer**.
+
+Install the official Chrome for Testing build and create the Oracle-only browser identity:
+
+```bash
+oracle browser install
+oracle browser setup --use-mock-keychain
+oracle browser smoke
+```
+
+See [Quickstart](quickstart.md) for the first sign-in, smoke contract, and first consultation.
+
+## Upstream package distributions
+
+The following commands install [steipete/oracle](https://github.com/steipete/oracle), not this
+fork. They remain useful when the upstream release is the intended product boundary.
+
+### Homebrew (macOS / Linux)
 
 ```bash
 brew install steipete/tap/oracle
@@ -11,7 +40,7 @@ brew install steipete/tap/oracle
 
 The tap also publishes the `oracle-notifier` macOS helper used by long-running browser runs.
 
-## npm / pnpm
+### npm / pnpm
 
 ```bash
 npm install -g @steipete/oracle
@@ -19,21 +48,15 @@ npm install -g @steipete/oracle
 pnpm add -g @steipete/oracle
 ```
 
-Requires Node **24 or newer**. After install:
-
-```bash
-oracle --help
-oracle --version
-```
-
-## Run without installing
+### Run without installing
 
 ```bash
 npx -y @steipete/oracle --help
 pnpx @steipete/oracle --help
 ```
 
-`npx` is fine for CI, ad-hoc scripts, or when you don't want a global binary on the box. Cache the package in CI by pinning the version (`@steipete/oracle@0.12.1`) so you don't re-download on every job.
+For CI or repeatable scripts, pin the upstream package version instead of resolving its moving
+latest tag on every run.
 
 ## API keys (optional)
 
@@ -58,11 +81,17 @@ If no key is set, Oracle defaults to **browser mode** and drives ChatGPT directl
 
 Override the root with `ORACLE_HOME_DIR=/some/path` if you'd rather keep state under XDG config or per-project.
 
-## Updating
+## Updating this fork
 
 ```bash
-brew upgrade oracle      # Homebrew
-npm update -g @steipete/oracle
+git pull --ff-only
+pnpm install --frozen-lockfile
+pnpm build
+npm link
 ```
 
-`oracle --version` reports the current build. Releases land on [GitHub Releases](https://github.com/steipete/oracle/releases) with notes copied from the [changelog](https://github.com/steipete/oracle/blob/main/CHANGELOG.md).
+Run those commands from the fork checkout. `oracle --version` reports the linked build.
+
+For an upstream package installation, use `brew upgrade oracle` or
+`npm update -g @steipete/oracle`. Upstream releases live on
+[steipete/oracle Releases](https://github.com/steipete/oracle/releases).
