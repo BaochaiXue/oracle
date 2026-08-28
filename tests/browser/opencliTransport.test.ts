@@ -530,6 +530,120 @@ describe("OpenCliBrowserTransport", () => {
     expect(events).not.toContain("dispatch");
   });
 
+  it("never marks a post-receipt runtime persistence failure as safe to retry", async () => {
+    const calls: string[][] = [];
+    const events: string[] = [];
+    const sessionDir = await createTempDir();
+
+    const run = runOpenCliBrowserMode(
+      {
+        prompt: "private prompt",
+        sessionId: "post-receipt-runtime-failure",
+        config: {
+          transport: "opencli",
+          desiredModel: "GPT-5.6 Pro",
+          modelStrategy: "select",
+        },
+        runtimeHintCb: (runtime) => {
+          if (runtime.promptSubmitted) {
+            throw new Error("simulated session-store failure after receipt");
+          }
+        },
+      },
+      {
+        runCommand: successRunner(
+          calls,
+          events,
+          "https://chatgpt.com/c/post-receipt-runtime-failure",
+        ),
+        resolveSessionDir: async () => sessionDir,
+        randomId: () => "post-receipt-runtime",
+        acquireLock: async () => ({
+          path: "/test/lock",
+          lockId: "post-receipt-runtime-lock",
+          release: async () => undefined,
+        }),
+      },
+    );
+
+    await expect(run).rejects.toMatchObject({
+      message: expect.stringMatching(/do not resubmit/u),
+      details: {
+        stage: "post-submit-persistence",
+        reason: "post-submit-persistence-failed",
+        submitted: true,
+        runtime: expect.objectContaining({
+          browserTransport: "opencli",
+          tabUrl: "https://chatgpt.com/c/post-receipt-runtime-failure",
+          conversationId: "post-receipt-runtime-failure",
+          promptSubmitted: true,
+        }),
+      },
+    });
+    expect(events).toContain("dispatch");
+    expect(events).toContain("receipt");
+    expect(events).not.toContain("oracle-wait");
+  });
+
+  it("preserves the receipt when the submitted journal write fails", async () => {
+    const calls: string[][] = [];
+    const events: string[] = [];
+    const sessionDir = await createTempDir();
+    const conversationUrl = "https://chatgpt.com/c/post-receipt-journal-failure";
+    const baseRunner = successRunner(calls, events, conversationUrl);
+    const runner: OpenCliCommandRunner = async (executable, args, options) => {
+      const result = await baseRunner(executable, args, options);
+      if (args[0] === "chatgpt" && args[1] === "submit-file" && !args.includes("--help")) {
+        const manifest = JSON.parse(await fs.readFile(args[2]!, "utf8")) as {
+          journalPath: string;
+        };
+        await fs.rm(manifest.journalPath, { force: true });
+        await fs.mkdir(manifest.journalPath);
+      }
+      return result;
+    };
+
+    const run = runOpenCliBrowserMode(
+      {
+        prompt: "private prompt",
+        sessionId: "post-receipt-journal-failure",
+        config: {
+          transport: "opencli",
+          desiredModel: "GPT-5.6 Pro",
+          modelStrategy: "select",
+        },
+      },
+      {
+        runCommand: runner,
+        resolveSessionDir: async () => sessionDir,
+        randomId: () => "post-receipt-journal",
+        acquireLock: async () => ({
+          path: "/test/lock",
+          lockId: "post-receipt-journal-lock",
+          release: async () => undefined,
+        }),
+      },
+    );
+
+    await expect(run).rejects.toMatchObject({
+      message: expect.stringMatching(/do not resubmit/u),
+      details: {
+        stage: "post-submit-persistence",
+        reason: "post-submit-persistence-failed",
+        submitted: true,
+        runtime: expect.objectContaining({
+          browserTransport: "opencli",
+          tabUrl: conversationUrl,
+          conversationId: "post-receipt-journal-failure",
+          promptSubmitted: true,
+        }),
+      },
+    });
+    expect(events).toContain("dispatch");
+    expect(events).toContain("receipt");
+    expect(events).not.toContain("oracle-wait");
+  });
+
   it("accepts only explicit ChatGPT conversation receipts", () => {
     expect(__test__.extractConversationId("https://chatgpt.com/c/abc-123")).toBe("abc-123");
     expect(__test__.extractConversationId("https://example.com/c/abc-123")).toBeUndefined();

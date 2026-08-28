@@ -36,7 +36,11 @@ import {
   sanitizeArtifactMimeType,
   validateArtifactFile,
 } from "../browser/artifacts.js";
-import type { BrowserRunWarning, SessionArtifact } from "../sessionManager.js";
+import type {
+  BrowserRunWarning,
+  BrowserSessionConfig,
+  SessionArtifact,
+} from "../sessionManager.js";
 
 export interface RemoteServerOptions {
   host?: string;
@@ -192,9 +196,8 @@ export async function createRemoteServer(
     try {
       const body = await readRequestBody(req);
       payload = JSON.parse(body) as RemoteRunPayload;
-      if (payload?.browserConfig) {
-        payload.browserConfig.url = normalizeChatgptUrl(payload.browserConfig.url, CHATGPT_URL);
-      }
+      payload.browserConfig = pickClientBrowserConfig(payload.browserConfig);
+      payload.browserConfig.url = normalizeChatgptUrl(payload.browserConfig.url, CHATGPT_URL);
     } catch {
       busy = false;
       res.writeHead(400, { "Content-Type": "application/json" });
@@ -268,20 +271,15 @@ export async function createRemoteServer(
       }) as BrowserLogger;
       automationLogger.verbose = Boolean(payload.options.verbose);
 
-      // Preserve an explicit request to leave the completed conversation tab
-      // open before the service forces `keepBrowser` for process lifetime.
-      const clientRequestedKeepBrowser =
-        payload.browserConfig?.browserLifetime === "persistent" ||
-        payload.browserConfig?.keepBrowser === true;
+      // Client-owned fields were filtered before any browser configuration was
+      // read. Preserve only an explicit request to leave the completed
+      // conversation tab open; browser process/profile lifetime stays host-owned.
+      const clientRequestedKeepBrowser = payload.browserConfig.keepBrowser === true;
 
       // Remote runs always rely on the host's own Chrome profile; ignore any inline cookie transfer.
-      if (payload.browserConfig) {
-        payload.browserConfig.inlineCookies = null;
-        payload.browserConfig.inlineCookiesSource = null;
-        payload.browserConfig.cookieSync = true;
-      } else {
-        payload.browserConfig = {} as typeof payload.browserConfig;
-      }
+      payload.browserConfig.inlineCookies = null;
+      payload.browserConfig.inlineCookiesSource = null;
+      payload.browserConfig.cookieSync = true;
 
       // Enforce manual-login profile when cookie sync is unavailable (e.g., Windows/WSL).
       if (options.manualLoginDefault) {
@@ -713,6 +711,50 @@ async function readRequestBody(req: http.IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+/**
+ * Remote callers may describe the ChatGPT conversation and its time budgets.
+ * Executable paths, profiles, debugger endpoints, tab selection, cookie policy,
+ * browser lifecycle, transport selection, diagnostics, and shared-profile
+ * concurrency remain host-owned.
+ *
+ * Rebuilding from an allowlist is intentional: a future BrowserSessionConfig
+ * field cannot cross the bridge until it is explicitly classified here.
+ */
+const CLIENT_BROWSER_CONFIG_FIELDS = [
+  "chatgptUrl",
+  "url",
+  "desiredModel",
+  "modelStrategy",
+  "thinkingTime",
+  "researchMode",
+  "resumeConversationUrl",
+  "timeoutMs",
+  "inputTimeoutMs",
+  "attachmentTimeoutMs",
+  "assistantRecheckDelayMs",
+  "assistantRecheckTimeoutMs",
+  "autoReattachDelayMs",
+  "autoReattachIntervalMs",
+  "autoReattachTimeoutMs",
+  "keepBrowser",
+] as const satisfies readonly (keyof BrowserSessionConfig)[];
+
+export function pickClientBrowserConfig(
+  requested: BrowserSessionConfig | undefined | null,
+): BrowserSessionConfig {
+  const accepted: BrowserSessionConfig = {};
+  if (!requested) {
+    return accepted;
+  }
+  for (const field of CLIENT_BROWSER_CONFIG_FIELDS) {
+    const value = requested[field];
+    if (value !== undefined) {
+      (accepted as Record<string, unknown>)[field] = value;
+    }
+  }
+  return accepted;
+}
+
 function sanitizeName(raw: string): string {
   return raw.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
@@ -743,6 +785,25 @@ function formatSocket(req: http.IncomingMessage): string {
 }
 
 function formatReachableAddresses(bindAddress: string, port: number): string[] {
+  if (isLoopbackAddress(bindAddress)) {
+    return [formatHostPort(bindAddress, port)];
+  }
+  return formatAllInterfaceAddresses(bindAddress, port);
+}
+
+function isLoopbackAddress(address: string): boolean {
+  const normalized = address
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "");
+  return normalized === "127.0.0.1" || normalized === "::1" || normalized === "localhost";
+}
+
+function formatHostPort(address: string, port: number): string {
+  return address.includes(":") ? `[${address}]:${port}` : `${address}:${port}`;
+}
+
+function formatAllInterfaceAddresses(bindAddress: string, port: number): string[] {
   const ipv4: string[] = [];
   const ipv6: string[] = [];
   if (bindAddress && bindAddress !== "::" && bindAddress !== "0.0.0.0") {

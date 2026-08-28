@@ -151,6 +151,21 @@ export async function runOpenCliBrowserMode(
   let baselineAssistant: AssistantMarker | undefined;
   let dispatchAt: string | undefined;
   let submitCommandStarted = false;
+  const buildSubmittedRuntime = (): BrowserRuntimeMetadata => ({
+    browserTransport: "opencli",
+    tabUrl: conversationUrl,
+    conversationId: conversationId ?? extractConversationId(conversationUrl),
+    promptSubmitted: true,
+    controllerPid: process.pid,
+    opencliOperationRef: operationRef,
+    opencliVersion: context.version,
+    opencliPayloadSha256: prepared.sha256,
+    opencliWindowMode: OPENCLI_WINDOW_MODE,
+    opencliDispatchAt: dispatchAt,
+    proDispatchAt: dispatchAt,
+    opencliBaselineAssistantIndex: baselineAssistant?.index,
+    opencliBaselineAssistantSha256: baselineAssistant?.sha256,
+  });
 
   try {
     lock = await acquireLock(lockDir, {
@@ -235,6 +250,29 @@ export async function runOpenCliBrowserMode(
       modelSelection,
     );
   } catch (error) {
+    // A validated conversation receipt is the irreversible boundary. Local
+    // journal/session persistence may fail after ChatGPT accepted the turn, but
+    // that can never be reclassified as a pre-submit failure or a safe retry.
+    if (conversationUrl) {
+      const recoverableRuntime = buildSubmittedRuntime();
+      await appendJournal(prepared.journalPath, {
+        event: "post-submit-persistence-failed",
+        operationRef,
+        conversationUrl,
+        conversationId: recoverableRuntime.conversationId,
+        at: (deps.now?.() ?? new Date()).toISOString(),
+      }).catch(() => undefined);
+      throw new BrowserAutomationError(
+        "ChatGPT accepted the Oracle turn and returned a valid conversation receipt, but Oracle could not finish local post-submit persistence. Resume this session to run the waiter only; do not resubmit the turn.",
+        {
+          stage: "post-submit-persistence",
+          reason: "post-submit-persistence-failed",
+          submitted: true,
+          runtime: recoverableRuntime,
+        },
+        error,
+      );
+    }
     if (error instanceof BrowserAutomationError) {
       throw error;
     }
@@ -281,21 +319,7 @@ export async function runOpenCliBrowserMode(
     await lock?.release();
   }
 
-  const runtime: BrowserRuntimeMetadata = {
-    browserTransport: "opencli",
-    tabUrl: conversationUrl,
-    conversationId,
-    promptSubmitted: true,
-    controllerPid: process.pid,
-    opencliOperationRef: operationRef,
-    opencliVersion: context.version,
-    opencliPayloadSha256: prepared.sha256,
-    opencliWindowMode: OPENCLI_WINDOW_MODE,
-    opencliDispatchAt: dispatchAt,
-    proDispatchAt: dispatchAt,
-    opencliBaselineAssistantIndex: baselineAssistant?.index,
-    opencliBaselineAssistantSha256: baselineAssistant?.sha256,
-  };
+  const runtime = buildSubmittedRuntime();
   if (!runtime.opencliDispatchAt) {
     throw new BrowserAutomationError(
       "OpenCLI returned a conversation receipt without the durable dispatch timestamp required for Pro response timing.",

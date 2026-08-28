@@ -121,14 +121,15 @@ oracle batch render <batch-id> --all
 
 ## Trust boundary
 
-| 边界               | Authority          | Contract                                                         |
-| ------------------ | ------------------ | ---------------------------------------------------------------- |
-| Prompt 与选定文件  | Oracle             | 本地组装，只发送明确选择的 context                               |
-| Session truth      | Oracle             | 持久化 dispatch、conversation、answer、artifacts 与 lineage      |
-| Browser process    | Oracle             | 启动独立 profile，只绑定 loopback CDP，并清理 exact owned target |
-| App identity       | Chrome for Testing | 不把 Oracle 进程注册成日常 Chrome                                |
-| Browser data       | Dedicated profile  | 将 ChatGPT 登录状态与个人浏览、其他账户分离                      |
-| Account 与缺失决策 | Human owner        | 完成首次登录、真实挑战和显式 owner closure                       |
+| 边界               | Authority          | Contract                                                                        |
+| ------------------ | ------------------ | ------------------------------------------------------------------------------- |
+| Prompt 与选定文件  | Oracle             | 本地组装，只发送明确选择的 context                                              |
+| Session truth      | Oracle             | 持久化 dispatch、conversation、answer、artifacts 与 lineage                     |
+| Browser process    | Oracle             | 启动独立 profile，只绑定 loopback CDP，并清理 exact owned target                |
+| Remote service     | Host operator      | Client 只描述 conversation；host 掌握 executable、profile、transport 与 cookies |
+| App identity       | Chrome for Testing | 不把 Oracle 进程注册成日常 Chrome                                               |
+| Browser data       | Dedicated profile  | 将 ChatGPT 登录状态与个人浏览、其他账户分离                                     |
+| Account 与缺失决策 | Human owner        | 完成首次登录、真实挑战和显式 owner closure                                      |
 
 <!-- readme-sync:scope -->
 

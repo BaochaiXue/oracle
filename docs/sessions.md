@@ -191,11 +191,12 @@ oracle status --clear --hours 168   # delete sessions older than a week
 ```
 
 `--clear` is destructive — preview without it first. Time-based pruning skips
-child sessions referenced by a nonterminal Batch Oracle parent. Batch state is
-separate under `~/.oracle/batches`; if any batch state is unreadable, pruning
-fails closed rather than guessing that its children are unprotected. Inspect a
-batch report and lineage before removing any corresponding ordinary child
-session manually.
+child sessions referenced by every Batch Oracle parent that has not published
+`completed` or owner-accepted `partial`, including a resumable parent in
+`error`. Batch state is separate under `~/.oracle/batches`; if any batch state
+is unreadable, pruning fails closed rather than guessing that its children are
+unprotected. Inspect a batch report and lineage before removing any
+corresponding ordinary child session manually.
 
 ## Stale / zombie detection
 

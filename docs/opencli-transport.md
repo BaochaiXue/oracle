@@ -107,20 +107,26 @@ These names should not be collapsed:
 Oracle distinguishes failures by whether the browser may have accepted the
 turn:
 
-| Point of failure                                               | Oracle behavior                 | Safe next action                          |
-| -------------------------------------------------------------- | ------------------------------- | ----------------------------------------- |
-| Preflight, auth, model verification, lock, or bundle integrity | Fails before dispatch           | Fix the reported condition and retry      |
-| Handoff began but no durable receipt was captured              | Marks the attempt ambiguous     | Reconcile manually; do not auto-resubmit  |
-| Receipt exists but answer collection timed out                 | Keeps the conversation receipt  | Resume the waiter only                    |
-| Tiny answer arrives quickly                                    | Accepts with timing telemetry   | Use normally                              |
-| Substantive answer arrives below 60 seconds                    | Rejects with digest/timing only | Inspect route evidence; do not use answer |
-| Follow-up baseline cannot be established                       | Fails before dispatch           | Recover the stored conversation first     |
-| Stored remote conversation is missing                          | Stops                           | Never open a replacement chat silently    |
+| Point of failure                                                | Oracle behavior                  | Safe next action                          |
+| --------------------------------------------------------------- | -------------------------------- | ----------------------------------------- |
+| Preflight, auth, model verification, lock, or bundle integrity  | Fails before dispatch            | Fix the reported condition and retry      |
+| Handoff began but no durable receipt was captured               | Marks the attempt ambiguous      | Reconcile manually; do not auto-resubmit  |
+| Receipt exists but local persistence or answer collection fails | Keeps receipt + recovery runtime | Resume the waiter only; never resend      |
+| Tiny answer arrives quickly                                     | Accepts with timing telemetry    | Use normally                              |
+| Substantive answer arrives below 60 seconds                     | Rejects with digest/timing only  | Inspect route evidence; do not use answer |
+| Follow-up baseline cannot be established                        | Fails before dispatch            | Recover the stored conversation first     |
+| Stored remote conversation is missing                           | Stops                            | Never open a replacement chat silently    |
 
 The central invariant is simple:
 
 > Once a durable ChatGPT conversation receipt exists, recovery reads that
 > conversation. It does not submit the turn again.
+
+The validated receipt is the irreversible boundary even when Oracle's next
+local journal or session-runtime write fails. That failure is recorded
+best-effort as `post-submit-persistence-failed`; the propagated runtime remains
+`promptSubmitted:true` with the exact conversation URL/ID so session recovery
+can run only the waiter.
 
 Before each dispatch, Oracle journals the operation reference, payload digest,
 target, and attempt. For a follow-up, the submit adapter captures the prior

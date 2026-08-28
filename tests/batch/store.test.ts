@@ -97,6 +97,49 @@ describe("durable batch store", () => {
     expect(await sessionStore.readSession(child.id)).not.toBeNull();
   });
 
+  test("protects referenced children when a resumable batch is in error", async () => {
+    const loaded = fixtureLoaded(cwd);
+    const state = await initializeBatchStore({
+      loaded,
+      batchId: "errored-batch",
+      sourceManifest: { ...fixtureSource(cwd), batchId: "errored-batch" },
+      effectiveMaxParallel: 2,
+      effectiveMaxChildSessions: 5,
+    });
+    const child = await sessionStore.createSession(
+      { prompt: "recoverable after parent error", model: "gpt-5-pro", mode: "browser" },
+      cwd,
+    );
+    await sessionStore.updateSession(child.id, {
+      createdAt: "2000-01-01T00:00:00.000Z",
+      batch: {
+        batchId: state.batchId,
+        laneId: "one",
+        role: "lane",
+        attempt: 1,
+        inputManifestSha256: "d".repeat(64),
+      },
+    });
+    await writeBatchState({
+      ...state,
+      status: "error",
+      lanes: state.lanes.map((lane) =>
+        lane.id === "one"
+          ? {
+              ...lane,
+              status: "recoverable",
+              sessionId: child.id,
+              attempts: [{ attempt: 1, sessionId: child.id, createdAt: child.createdAt }],
+            }
+          : lane,
+      ),
+    });
+
+    expect(await listProtectedBatchSessionIds()).toContain(child.id);
+    expect(await sessionStore.deleteOlderThan({ hours: 1 })).toEqual({ deleted: 0, remaining: 1 });
+    expect(await sessionStore.readSession(child.id)).not.toBeNull();
+  });
+
   test("fails closed when any batch state is unreadable", async () => {
     const loaded = fixtureLoaded(cwd);
     await initializeBatchStore({

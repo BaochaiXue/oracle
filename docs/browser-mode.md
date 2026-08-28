@@ -526,8 +526,14 @@ Prefer to keep Chrome entirely on the remote Mac (no DevTools tunneling, no manu
 3. **What happens**
    - The CLI assembles the composed prompt + file bundle locally, sends them to the VM, and streams log lines/answer text back through the same HTTP connection.
    - The remote host runs Chrome locally, pulls ChatGPT cookies from its own Chrome profile, and reuses them across runs while the service is up. If cookies are missing, the service exits after opening chatgpt.com so you can sign in before restarting.
+   - A bearer-token client may describe the conversation target, model/research intent, time budgets, and whether the completed conversation tab should remain open. Chrome executables and profiles, debugger endpoints, existing-tab selection, cookies, transport, process/profile lifetime, diagnostic logging, and shared-profile concurrency remain host-owned.
    - Background/detached sessions (`--no-wait`) are disabled in remote mode so the CLI can keep streaming output.
    - `oracle serve` logs the DevTools port of its dedicated Chrome. Runs automatically attach to that logged-in browser; use the printed port/JSON URL only for controlled diagnostics.
+
+   Treat `oracle serve` as a controlled-host bridge, not a public Internet
+   endpoint. Prefer loopback plus an SSH/private tunnel; if a non-loopback bind
+   is required, keep it inside private infrastructure with an explicit firewall.
+   A loopback startup banner lists only the loopback address actually bound.
 
 4. **Stop the host**
    - `Ctrl+C` on the VM shuts down the HTTP server and Chrome. Restart `oracle serve` whenever you need a new session; omit `--token` to let it rotate automatically.

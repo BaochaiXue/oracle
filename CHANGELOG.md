@@ -20,6 +20,13 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
 
 ### Changed
 
+- **Breaking — Remote service:** rebuild client-supplied browser configuration
+  from a conversation-scoped allowlist. Bearer-token callers may choose the
+  ChatGPT target, model/research intent, time budgets, and whether to retain the
+  completed conversation tab; executable/profile paths, debugger endpoints,
+  existing-tab selection, cookie policy, transport, browser lifetime,
+  diagnostics, and shared-profile concurrency remain host-owned. Newly added
+  browser configuration fields are host-owned until explicitly classified.
 - Browser: preserve completed ChatGPT conversations by default so users can
   inspect and continue the original Pro exchange. Automatic one-shot archiving
   remains available as the explicit `--browser-archive auto` opt-in, with
@@ -27,6 +34,21 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
 
 ### Fixed
 
+- Remote service: advertise only the bound loopback address when `oracle serve`
+  listens on loopback instead of also printing unrelated LAN or tailnet
+  addresses.
+- OpenCLI transport: treat a validated ChatGPT conversation receipt as the
+  irreversible submission boundary. Journal or session-runtime persistence
+  failures after that receipt now preserve submitted recovery metadata, record
+  a best-effort failure event, and require waiter-only resume without a second
+  send.
+- Batch retention: keep every referenced lane, synthesis, and attempt child
+  session protected while a resumable parent is in `error`; release retention
+  protection only after `completed` or owner-accepted `partial` publication.
+- File admission: scope hidden-path opt-in to the pattern that explicitly names
+  a dot segment, so `.github/**` cannot make an unrelated `src/**` include
+  `src/.secrets/**`. Exact hidden-file literals and explicitly named hidden
+  subtrees remain valid inputs.
 - Batch mutation locks: preserve a newly created lock directory while its owner
   receipt is still being published, so a concurrent stale-lock contender cannot
   quarantine an active claim and acquire the same batch simultaneously. Truly

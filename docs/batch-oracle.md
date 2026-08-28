@@ -274,6 +274,11 @@ lane answers remain renderable. Because `partial` is terminal, the batch no
 longer permanently protects its child sessions from the ordinary retention
 policy.
 
+A parent in `error` is not a release signal: `batch resume` may still reconcile
+children or attempts created before the parent failed. Referenced lane,
+synthesis, and attempt sessions remain protected until the parent publishes
+`completed` or owner-accepted `partial`.
+
 Time-based session pruning is also fail-closed. If any batch state is unreadable,
 Oracle refuses the pruning pass instead of assuming that no child is protected.
 

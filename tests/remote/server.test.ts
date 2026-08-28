@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { mkdir, mkdtemp, readdir, rm, writeFile, readFile, stat } from "node:fs/promises";
-import { createRemoteServer } from "../../src/remote/server.js";
+import { createRemoteServer, pickClientBrowserConfig } from "../../src/remote/server.js";
 import { createRemoteBrowserExecutor } from "../../src/remote/client.js";
 import type { BrowserRunResult } from "../../src/browserMode.js";
 import type { RemoteArtifactDescriptor } from "../../src/remote/types.js";
@@ -579,3 +579,113 @@ async function httpGetJson({
     req.end();
   });
 }
+
+describe("client browser-config allowlist", () => {
+  test("passes through only fields that describe the conversation", () => {
+    const accepted = pickClientBrowserConfig({
+      chatgptUrl: "https://chatgpt.com/g/g-p-abc/project",
+      url: "https://chatgpt.com/new",
+      desiredModel: "GPT-5.6 Pro",
+      modelStrategy: "select",
+      thinkingTime: "heavy",
+      researchMode: "deep",
+      resumeConversationUrl: "https://chatgpt.com/c/abc-123",
+      timeoutMs: 900_000,
+      inputTimeoutMs: 60_000,
+      attachmentTimeoutMs: 90_000,
+      assistantRecheckDelayMs: 10_000,
+      assistantRecheckTimeoutMs: 120_000,
+      autoReattachDelayMs: 30_000,
+      autoReattachIntervalMs: 15_000,
+      autoReattachTimeoutMs: 90_000,
+      keepBrowser: true,
+    });
+    expect(accepted).toEqual({
+      chatgptUrl: "https://chatgpt.com/g/g-p-abc/project",
+      url: "https://chatgpt.com/new",
+      desiredModel: "GPT-5.6 Pro",
+      modelStrategy: "select",
+      thinkingTime: "heavy",
+      researchMode: "deep",
+      resumeConversationUrl: "https://chatgpt.com/c/abc-123",
+      timeoutMs: 900_000,
+      inputTimeoutMs: 60_000,
+      attachmentTimeoutMs: 90_000,
+      assistantRecheckDelayMs: 10_000,
+      assistantRecheckTimeoutMs: 120_000,
+      autoReattachDelayMs: 30_000,
+      autoReattachIntervalMs: 15_000,
+      autoReattachTimeoutMs: 90_000,
+      keepBrowser: true,
+    });
+  });
+
+  test("drops every field that describes the host", () => {
+    const accepted = pickClientBrowserConfig({
+      transport: "opencli",
+      opencliPath: "/tmp/evil-opencli",
+      chromePath: "/tmp/evil-chrome",
+      chromeProfile: "/Users/someone/Library/Application Support/Google/Chrome",
+      chromeCookiePath: "/Users/someone/Library/Cookies",
+      copyProfileSource: "/Users/someone/Library/Application Support/Google/Chrome",
+      remoteChrome: { host: "attacker.example", port: 9222 },
+      debugPort: 9222,
+      attachRunning: true,
+      browserTabRef: "current",
+      headless: true,
+      hideWindow: true,
+      browserLifetime: "persistent",
+      useMockKeychain: true,
+      manualLogin: false,
+      manualLoginProfileDir: "/tmp/profile",
+      manualLoginCookieSync: true,
+      cookieSync: true,
+      cookieNames: ["__Secure-next-auth.session-token"],
+      cookieSyncWaitMs: 1,
+      inlineCookies: [],
+      inlineCookiesSource: "client",
+      allowCookieErrors: true,
+      maxConcurrentTabs: 99,
+      profileLockTimeoutMs: 0,
+      reuseChromeWaitMs: 0,
+      debug: true,
+      desiredModel: "GPT-5.6 Pro",
+      futureHostField: "/tmp/future-executable",
+    } as never);
+    expect(accepted).toEqual({ desiredModel: "GPT-5.6 Pro" });
+  });
+
+  test("treats a missing config as an empty one", () => {
+    expect(pickClientBrowserConfig(undefined)).toEqual({});
+    expect(pickClientBrowserConfig(null)).toEqual({});
+  });
+});
+
+describe("advertised addresses", () => {
+  test.skipIf(!CAN_LISTEN_LOCALHOST)("a loopback bind advertises only loopback", async () => {
+    const lines: string[] = [];
+    const server = await createRemoteServer(
+      {
+        host: "127.0.0.1",
+        port: 0,
+        token: "secret",
+        logger: (message: string) => lines.push(message),
+      },
+      {
+        runBrowser: async () => ({
+          answerText: "",
+          answerMarkdown: "",
+          tookMs: 0,
+          answerTokens: 0,
+          answerChars: 0,
+        }),
+      },
+    );
+    const banner = lines.join("\n");
+    expect(banner).toContain("127.0.0.1");
+    expect(banner).not.toMatch(/\b10\.\d+\.\d+\.\d+\b/);
+    expect(banner).not.toMatch(/\b100\.\d+\.\d+\.\d+\b/);
+    expect(banner).not.toMatch(/\b192\.168\.\d+\.\d+\b/);
+    await server.close();
+  });
+});

@@ -206,25 +206,37 @@ async function expandWithNativeGlob(partitioned: PartitionedFiles, cwd: string):
     return [];
   }
 
-  const dotfileOptIn = patterns.some((pattern) => includesDotfileSegment(pattern));
-
   const gitignoreSets = await loadGitignoreSets(cwd);
 
-  const matches = (await fg(patterns, {
+  // Hidden-path consent is scoped to the pattern that names it. A separate
+  // explicit `.github/**` input must not turn an unrelated `src/**` into an
+  // invitation to upload `src/.secrets/**` as well.
+  const explicitDotPatterns = patterns.filter((pattern) => includesDotfileSegment(pattern));
+  const visibleMatches = (await fg(patterns, {
     cwd,
     absolute: false,
-    dot: true,
+    dot: false,
     ignore: partitioned.excludePatterns,
     onlyFiles: true,
     followSymbolicLinks: false,
     suppressErrors: true,
   })) as string[];
+  const explicitDotMatches =
+    explicitDotPatterns.length > 0
+      ? ((await fg(explicitDotPatterns, {
+          cwd,
+          absolute: false,
+          dot: true,
+          ignore: partitioned.excludePatterns,
+          onlyFiles: true,
+          followSymbolicLinks: false,
+          suppressErrors: true,
+        })) as string[])
+      : [];
+  const matches = [...visibleMatches, ...explicitDotMatches];
   const resolved = matches.map((match) => path.resolve(cwd, match));
   const filtered = resolved.filter((filePath) => !isGitignored(filePath, gitignoreSets));
-  const finalFiles = dotfileOptIn
-    ? filtered
-    : filtered.filter((filePath) => !path.basename(filePath).startsWith("."));
-  return Array.from(new Set(finalFiles));
+  return Array.from(new Set(filtered));
 }
 
 type GitignoreSet = { dir: string; patterns: string[] };

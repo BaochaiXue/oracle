@@ -121,14 +121,15 @@ See [Dedicated Chrome transport](docs/dedicated-chrome.md) for the full lifecycl
 
 ## Trust boundary
 
-| Boundary                           | Authority          | Contract                                                                              |
-| ---------------------------------- | ------------------ | ------------------------------------------------------------------------------------- |
-| Prompt and selected files          | Oracle             | Assemble locally and send only explicitly selected context                            |
-| Session truth                      | Oracle             | Persist dispatch, conversation, answer, artifacts, and lineage                        |
-| Browser process                    | Oracle             | Launch the isolated profile, bind only loopback CDP, and clean up exact owned targets |
-| App identity                       | Chrome for Testing | Keep Oracle processes separate from everyday Chrome                                   |
-| Browser data                       | Dedicated profile  | Separate ChatGPT login state from personal browsing and other accounts                |
-| Account and missing-work decisions | Human owner        | Complete first sign-in, real challenges, and explicit owner closure                   |
+| Boundary                           | Authority          | Contract                                                                                 |
+| ---------------------------------- | ------------------ | ---------------------------------------------------------------------------------------- |
+| Prompt and selected files          | Oracle             | Assemble locally and send only explicitly selected context                               |
+| Session truth                      | Oracle             | Persist dispatch, conversation, answer, artifacts, and lineage                           |
+| Browser process                    | Oracle             | Launch the isolated profile, bind only loopback CDP, and clean up exact owned targets    |
+| Remote service                     | Host operator      | Client describes the conversation; host owns executable, profile, transport, and cookies |
+| App identity                       | Chrome for Testing | Keep Oracle processes separate from everyday Chrome                                      |
+| Browser data                       | Dedicated profile  | Separate ChatGPT login state from personal browsing and other accounts                   |
+| Account and missing-work decisions | Human owner        | Complete first sign-in, real challenges, and explicit owner closure                      |
 
 <!-- readme-sync:scope -->
 
