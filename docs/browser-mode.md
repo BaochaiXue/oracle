@@ -498,14 +498,24 @@ Prefer to keep Chrome entirely on the remote Mac (no DevTools tunneling, no manu
    oracle serve
    ```
 
-   Oracle picks a free port, launches Chrome, starts an HTTP/SSE API, and prints:
+   Oracle picks a free port, launches Chrome, starts an HTTP/NDJSON API on
+   loopback, and prints:
 
    ```
-   Listening at 0.0.0.0:9473
+   Listening at 127.0.0.1:9473
    Access token: c4e5f9...
    ```
 
-   Use `--host`, `--port`, or `--token` to override the defaults if needed.
+   Use `--port` or `--token` to override those values. `--host` remains
+   available, but any non-loopback address also requires the independent
+   `--allow-non-loopback` opt-in and prints a prominent security warning:
+
+   ```bash
+   oracle serve --host 192.168.64.2 --allow-non-loopback
+   ```
+
+   Prefer an SSH/private tunnel to the default loopback listener. A bearer
+   token alone does not make the service safe for the public Internet.
    If the host Chrome profile is not signed into ChatGPT, the service opens chatgpt.com for login and exits—sign in, then restart `oracle serve`.
 
 2. **Run from your laptop**
@@ -518,7 +528,8 @@ Prefer to keep Chrome entirely on the remote Mac (no DevTools tunneling, no manu
     --file docs/incidents/latest.md
    ```
 
-   - `--remote-host` points the CLI at the VM.
+   - `--remote-host` points the CLI at an explicitly exposed private address or
+     at the local end of a tunnel to the host's default loopback listener.
    - `--remote-token` matches the token printed by `oracle serve` (set `ORACLE_REMOTE_TOKEN` to avoid repeating it).
    - You can also set defaults in `~/.oracle/config.json` (`browser.remoteHost`, `browser.remoteToken`) so you don’t need the flags; env vars still override those when present.
    - Cookies are **not** transferred from your laptop. The service requires the host Chrome profile to be signed in; if not, it opens chatgpt.com and exits so you can log in, then restart `oracle serve`.
@@ -527,12 +538,21 @@ Prefer to keep Chrome entirely on the remote Mac (no DevTools tunneling, no manu
    - The CLI assembles the composed prompt + file bundle locally, sends them to the VM, and streams log lines/answer text back through the same HTTP connection.
    - The remote host runs Chrome locally, pulls ChatGPT cookies from its own Chrome profile, and reuses them across runs while the service is up. If cookies are missing, the service exits after opening chatgpt.com so you can sign in before restarting.
    - A bearer-token client may describe the conversation target, model/research intent, time budgets, and whether the completed conversation tab should remain open. Chrome executables and profiles, debugger endpoints, existing-tab selection, cookies, transport, process/profile lifetime, diagnostic logging, and shared-profile concurrency remain host-owned.
+   - `GET /status` is intentionally unauthenticated and returns only
+     `{ "ok": true }`. `GET /health`, artifact transfer, and `POST /runs`
+     require the bearer token. Unauthorized run requests are rejected before
+     their body is read.
+   - Request bodies are capped at 64 MiB and rejected with HTTP 413 as soon as
+     their declared or streamed size crosses the limit; the service does not
+     fully buffer an oversized body.
    - Background/detached sessions (`--no-wait`) are disabled in remote mode so the CLI can keep streaming output.
    - `oracle serve` logs the DevTools port of its dedicated Chrome. Runs automatically attach to that logged-in browser; use the printed port/JSON URL only for controlled diagnostics.
 
    Treat `oracle serve` as a controlled-host bridge, not a public Internet
-   endpoint. Prefer loopback plus an SSH/private tunnel; if a non-loopback bind
-   is required, keep it inside private infrastructure with an explicit firewall.
+   endpoint. It binds to loopback by default. Prefer loopback plus an
+   SSH/private tunnel; if a non-loopback bind is required, provide both
+   `--host` and `--allow-non-loopback`, then keep it inside private
+   infrastructure with an explicit firewall.
    A loopback startup banner lists only the loopback address actually bound.
 
 4. **Stop the host**

@@ -99,7 +99,7 @@ function buildOpenRouterHeaders(): Record<string, string> | undefined {
   const referer =
     process.env.OPENROUTER_REFERER ??
     process.env.OPENROUTER_HTTP_REFERER ??
-    "https://github.com/steipete/oracle";
+    "https://github.com/IndelibleVivi/oracle";
   const title = process.env.OPENROUTER_TITLE ?? "Oracle CLI";
   if (referer) {
     headers["HTTP-Referer"] = referer;

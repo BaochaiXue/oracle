@@ -24,7 +24,7 @@ jobs:
       - run: pnpm run lint
       - run: pnpm run docs:check
         if: matrix.os == 'ubuntu-latest'
-      - run: pnpm run docs:site
+      - run: pnpm run public:check
         if: matrix.os == 'ubuntu-latest'
       - run: pnpm run test
       - run: pnpm run build

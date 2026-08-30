@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, Option } from "commander";
 import type { OptionValues } from "commander";
-// Allow `npx @steipete/oracle oracle-mcp` to resolve the MCP server even though npx runs the default binary.
+// Preserve the package entrypoint's `oracle-mcp` subcommand compatibility.
 if (process.argv[2] === "oracle-mcp") {
   const { startMcpServer } = await import("../src/mcp/server.js");
   await startMcpServer();
@@ -945,7 +945,12 @@ Examples:
 program
   .command("serve")
   .description("Run Oracle browser automation as a remote service for other machines.")
-  .option("--host <address>", "Interface to bind (default 0.0.0.0).")
+  .option("--host <address>", "Interface to bind (default 127.0.0.1).")
+  .option(
+    "--allow-non-loopback",
+    "Explicitly allow a non-loopback bind; requires trusted network controls.",
+    false,
+  )
   .option("--port <number>", "Port to listen on (default random).", parseIntOption)
   .option("--token <value>", "Access token clients must provide (random if omitted).")
   .option(
@@ -961,6 +966,7 @@ program
     const { serveRemote } = await import("../src/remote/server.js");
     await serveRemote({
       host: commandOptions.host,
+      allowNonLoopback: commandOptions.allowNonLoopback,
       port: commandOptions.port,
       token: commandOptions.token,
       manualLoginDefault: commandOptions.manualLogin,

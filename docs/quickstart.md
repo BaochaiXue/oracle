@@ -6,7 +6,9 @@ description: "From an isolated ChatGPT sign-in to a recoverable GPT-5.6 Pro cons
 This guide gets one useful answer back without hiding the browser/account
 boundary. The published npm and Homebrew packages are upstream Oracle; install
 this fork from source for the dedicated-profile defaults and optional OpenCLI
-transport described here. See [Install](install.md) for broader upstream paths.
+transport described here. [Install from source](install.md) is this fork's only
+installation guide; its appendix names upstream channels only to prevent
+confusion, because those channels do not install this fork.
 
 ## 1. Pick a mode
 
@@ -27,7 +29,7 @@ automation so environment changes cannot reroute a consultation.
 git clone https://github.com/IndelibleVivi/oracle.git
 cd oracle
 corepack enable
-pnpm install
+pnpm install --frozen-lockfile
 pnpm build
 npm link
 ```

@@ -1,5 +1,5 @@
 <p align="right">
-  <strong>PUBLIC LAUNCH NOTE · 2026-08-28</strong>
+  <strong>PUBLIC LAUNCH NOTE · 2026-08-30</strong>
 </p>
 
 <p align="center">
@@ -17,6 +17,8 @@
 # Oracle：让每一次 Pro 咨询，都有一条回来的路
 
 > Public source launch · 可恢复的 GPT-5.6 Pro consultation，单会话或声明式并行批次。
+
+> **非官方 / unsupported automation boundary：** 这是一条独立维护的 source line，不隶属于 OpenAI，也未获 OpenAI 认可、背书或授权。本仓库不声称 platform-terms compliance；ChatGPT UI、账户策略和适用条款可能变化，使用者须自行判断账户与合规风险。
 
 一次漫长、昂贵、依赖大量上下文的 Pro consultation，不应该活得像一项随时会蒸发的网页操作。真正重要的问题不是浏览器能不能按下 Send，而是：当 tab 断开、前台进程结束，或者回答暂时还没回来，系统是否仍然知道自己提交了什么、哪一条 conversation 拥有这次运行，以及该从哪里继续。
 
@@ -71,7 +73,7 @@ Canonical browser lane 同时使用两层隔离：
 git clone https://github.com/IndelibleVivi/oracle.git
 cd oracle
 corepack enable
-pnpm install
+pnpm install --frozen-lockfile
 pnpm build
 npm link
 ```
@@ -99,7 +101,7 @@ oracle --engine browser \
 - 一个 committed turn 不会被 silent resubmit。Ambiguous state 会停下来要求检查，而不是赌一次 duplicate send。
 - OpenCLI 是显式 alternative，不是 automatic fallback；Batch Oracle v1 只走 canonical Dedicated CDP Pro lane。
 - Missing lane、partial synthesis 与不可恢复的 committed synthesis 都需要 durable owner closure；Oracle 不静默接受缺失。
-- 这是一条公开 source line，不是 upstream release，也不是 OpenAI product。
+- 这是一条公开 source line，不是 upstream release，不附属于、代表、获 OpenAI 背书或授权，也不声称 platform-terms compliance。
 
 Oracle 由 [steipete/oracle](https://github.com/steipete/oracle) fork 而来，保留 upstream Git history 与 MIT license。Dedicated Chrome 默认路径、fork 的 Pro receipt / timing contract、OpenCLI alternative 与 Batch Oracle 由这条 source line 维护；本说明只代表这里公开并可验证的当前边界。
 
@@ -120,6 +122,8 @@ Oracle 不能缩短一次严肃 Pro 运行真正需要的思考时间。它做�
 # Oracle: give every Pro consultation a way back
 
 > Public source launch · Recoverable GPT-5.6 Pro consultations, as one session or a declared parallel batch.
+
+> **Unofficial / unsupported automation boundary:** This independently maintained source line is not affiliated with, endorsed by, or authorized by OpenAI. It makes no platform-terms-compliance claim. ChatGPT UI, account policies, and applicable terms may change; operators are responsible for evaluating account and compliance risk.
 
 A long, expensive, context-heavy Pro consultation should not live like a disposable browser action. The important question is not whether automation can press Send. It is whether, after a tab disconnects, the foreground process exits, or the answer has not arrived yet, the system still knows what it committed, which conversation owns the run, and where to continue.
 
@@ -174,7 +178,7 @@ Requirements: Node.js 24 or newer and a ChatGPT account with access to the reque
 git clone https://github.com/IndelibleVivi/oracle.git
 cd oracle
 corepack enable
-pnpm install
+pnpm install --frozen-lockfile
 pnpm build
 npm link
 ```
@@ -202,7 +206,7 @@ oracle --engine browser \
 - A committed turn is never silently resubmitted. Ambiguous state stops for inspection instead of gambling on a duplicate send.
 - OpenCLI is an explicit alternative, not an automatic fallback; Batch Oracle v1 uses only the canonical Dedicated CDP Pro lane.
 - Missing lanes, partial synthesis, and a committed synthesis that remains unavailable all require durable owner closure. Oracle never accepts missing work silently.
-- This is a public source line, not an upstream release or an OpenAI product.
+- This is a public source line, not an upstream release. It is not affiliated with, endorsed by, or authorized by OpenAI and makes no platform-terms-compliance claim.
 
 Oracle is forked from [steipete/oracle](https://github.com/steipete/oracle), preserving its Git history and MIT license. The Dedicated Chrome default, the fork's Pro receipt and timing contract, the OpenCLI alternative, and Batch Oracle are maintained in this source line. This note speaks only for the current boundary that is public and verifiable here.
 

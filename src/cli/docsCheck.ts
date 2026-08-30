@@ -143,6 +143,9 @@ function extractMarkdownFlagReferences(markdown: string): MarkdownFlagReference[
       continue;
     }
     const commandPath = extractOracleCommandPath(line);
+    if (!commandPath && isExternalCommandLine(line)) {
+      continue;
+    }
     const lineFlags = new Set<string>();
     for (const match of line.matchAll(FLAG_RE)) {
       const flag = match[2];
@@ -160,6 +163,16 @@ function extractMarkdownFlagReferences(markdown: string): MarkdownFlagReference[
   }
   return references.sort(
     (a, b) => a.flag.localeCompare(b.flag) || (a.section ?? "").localeCompare(b.section ?? ""),
+  );
+}
+
+function isExternalCommandLine(line: string): boolean {
+  const trimmed = line.trim().replace(/^[$>]\s+/, "");
+  if (/^pnpm\s+(?!(?:(?:run\s+)?oracle)\b)/.test(trimmed)) {
+    return true;
+  }
+  return /^(?:npm|git|corepack|node|tsx|bash|sh|zsh|curl|wget|docker|xcrun|swiftc)\s+/.test(
+    trimmed,
   );
 }
 

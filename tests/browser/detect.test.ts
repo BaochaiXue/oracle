@@ -50,7 +50,7 @@ describe("attach-running browser detection", () => {
   });
 
   test("orders attach-running browser roots by preferred browser family", () => {
-    const roots = resolveAttachRunningProfileRoots("darwin", "/Users/peter");
+    const roots = resolveAttachRunningProfileRoots("darwin", "/Users/example");
 
     expect(roots.map((entry) => entry.family)).toEqual(["chrome", "chromium", "edge", "brave"]);
     expect(roots[0]?.root.split(path.sep).join("/")).toContain("Google/Chrome");

@@ -7,18 +7,18 @@ This is the curated cheatsheet. The authoritative source is always `oracle --hel
 
 ## Commands
 
-| Command                        | What it does                                                                    |
-| ------------------------------ | ------------------------------------------------------------------------------- |
-| `oracle [flags] -p "<prompt>"` | Run a consult.                                                                  |
-| `oracle status`                | List recent sessions (see [Sessions](sessions.md)).                             |
-| `oracle session <id>`          | Replay or block on an ordinary stored session; inspect a Batch child read-only. |
-| `oracle restart <id>`          | Re-run an ordinary session with the same prompt + files.                        |
-| `oracle batch …`               | Validate, run, close, resume, inspect, or render a parallel batch.              |
-| `oracle docs check`            | Check documented flags against CLI help metadata.                               |
-| `oracle serve`                 | Run the remote browser host (see [Browser Mode](browser-mode.md)).              |
-| `oracle bridge claude-config`  | Emit a `.mcp.json` for Claude Code (see [MCP](mcp.md)).                         |
-| `oracle tui`                   | Interactive TUI (humans only).                                                  |
-| `oracle-mcp`                   | Stdio MCP server entrypoint.                                                    |
+| Command                        | What it does                                                                                |
+| ------------------------------ | ------------------------------------------------------------------------------------------- |
+| `oracle [flags] -p "<prompt>"` | Run a consult.                                                                              |
+| `oracle status`                | List recent sessions (see [Sessions](sessions.md)).                                         |
+| `oracle session <id>`          | Replay or block on an ordinary stored session; inspect a Batch child read-only.             |
+| `oracle restart <id>`          | Re-run an ordinary session with the same prompt + files.                                    |
+| `oracle batch …`               | Validate, run, close, resume, inspect, or render a parallel batch.                          |
+| `oracle docs check`            | Check documented flags against CLI help metadata.                                           |
+| `oracle serve`                 | Run the loopback-only-by-default remote browser host (see [Browser Mode](browser-mode.md)). |
+| `oracle bridge claude-config`  | Emit a `.mcp.json` for Claude Code (see [MCP](mcp.md)).                                     |
+| `oracle tui`                   | Interactive TUI (humans only).                                                              |
+| `oracle-mcp`                   | Stdio MCP server entrypoint.                                                                |
 
 ## Batch Oracle
 
@@ -149,6 +149,17 @@ Profile lifecycle commands:
 See [Browser Mode](browser-mode.md) for usage.
 
 ## Remote browser
+
+Remote-service host flags:
+
+| Flag                                | Purpose                                                                  |
+| ----------------------------------- | ------------------------------------------------------------------------ |
+| `--host <address>`                  | Bind `oracle serve`; defaults to `127.0.0.1`.                            |
+| `--allow-non-loopback`              | Independently opt in to a non-loopback bind and emit a security warning. |
+| `--port <number>`                   | Select the service port; defaults to an ephemeral port.                  |
+| `--token <value>`                   | Set the bearer token; defaults to a fresh random token.                  |
+| `--manual-login`                    | Reuse the host-owned dedicated manual-login profile.                     |
+| `--manual-login-profile-dir <path>` | Select that host-owned profile directory.                                |
 
 | Flag                          | Purpose                                      |
 | ----------------------------- | -------------------------------------------- |

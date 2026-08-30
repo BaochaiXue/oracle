@@ -78,6 +78,8 @@ nav h2{font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spaci
 .nav-link:hover{background:var(--line-soft);color:var(--ink);text-decoration:none}
 .nav-link.active{background:var(--accent-soft);color:var(--accent);font-weight:600}
 main{min-width:0;padding:32px clamp(20px,4.5vw,56px) 80px;max-width:1180px;margin:0 auto;width:100%}
+.platform-boundary{margin:0 0 22px;padding:12px 16px;border:1px solid #f59e0b;border-left:4px solid #d97706;border-radius:8px;background:rgba(245,158,11,.10);color:var(--text);font-size:.88rem;line-height:1.55}
+.platform-boundary strong{color:var(--ink)}
 .hero{display:flex;align-items:flex-end;justify-content:space-between;gap:22px;border-bottom:1px solid var(--line);padding:8px 0 22px;margin-bottom:8px;flex-wrap:wrap}
 .hero-text{min-width:0;flex:1 1 320px}
 .eyebrow{margin:0 0 8px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0;font-size:.7rem}

@@ -14,6 +14,7 @@ import type { BrowserRunResult } from "../browserMode.js";
 import type {
   RemoteArtifactCapabilities,
   RemoteArtifactDescriptor,
+  RemoteAttachmentPayload,
   RemoteRunPayload,
   RemoteRunEvent,
 } from "./types.js";
@@ -44,9 +45,11 @@ import type {
 
 export interface RemoteServerOptions {
   host?: string;
+  allowNonLoopback?: boolean;
   port?: number;
   token?: string;
   logger?: (message: string) => void;
+  maxRequestBodyBytes?: number;
   manualLoginDefault?: boolean;
   manualLoginProfileDir?: string;
 }
@@ -56,6 +59,7 @@ interface RemoteServerDeps {
 }
 
 interface RemoteServerInstance {
+  host: string;
   port: number;
   token: string;
   close(): Promise<void>;
@@ -69,6 +73,15 @@ interface RegisteredRemoteArtifact {
 
 const ARTIFACT_PROTOCOL_VERSION = 1;
 const REMOTE_ARTIFACT_TTL_MS = 30 * 60 * 1000;
+export const DEFAULT_REMOTE_HOST = "127.0.0.1";
+export const DEFAULT_REMOTE_REQUEST_BODY_LIMIT_BYTES = 64 * 1024 * 1024;
+
+class RequestBodyTooLargeError extends Error {
+  constructor(readonly maxBytes: number) {
+    super(`Remote request body exceeds the ${maxBytes}-byte limit.`);
+    this.name = "RequestBodyTooLargeError";
+  }
+}
 
 const ARTIFACT_CAPABILITIES: RemoteArtifactCapabilities = {
   artifactTransfer: true,
@@ -96,6 +109,8 @@ export async function createRemoteServer(
   options: RemoteServerOptions = {},
   deps: RemoteServerDeps = {},
 ): Promise<RemoteServerInstance> {
+  const bindHost = resolveRemoteBindHost(options);
+  const maxRequestBodyBytes = resolveRequestBodyLimit(options.maxRequestBodyBytes);
   const runBrowser = deps.runBrowser ?? runBrowserMode;
   const server = http.createServer();
   const logger = options.logger ?? console.log;
@@ -108,6 +123,17 @@ export async function createRemoteServer(
   // Single-flight guard: remote Chrome can only host one run at a time, so we serialize requests.
   let busy = false;
   const artifactRegistry = new Map<string, RegisteredRemoteArtifact>();
+
+  if (!isLoopbackBindHost(bindHost)) {
+    logger(
+      color(
+        chalk.redBright.bold,
+        `SECURITY WARNING: oracle serve is binding to non-loopback address ${bindHost}. ` +
+          "The bearer token does not make this service safe for the public Internet; " +
+          "restrict access with a trusted private network, firewall, or tunnel.",
+      ),
+    );
+  }
 
   if (!process.listenerCount("unhandledRejection")) {
     process.on("unhandledRejection", (reason) => {
@@ -194,12 +220,20 @@ export async function createRemoteServer(
 
     let payload: RemoteRunPayload | null = null;
     try {
-      const body = await readRequestBody(req);
+      const body = await readRequestBody(req, maxRequestBodyBytes);
       payload = JSON.parse(body) as RemoteRunPayload;
       payload.browserConfig = pickClientBrowserConfig(payload.browserConfig);
       payload.browserConfig.url = normalizeChatgptUrl(payload.browserConfig.url, CHATGPT_URL);
-    } catch {
+    } catch (error) {
       busy = false;
+      if (error instanceof RequestBodyTooLargeError) {
+        res.writeHead(413, {
+          "Content-Type": "application/json",
+          Connection: "close",
+        });
+        res.end(JSON.stringify({ error: "request_too_large", maxBytes: error.maxBytes }));
+        return;
+      }
       res.writeHead(400, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "invalid_request" }));
       return;
@@ -214,13 +248,11 @@ export async function createRemoteServer(
     // Each run gets an isolated temp dir so attachments/logs don't collide.
     const runDir = await mkdtemp(path.join(os.tmpdir(), `oracle-serve-${runId}-`));
     const attachmentDir = path.join(runDir, "attachments");
-    await mkdir(attachmentDir, { recursive: true });
 
     const sendEvent = (event: RemoteRunEvent) => {
       res.write(`${JSON.stringify(event)}\n`);
     };
 
-    const attachments: BrowserAttachment[] = [];
     let fallbackSubmission:
       | {
           prompt: string;
@@ -229,34 +261,22 @@ export async function createRemoteServer(
       | undefined;
     try {
       const attachmentsPayload = Array.isArray(payload.attachments) ? payload.attachments : [];
-      for (const [index, attachment] of attachmentsPayload.entries()) {
-        const safeName = sanitizeName(attachment.fileName ?? `attachment-${index + 1}`);
-        const filePath = path.join(attachmentDir, safeName);
-        await writeFile(filePath, Buffer.from(attachment.contentBase64, "base64"));
-        attachments.push({
-          path: filePath,
-          displayPath: attachment.displayPath,
-          sizeBytes: attachment.sizeBytes,
-        });
-      }
+      const attachments = await stageRemoteAttachments(
+        attachmentsPayload,
+        attachmentDir,
+        "attachment",
+      );
 
       if (payload.fallbackSubmission) {
         const fallbackAttachmentDir = path.join(runDir, "fallback-attachments");
-        await mkdir(fallbackAttachmentDir, { recursive: true });
-        const fallbackAttachments: BrowserAttachment[] = [];
         const fallbackPayload = Array.isArray(payload.fallbackSubmission.attachments)
           ? payload.fallbackSubmission.attachments
           : [];
-        for (const [index, attachment] of fallbackPayload.entries()) {
-          const safeName = sanitizeName(attachment.fileName ?? `fallback-attachment-${index + 1}`);
-          const filePath = path.join(fallbackAttachmentDir, safeName);
-          await writeFile(filePath, Buffer.from(attachment.contentBase64, "base64"));
-          fallbackAttachments.push({
-            path: filePath,
-            displayPath: attachment.displayPath,
-            sizeBytes: attachment.sizeBytes,
-          });
-        }
+        const fallbackAttachments = await stageRemoteAttachments(
+          fallbackPayload,
+          fallbackAttachmentDir,
+          "fallback-attachment",
+        );
         fallbackSubmission = {
           prompt: payload.fallbackSubmission.prompt,
           attachments: fallbackAttachments,
@@ -355,8 +375,13 @@ export async function createRemoteServer(
     }
   });
 
-  await new Promise<void>((resolve) => {
-    server.listen(options.port ?? 0, options.host ?? "0.0.0.0", () => resolve());
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => reject(error);
+    server.once("error", onError);
+    server.listen(options.port ?? 0, bindHost, () => {
+      server.off("error", onError);
+      resolve();
+    });
   });
 
   const address = server.address();
@@ -372,6 +397,7 @@ export async function createRemoteServer(
   logger("Leave this terminal running; press Ctrl+C to stop oracle serve.");
 
   return {
+    host: bindHost,
     port: address.port,
     token: authToken,
     async close() {
@@ -383,6 +409,7 @@ export async function createRemoteServer(
 }
 
 export async function serveRemote(options: RemoteServerOptions = {}): Promise<void> {
+  const bindHost = resolveRemoteBindHost(options);
   const manualProfileDir =
     options.manualLoginProfileDir ?? path.join(os.homedir(), ".oracle", "browser-profile");
   const preferManualLogin = options.manualLoginDefault || process.platform === "win32" || isWsl();
@@ -457,6 +484,7 @@ export async function serveRemote(options: RemoteServerOptions = {}): Promise<vo
 
   const server = await createRemoteServer({
     ...options,
+    host: bindHost,
     manualLoginDefault: preferManualLogin,
     manualLoginProfileDir: manualProfileDir,
   });
@@ -703,12 +731,89 @@ function classifySourceUrlKind(sourceUrl?: string): RemoteArtifactDescriptor["so
   return "chatgpt-file-endpoint";
 }
 
-async function readRequestBody(req: http.IncomingMessage): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+async function readRequestBody(req: http.IncomingMessage, maxBytes: number): Promise<string> {
+  const declaredLength = req.headers["content-length"];
+  if (declaredLength && /^\d+$/.test(declaredLength) && Number(declaredLength) > maxBytes) {
+    req.resume();
+    throw new RequestBodyTooLargeError(maxBytes);
   }
-  return Buffer.concat(chunks).toString("utf8");
+
+  return await new Promise<string>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let bytesRead = 0;
+
+    const cleanup = () => {
+      req.off("data", onData);
+      req.off("end", onEnd);
+      req.off("error", onError);
+      req.off("aborted", onAborted);
+    };
+    const onData = (chunk: Buffer | string) => {
+      const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+      bytesRead += buffer.length;
+      if (bytesRead > maxBytes) {
+        cleanup();
+        req.resume();
+        reject(new RequestBodyTooLargeError(maxBytes));
+        return;
+      }
+      chunks.push(buffer);
+    };
+    const onEnd = () => {
+      cleanup();
+      resolve(Buffer.concat(chunks, bytesRead).toString("utf8"));
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onAborted = () => {
+      cleanup();
+      reject(new Error("Remote request body was aborted."));
+    };
+
+    req.on("data", onData);
+    req.on("end", onEnd);
+    req.on("error", onError);
+    req.on("aborted", onAborted);
+  });
+}
+
+function resolveRemoteBindHost(options: RemoteServerOptions): string {
+  const host = options.host?.trim() || DEFAULT_REMOTE_HOST;
+  if (!isLoopbackBindHost(host) && options.allowNonLoopback !== true) {
+    throw new Error(
+      `Refusing to bind oracle serve to non-loopback address ${host}. ` +
+        "Pass --allow-non-loopback (or allowNonLoopback: true) only after restricting network access.",
+    );
+  }
+  return host;
+}
+
+function resolveRequestBodyLimit(value: number | undefined): number {
+  const limit = value ?? DEFAULT_REMOTE_REQUEST_BODY_LIMIT_BYTES;
+  if (!Number.isSafeInteger(limit) || limit <= 0) {
+    throw new Error("maxRequestBodyBytes must be a positive safe integer.");
+  }
+  return limit;
+}
+
+function isLoopbackBindHost(host: string): boolean {
+  const normalized = host
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/%[^%]+$/, "");
+  if (normalized === "localhost" || normalized === "localhost." || normalized === "::1") {
+    return true;
+  }
+  const mappedIpv4 = normalized.startsWith("::ffff:")
+    ? normalized.slice("::ffff:".length)
+    : normalized;
+  if (net.isIP(mappedIpv4) !== 4) {
+    return false;
+  }
+  return Number(mappedIpv4.split(".")[0]) === 127;
 }
 
 /**
@@ -755,8 +860,42 @@ export function pickClientBrowserConfig(
   return accepted;
 }
 
-function sanitizeName(raw: string): string {
-  return raw.replace(/[^a-zA-Z0-9._-]/g, "_");
+async function stageRemoteAttachments(
+  payload: RemoteAttachmentPayload[],
+  directory: string,
+  defaultPrefix: string,
+): Promise<BrowserAttachment[]> {
+  await mkdir(directory, { recursive: true });
+  const names = payload.map((attachment, index) => {
+    const fallback = `${defaultPrefix}-${index + 1}`;
+    const sanitized = (attachment.fileName ?? fallback).replace(/[^a-zA-Z0-9._-]/g, "_");
+    return !sanitized || sanitized === "." || sanitized === ".." ? fallback : sanitized;
+  });
+  const reserved = new Set(names.map((name) => name.toLowerCase()));
+  const used = new Set<string>();
+  const attachments: BrowserAttachment[] = [];
+  for (const [index, attachment] of payload.entries()) {
+    const original = names[index]!;
+    let name = original;
+    if (used.has(name.toLowerCase())) {
+      const extension = path.extname(original);
+      const stem = original.slice(0, original.length - extension.length);
+      let suffix = 2;
+      do {
+        name = `${stem}-${suffix++}${extension}`;
+      } while (reserved.has(name.toLowerCase()));
+    }
+    used.add(name.toLowerCase());
+    reserved.add(name.toLowerCase());
+    const filePath = path.join(directory, name);
+    await writeFile(filePath, Buffer.from(attachment.contentBase64, "base64"), { flag: "wx" });
+    attachments.push({
+      path: filePath,
+      displayPath: attachment.displayPath,
+      sizeBytes: attachment.sizeBytes,
+    });
+  }
+  return attachments;
 }
 
 function sanitizeResult(

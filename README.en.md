@@ -13,6 +13,8 @@
 
 > Recoverable GPT-5.6 Pro consultations — one durable session or a declared parallel batch.
 
+> **Unofficial / unsupported automation boundary:** This independently maintained source fork is not affiliated with, endorsed by, or authorized by OpenAI. ChatGPT UI, account policy, and platform terms may change and may affect browser automation. This repository makes no claim of OpenAI authorization or terms compliance; operators are responsible for evaluating applicable terms and account risk.
+
 A high-cost Pro run should not depend on one fragile browser tab. This public fork persists selected context, dispatch receipts, conversation identity, answers, artifacts, and recovery lineage inside an Oracle session. Its canonical browser lane reaches ChatGPT through a dedicated Chrome for Testing profile and loopback CDP.
 
 Oracle owns the prompt bundle, browser actions, session truth, recovery, and follow-up lineage. The human owns the first sign-in, real account challenges, and explicit owner decisions required by Batch Oracle. OpenCLI remains an explicit alternative transport for ordinary consultations; it never takes over a failed CDP run automatically.
@@ -44,7 +46,7 @@ Requirements: Node.js 24 or newer and a ChatGPT account with access to the reque
 git clone https://github.com/IndelibleVivi/oracle.git
 cd oracle
 corepack enable
-pnpm install
+pnpm install --frozen-lockfile
 pnpm build
 npm link
 ```
@@ -155,6 +157,7 @@ Attach-running personal Chrome, remote Chrome, API, MCP, and render paths remain
 | Start here                                                                      | Contents                                                                       |
 | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | [Dedicated Chrome transport](docs/dedicated-chrome.md)                          | canonical topology, setup, lifecycle, privacy, and verification                |
+| [Install from source](docs/install.md)                                          | this fork's only install path and the upstream-only distribution appendix      |
 | [Batch Oracle v1](docs/batch-oracle.md)                                         | parallel-first manifests, sealing, barrier, synthesis, recovery, and rendering |
 | [Quickstart](docs/quickstart.md)                                                | first sign-in, smoke, first consultation, render, and reattach                 |
 | [Browser Mode](docs/browser-mode.md)                                            | direct CDP, attach-running, remote Chrome, OpenCLI, Deep Research, and images  |
@@ -162,6 +165,7 @@ Attach-running personal Chrome, remote Chrome, API, MCP, and render paths remain
 | [Coding Agents](docs/agents.md)                                                 | Codex, Claude Code, Cursor, CLI, and MCP usage                                 |
 | [Sessions](docs/sessions.md) · [Follow-ups](docs/followup.md)                   | durable runs and conversation lineage                                          |
 | [Configuration](docs/configuration.md) · [CLI reference](docs/cli-reference.md) | config precedence, flags, and limits                                           |
+| [Upstream parity](docs/upstream-parity.md)                                      | merge base, commit-by-commit intake, and fork-local evidence                   |
 
 <!-- readme-sync:development -->
 
@@ -174,6 +178,7 @@ pnpm test
 pnpm build
 pnpm docs:check
 pnpm test:packed-cli
+pnpm public:check
 ```
 
 `oracle browser smoke` is the account-safe live transport test: it performs two cold starts and never creates a ChatGPT conversation.
@@ -182,6 +187,6 @@ pnpm test:packed-cli
 
 ## Provenance and license
 
-This is a public fork of [steipete/oracle](https://github.com/steipete/oracle), preserving upstream Git history and the MIT license. The dedicated-Chrome default path, the fork's Pro timing and receipt contract, the OpenCLI alternative, and Batch Oracle are maintained within this fork. This repository is neither an upstream release nor an OpenAI product.
+This is a public fork of [steipete/oracle](https://github.com/steipete/oracle), preserving upstream Git history and the MIT license. The dedicated-Chrome default path, the fork's Pro timing and receipt contract, the OpenCLI alternative, and Batch Oracle are maintained within this fork. This repository is neither an upstream release nor affiliated with, endorsed by, or authorized by OpenAI, and it makes no platform-terms-compliance claim.
 
 MIT. See [LICENSE](LICENSE).

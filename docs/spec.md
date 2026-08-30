@@ -68,6 +68,6 @@ Browser engine handles ChatGPT GPT models only; everything else is API only.
 
 ## Source of truth
 
-- Recent changes: [CHANGELOG.md](https://github.com/steipete/oracle/blob/main/CHANGELOG.md).
-- Open issues / direction: [GitHub Issues](https://github.com/steipete/oracle/issues).
-- Release process: [Releasing](RELEASING.md).
+- Recent changes: [CHANGELOG.md](https://github.com/IndelibleVivi/oracle/blob/main/CHANGELOG.md).
+- Open issues / direction: [fork issues](https://github.com/IndelibleVivi/oracle/issues).
+- Source publication contract: [Source publication](RELEASING.md).

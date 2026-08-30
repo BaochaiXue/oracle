@@ -8,6 +8,8 @@ on:
       - "docs/**"
       - "scripts/build-docs-site.mjs"
       - "scripts/docs-site-assets.mjs"
+      - "scripts/check-public-safety.mjs"
+      - "package.json"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -43,8 +45,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build docs site
-        run: node scripts/build-docs-site.mjs
+      - name: Build and public-safety check docs site
+        run: pnpm run public:check
 
       - name: Configure Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0

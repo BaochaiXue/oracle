@@ -6,6 +6,13 @@ description: "Recoverable GPT-5.6 Pro consultations: one session or a declared p
 
 # Recoverable GPT-5.6 Pro consultations
 
+> **Unofficial / unsupported automation boundary:** This independently
+> maintained source fork is not affiliated with, endorsed by, or authorized by
+> OpenAI. ChatGPT UI, account policy, and platform terms may change and may
+> affect browser automation. This repository makes no claim of OpenAI
+> authorization or terms compliance; operators are responsible for evaluating
+> applicable terms and account risk.
+
 This fork gives Oracle an official Chrome for Testing app plus its own
 persistent profile. The operator signs in to ChatGPT once; later browser
 consultations launch that non-default
@@ -36,7 +43,7 @@ Chrome for Testing (separate app identity)
 git clone https://github.com/IndelibleVivi/oracle.git
 cd oracle
 corepack enable
-pnpm install
+pnpm install --frozen-lockfile
 pnpm build
 npm link
 
@@ -135,10 +142,11 @@ Deep Research, image generation, and render/copy are separate documented paths.
 
 This repository preserves the history and MIT license of
 [steipete/oracle](https://github.com/steipete/oracle). The published
-`@steipete/oracle` npm package, Homebrew formula, and
-[askoracle.sh](https://askoracle.sh) describe the upstream distribution; they do
-not install this fork's dedicated-profile defaults or OpenCLI alternative.
+`@steipete/oracle` npm package and Homebrew formula are upstream-only
+distribution channels; they do not install this fork. See
+[Install from source](install.md) for the only supported installation path here.
 
-The fork is not affiliated with OpenAI, Google Chrome, or the OpenCLI project.
-Account access, authentication challenges, and model entitlement remain
-human-controlled.
+The fork is not affiliated with, endorsed by, or authorized by OpenAI, Google
+Chrome, or the OpenCLI project and does not claim platform-terms compliance.
+Account access, authentication challenges, applicable terms, and model
+entitlement remain human-controlled.

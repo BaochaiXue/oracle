@@ -98,24 +98,24 @@ selection verification cannot rely on a detached stale node.
 ## Commands
 
 - Show help:
-  - `npx -y @steipete/oracle --help --verbose`
+  - `oracle --help --verbose`
 
 - Optional bundle diagnostics (large or uncertain file sets only):
-  - `npx -y @steipete/oracle --dry-run summary -p "<task>" --file "src/**" --file "!**/*.test.*"`
-  - `npx -y @steipete/oracle --dry-run full -p "<task>" --file "src/**"`
+  - `oracle --dry-run summary -p "<task>" --file "src/**" --file "!**/*.test.*"`
+  - `oracle --dry-run full -p "<task>" --file "src/**"`
 
 - Inspect token usage:
-  - `npx -y @steipete/oracle --dry-run summary --files-report -p "<task>" --file "src/**"`
+  - `oracle --dry-run summary --files-report -p "<task>" --file "src/**"`
 
 - Browser run:
   - `oracle --engine browser --browser-transport cdp --model gpt-5-pro --browser-thinking-time pro -p "<task>" --file "src/**"`
 
 - Manual paste fallback:
-  - `npx -y @steipete/oracle --render-markdown --copy-markdown -p "<task>" --file "src/**"`
+  - `oracle --render-markdown --copy-markdown -p "<task>" --file "src/**"`
   - `--render` is an alias for `--render-markdown`.
 
 - Performance trace:
-  - `npx -y @steipete/oracle --perf-trace --perf-trace-path /tmp/oracle-perf.json --dry-run summary -p "<task>" --file "src/**"`
+  - `oracle --perf-trace --perf-trace-path /tmp/oracle-perf.json --dry-run summary -p "<task>" --file "src/**"`
 
 ## Parallel-first Batch Oracle
 

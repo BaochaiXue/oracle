@@ -9,7 +9,7 @@ MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 ICONSET=OracleIcon.iconset
 ICNS=OracleIcon.icns
-IDENTITY="${CODESIGN_ID:-Developer ID Application: Peter Steinberger (Y5PE65HELJ)}"
+IDENTITY="${CODESIGN_ID:-}"
 ZIP="/tmp/OracleNotifierNotarize.zip"
 
 NOTARY_KEY_P8="${APP_STORE_CONNECT_API_KEY_P8:-}"
@@ -42,7 +42,7 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
 <plist version="1.0">
 <dict>
   <key>CFBundleIdentifier</key>
-  <string>com.steipete.oracle.notifier</string>
+  <string>io.github.indeliblevivi.oracle.notifier</string>
   <key>CFBundleName</key>
   <string>OracleNotifier</string>
   <key>CFBundleDisplayName</key>
@@ -62,14 +62,22 @@ PLIST
 # Compile Swift helper (arm64)
 swiftc -target arm64-apple-macos13 -o "$MACOS/OracleNotifier" OracleNotifier.swift -framework Foundation -framework UserNotifications
 
-echo "Signing with $IDENTITY"
-if ! codesign --force --deep --options runtime --timestamp --sign "$IDENTITY" "$APP"; then
-  echo "codesign failed. Set CODESIGN_ID to a valid Developer ID Application certificate." >&2
-  exit 1
+if [[ -n "$IDENTITY" ]]; then
+  echo "Signing with the explicitly supplied CODESIGN_ID"
+  if ! codesign --force --deep --options runtime --timestamp --sign "$IDENTITY" "$APP"; then
+    echo "codesign failed for the explicitly supplied CODESIGN_ID." >&2
+    exit 1
+  fi
+else
+  echo "Building unsigned (set CODESIGN_ID explicitly to sign with a fork-owned identity)."
 fi
 
-# Notarize if credentials are provided
+# Notarization is available only for an explicitly signed fork-owned build.
 if [[ -n "$NOTARY_KEY_P8" && -n "$NOTARY_KEY_ID" && -n "$NOTARY_ISSUER_ID" ]]; then
+  if [[ -z "$IDENTITY" ]]; then
+    echo "Notarization credentials require an explicit CODESIGN_ID." >&2
+    exit 1
+  fi
   echo "$NOTARY_KEY_P8" | sed 's/\\n/\n/g' > /tmp/oracle-notifier-api-key.p8
   echo "Packaging for notarization"
   "$DITTO_BIN" -c -k --keepParent --sequesterRsrc "$APP" "$ZIP"
@@ -88,6 +96,8 @@ else
   echo "Skipping notarization (APP_STORE_CONNECT_* env vars not set)."
 fi
 
-spctl -a -t exec -vv "$APP" || true
+if [[ -n "$IDENTITY" ]]; then
+  spctl -a -t exec -vv "$APP" || true
+fi
 
 echo "Built $APP"

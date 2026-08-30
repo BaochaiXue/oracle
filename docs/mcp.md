@@ -99,9 +99,7 @@ The MCP response includes `structuredContent.images[]` with the saved file path,
 
 ## Launching & usage
 
-- Upstream npm (does not include this fork's dedicated-profile changes):
-  - One-off: `npx @steipete/oracle oracle-mcp`
-- From this fork checkout:
+- From this fork's source checkout:
   - `pnpm build`
   - `npm link`
   - `pnpm mcp` (or `oracle-mcp` in the repo root)

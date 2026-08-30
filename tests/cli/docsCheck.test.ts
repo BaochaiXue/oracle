@@ -42,6 +42,14 @@ describe("docs check", () => {
     ).toEqual(["--browser-debug-port"]);
   });
 
+  test("ignores flags on external command lines but keeps pnpm-run Oracle flags", () => {
+    expect(
+      extractMarkdownFlags(
+        "pnpm install --frozen-lockfile\npnpm run oracle -- --no-azure\nnode tool.mjs --external-flag",
+      ),
+    ).toEqual(["--no-azure"]);
+  });
+
   test("collects root and subcommand flags from Commander", () => {
     const program = new Command();
     program.option("--no-azure");

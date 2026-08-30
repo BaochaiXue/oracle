@@ -681,7 +681,7 @@ describe("runBrowserSessionExecution", () => {
       await options.runtimeHintCb?.({
         browserTransport: "cdp" as const,
         chromeBrowserWSEndpoint: "ws://127.0.0.1:9222/devtools/browser/abc",
-        chromeProfileRoot: "/Users/peter/Library/Application Support/Google/Chrome",
+        chromeProfileRoot: "/Users/example/Library/Application Support/Google/Chrome",
         chromeTargetId: "target-2",
         tabUrl: "https://chatgpt.com/c/attached",
       });
@@ -693,7 +693,7 @@ describe("runBrowserSessionExecution", () => {
         answerChars: 2,
         browserTransport: "cdp" as const,
         chromeBrowserWSEndpoint: "ws://127.0.0.1:9222/devtools/browser/abc",
-        chromeProfileRoot: "/Users/peter/Library/Application Support/Google/Chrome",
+        chromeProfileRoot: "/Users/example/Library/Application Support/Google/Chrome",
         chromeTargetId: "target-2",
         tabUrl: "https://chatgpt.com/c/attached",
       };
@@ -727,7 +727,7 @@ describe("runBrowserSessionExecution", () => {
       expect.objectContaining({
         browserTransport: "cdp",
         chromeBrowserWSEndpoint: "ws://127.0.0.1:9222/devtools/browser/abc",
-        chromeProfileRoot: "/Users/peter/Library/Application Support/Google/Chrome",
+        chromeProfileRoot: "/Users/example/Library/Application Support/Google/Chrome",
         chromeTargetId: "target-2",
         tabUrl: "https://chatgpt.com/c/attached",
       }),
@@ -735,7 +735,7 @@ describe("runBrowserSessionExecution", () => {
     expect(result.runtime).toMatchObject({
       browserTransport: "cdp",
       chromeBrowserWSEndpoint: "ws://127.0.0.1:9222/devtools/browser/abc",
-      chromeProfileRoot: "/Users/peter/Library/Application Support/Google/Chrome",
+      chromeProfileRoot: "/Users/example/Library/Application Support/Google/Chrome",
       chromeTargetId: "target-2",
       tabUrl: "https://chatgpt.com/c/attached",
     });

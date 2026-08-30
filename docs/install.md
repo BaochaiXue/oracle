@@ -1,68 +1,81 @@
 ---
-title: Install
-description: "Install Oracle via Homebrew, npm, or run on demand with npx. Node 24+ required."
+title: Install from source
+description: "Build and link the IndelibleVivi Oracle fork from its source checkout. Node 24+ is required."
 ---
 
-## Homebrew (macOS / Linux)
+# Install this fork from source
+
+This repository is the only installation source for the IndelibleVivi fork.
+It does not publish an npm package, Homebrew formula, or prebuilt release.
+
+## Requirements
+
+- Git
+- Node.js **24 or newer**
+- Corepack with the repository-pinned pnpm version
+- macOS, Linux, or Windows for the CLI; macOS is required only to build the
+  optional native notifier helper
+
+## Clone, build, and link
 
 ```bash
-brew install steipete/tap/oracle
-```
-
-The tap also publishes the `oracle-notifier` macOS helper used by long-running browser runs.
-
-## npm / pnpm
-
-```bash
-npm install -g @steipete/oracle
-# or
-pnpm add -g @steipete/oracle
-```
-
-Requires Node **24 or newer**. After install:
-
-```bash
+git clone https://github.com/IndelibleVivi/oracle.git
+cd oracle
+corepack enable
+pnpm install --frozen-lockfile
+pnpm build
+npm link
 oracle --help
 oracle --version
 ```
 
-## Run without installing
+`npm link` exposes the locally built `oracle` and `oracle-mcp` commands. It does
+not publish anything. Run commands from the checkout with `pnpm oracle -- ...`
+if you prefer not to create a global link.
+
+## Updating the source checkout
 
 ```bash
-npx -y @steipete/oracle --help
-pnpx @steipete/oracle --help
+git pull --ff-only
+pnpm install --frozen-lockfile
+pnpm build
+npm link
 ```
 
-`npx` is fine for CI, ad-hoc scripts, or when you don't want a global binary on the box. Cache the package in CI by pinning the version (`@steipete/oracle@0.12.1`) so you don't re-download on every job.
+Review incoming source changes before updating a machine that owns a signed-in
+browser profile.
 
 ## API keys (optional)
 
-API mode is opt-in and reads keys from the environment. Set whichever providers you'll use:
+API mode is opt-in and reads keys from the environment. Browser mode is the
+fork's primary GPT-5.6 Pro path and does not require an API key.
 
-| Provider     | Env var                                                           | Models                                        |
-| ------------ | ----------------------------------------------------------------- | --------------------------------------------- |
-| OpenAI       | `OPENAI_API_KEY`                                                  | GPT-5.x, GPT-5.x Pro, GPT-5.1 Codex           |
-| Azure OpenAI | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `..._DEPLOYMENT` | Same models, hosted on Azure                  |
-| Anthropic    | `ANTHROPIC_API_KEY`                                               | Claude Sonnet 4.6, Claude Opus 4.1            |
-| OpenRouter   | `OPENROUTER_API_KEY`                                              | Any OpenRouter id (e.g. `minimax/minimax-m2`) |
+| Provider     | Environment variables                                            |
+| ------------ | ---------------------------------------------------------------- |
+| OpenAI       | `OPENAI_API_KEY`                                                 |
+| Azure OpenAI | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, deployment vars |
+| Anthropic    | `ANTHROPIC_API_KEY`                                              |
+| OpenRouter   | `OPENROUTER_API_KEY`                                             |
 
-If no key is set, Oracle defaults to **browser mode** and drives ChatGPT directly — see [Browser Mode](browser-mode.md) for the manual-login flow.
+See [Browser Mode](browser-mode.md) for the dedicated-profile login flow and
+[Configuration](configuration.md) for source-owned defaults.
 
-## Where Oracle stores state
+## Local state
 
-| Path                       | Contents                                                 |
-| -------------------------- | -------------------------------------------------------- |
-| `~/.oracle/config.json`    | Defaults (JSON5). See [Configuration](configuration.md). |
-| `~/.oracle/sessions/<id>/` | Run logs, bundles, transcripts, generated artifacts      |
-| `~/.oracle/cookies.json`   | (Optional) inline ChatGPT cookies for browser mode       |
+| Path                       | Contents                                                |
+| -------------------------- | ------------------------------------------------------- |
+| `~/.oracle/config.json`    | Defaults (JSON5)                                        |
+| `~/.oracle/sessions/<id>/` | Run logs, bundles, transcripts, generated artifacts     |
+| `~/.oracle/cookies.json`   | Optional inline cookies for explicitly configured modes |
 
-Override the root with `ORACLE_HOME_DIR=/some/path` if you'd rather keep state under XDG config or per-project.
+These paths may contain sensitive account or conversation data. Never attach
+them to an issue or pull request. Override the state root with
+`ORACLE_HOME_DIR=/some/path` when an isolated location is required.
 
-## Updating
+## Upstream-only distribution appendix
 
-```bash
-brew upgrade oracle      # Homebrew
-npm update -g @steipete/oracle
-```
-
-`oracle --version` reports the current build. Releases land on [GitHub Releases](https://github.com/steipete/oracle/releases) with notes copied from the [changelog](https://github.com/steipete/oracle/blob/main/CHANGELOG.md).
+The upstream project separately distributes the npm package
+`@steipete/oracle`, the Homebrew formula `steipete/tap/oracle`, and upstream
+release artifacts. Those channels install upstream Oracle, **not this fork**.
+They are named here only to prevent installation ambiguity; this fork does not
+control, mirror, endorse, or publish through them.

@@ -1,0 +1,36 @@
+name: Feature request
+description: Propose a bounded change without private account or session material.
+title: "request: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This issue is public. Never upload `.oracle/`, cookies, browser profiles, session dumps, prompts, responses, attachments, account identifiers, credentials, or conversation URLs. Describe the need with synthetic examples.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed all private browser, account, session, prompt, attachment, and conversation data from this request.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem inside the current Oracle scope
+      description: Explain the unmet need without proposing new release, signing, domain, or account authority.
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: Observable acceptance contract
+      description: Describe what would be true when the request is complete.
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Recovery and privacy boundaries
+      description: Name any exact-session, fail-closed, browser-profile, or data-handling constraints that must remain true.
+    validations:
+      required: true

@@ -13,6 +13,8 @@
 
 > 可恢复的 GPT-5.6 Pro 咨询：单会话，或声明式并行批次。
 
+> **非官方 / unsupported automation boundary：** 这是独立维护的 source fork，不隶属于 OpenAI，也未获 OpenAI 认可、背书或授权。ChatGPT UI、账户策略与 platform terms 可能变化并影响 browser automation；本仓库不声称 OpenAI 授权或 terms compliance，使用者须自行判断适用条款与账户风险。
+
 高成本 Pro 运行不适合寄托在一张脆弱的浏览器标签页上。这个公开 fork 将选定的上下文、提交收据、会话身份、回答、产物和恢复 lineage 持久化在 Oracle session 中；canonical browser lane 经由独立的 Chrome for Testing profile 与 loopback CDP 进入 ChatGPT。
 
 Oracle 负责 prompt bundle、browser action、session truth、恢复和 follow-up lineage。人负责首次登录、真实账户挑战，以及 Batch Oracle 中需要明确记录的 owner decision。OpenCLI 保留为普通咨询的显式替代 transport，不会自动接管失败的 CDP 运行。
@@ -44,7 +46,7 @@ Batch Oracle 的 lane 按职责拆分，不做同题投票。所有第一阶段�
 git clone https://github.com/IndelibleVivi/oracle.git
 cd oracle
 corepack enable
-pnpm install
+pnpm install --frozen-lockfile
 pnpm build
 npm link
 ```
@@ -155,6 +157,7 @@ Attach-running personal Chrome、remote Chrome、API、MCP 与 render path 仍�
 | 从这里开始                                                                      | 内容                                                                        |
 | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | [Dedicated Chrome transport](docs/dedicated-chrome.md)                          | canonical topology、setup、lifecycle、privacy 与 verification               |
+| [Install from source](docs/install.md)                                          | 本 fork 唯一 install path 与 upstream-only distribution appendix            |
 | [Batch Oracle v1](docs/batch-oracle.md)                                         | parallel-first manifest、sealing、barrier、synthesis、recovery 与 rendering |
 | [Quickstart](docs/quickstart.md)                                                | 首次登录、smoke、第一次咨询、render 与 reattach                             |
 | [Browser Mode](docs/browser-mode.md)                                            | direct CDP、attach-running、remote Chrome、OpenCLI、Deep Research 与 images |
@@ -162,6 +165,7 @@ Attach-running personal Chrome、remote Chrome、API、MCP 与 render path 仍�
 | [Coding Agents](docs/agents.md)                                                 | Codex、Claude Code、Cursor、CLI 与 MCP 使用方式                             |
 | [Sessions](docs/sessions.md) · [Follow-ups](docs/followup.md)                   | durable runs 与 conversation lineage                                        |
 | [Configuration](docs/configuration.md) · [CLI reference](docs/cli-reference.md) | 配置优先级、flags 与 limits                                                 |
+| [Upstream parity](docs/upstream-parity.md)                                      | merge base、逐 commit intake 分类与 fork-local evidence                     |
 
 <!-- readme-sync:development -->
 
@@ -174,6 +178,7 @@ pnpm test
 pnpm build
 pnpm docs:check
 pnpm test:packed-cli
+pnpm public:check
 ```
 
 `oracle browser smoke` 是 account-safe 的 live transport test：它会冷启动两次，并且不会创建 ChatGPT conversation。
@@ -182,6 +187,6 @@ pnpm test:packed-cli
 
 ## Provenance 与许可
 
-这是 [steipete/oracle](https://github.com/steipete/oracle) 的公开 fork，保留上游 Git history 与 MIT license。独立 Chrome 默认路径、fork 的 Pro timing / receipt contract、OpenCLI alternative，以及 Batch Oracle 属于本 fork 的实现与维护范围；这里不是上游 release，也不是 OpenAI product。
+这是 [steipete/oracle](https://github.com/steipete/oracle) 的公开 fork，保留上游 Git history 与 MIT license。独立 Chrome 默认路径、fork 的 Pro timing / receipt contract、OpenCLI alternative，以及 Batch Oracle 属于本 fork 的实现与维护范围；这里不是上游 release，也不附属于、代表、获 OpenAI 背书或授权，且不声称 platform-terms compliance。
 
 MIT。见 [LICENSE](LICENSE)。

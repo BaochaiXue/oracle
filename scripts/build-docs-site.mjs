@@ -9,16 +9,15 @@ import { css, faviconSvg, js, preThemeScript, themeToggleHtml } from "./docs-sit
 const root = process.cwd();
 const docsDir = path.join(root, "docs");
 const outDir = path.join(root, "dist", "docs-site");
-const repoBase = "https://github.com/steipete/oracle";
+const repoBase = "https://github.com/IndelibleVivi/oracle";
 const repoEditBase = `${repoBase}/edit/main/docs`;
-const cname = readCname();
-const siteBase = cname ? `https://${cname}` : "";
+const siteBase = "";
 
 const productName = "oracle";
-const productTagline = "Whisper your prompt to a mythical pro agent";
+const productTagline = "Recover every Pro consultation";
 const productDescription =
-  "Oracle bundles your prompt and files for its canonical ChatGPT GPT-5.6 Pro browser lane, with supported API routes kept separate.";
-const brewInstall = "brew install steipete/tap/oracle";
+  "The IndelibleVivi source fork persists exact-session evidence for its dedicated-Chrome GPT-5.6 Pro lane, while keeping API and alternate transports explicit.";
+const sourceInstall = "git clone https://github.com/IndelibleVivi/oracle.git";
 const codeTheme = "github-dark-dimmed";
 const highlighter = await createHighlighter({
   themes: [codeTheme],
@@ -53,6 +52,7 @@ const sections = [
       "tui-debug.md",
       "manual-tests.md",
       "testing.md",
+      "upstream-parity.md",
       "RELEASING.md",
     ],
   ],
@@ -109,7 +109,6 @@ fs.writeFileSync(path.join(outDir, "favicon.svg"), faviconSvg(), "utf8");
 copyStaticAsset("social-card.svg");
 copyStaticAsset("social-card.png");
 fs.writeFileSync(path.join(outDir, ".nojekyll"), "", "utf8");
-if (cname) fs.writeFileSync(path.join(outDir, "CNAME"), cname, "utf8");
 validateLinks(outDir);
 fs.writeFileSync(path.join(outDir, "llms.txt"), llmsTxt(), "utf8");
 console.log(`built docs site: ${path.relative(root, outDir)}`);
@@ -169,7 +168,7 @@ function docsInstallHint() {
   if (typeof installLine !== "undefined") return installLine;
   if (typeof installCmd !== "undefined") return installCmd;
   if (typeof installSnippet !== "undefined") return installSnippet;
-  if (typeof brewInstall !== "undefined") return brewInstall;
+  if (typeof sourceInstall !== "undefined") return sourceInstall;
   return "";
 }
 
@@ -180,13 +179,6 @@ function pageUrl(origin, outRel) {
       : outRel.replace(/(?:^|\/)index\.html$/, (match) => (match === "index.html" ? "" : "/"));
   if (!origin) return normalized || "index.html";
   return normalized ? `${origin}/${normalized}` : `${origin}/`;
-}
-
-function readCname() {
-  for (const candidate of [path.join(docsDir, "CNAME"), path.join(root, "CNAME")]) {
-    if (fs.existsSync(candidate)) return fs.readFileSync(candidate, "utf8").trim();
-  }
-  return "";
 }
 
 function copyStaticAsset(name) {
@@ -472,6 +464,13 @@ function rewriteHref(href, currentRel) {
     }
     return href;
   }
+  const repositoryTarget = path.posix.normalize(
+    path.posix.join("docs", path.posix.dirname(currentRel), raw),
+  );
+  if (/^(?:src|tests|scripts|bin|config|vendor)\//.test(repositoryTarget)) {
+    const sourceUrl = `${repoBase}/blob/main/${repositoryTarget}`;
+    return hash ? `${sourceUrl}#${hash}` : sourceUrl;
+  }
   if (!raw.endsWith(".md")) return href;
   const from = path.posix.dirname(currentRel);
   const target = path.posix.normalize(path.posix.join(from, raw));
@@ -523,21 +522,21 @@ function homeHero(page) {
     { name: "Azure OpenAI" },
   ];
   return `<header class="home-hero">
-        <p class="eyebrow">One CLI · Every Pro agent</p>
+        <p class="eyebrow">Source-only · IndelibleVivi fork</p>
         <h1>${escapeHtml(productTagline)}</h1>
         <p class="lede">${escapeHtml(description)}</p>
         <div class="home-cta">
           <a class="btn btn-primary" href="${quickstartRel}">Quickstart</a>
           <a class="btn btn-ghost" href="${repoBase}" rel="noopener">GitHub</a>
-          <div class="home-install" aria-label="Install with Homebrew">
+          <div class="home-install" aria-label="Clone this fork from source">
             <span class="prompt" aria-hidden="true">$</span>
-            <code>${escapeHtml(brewInstall)}</code>
+            <code>${escapeHtml(sourceInstall)}</code>
           </div>
         </div>
         <div class="home-services" aria-label="Supported models">
           ${services.map((s) => `<span${s.pro ? ' class="pill-pro"' : ""}>${escapeHtml(s.name)}</span>`).join("")}
         </div>
-        <p class="muted"><a href="${installRel}">Other install options →</a></p>
+        <p class="muted"><a href="${installRel}">Source installation guide →</a></p>
         <img class="home-visual" src="social-card.png" width="1200" height="630" alt="oracle command-line preview">
       </header>`;
 }
@@ -613,7 +612,7 @@ function layout({ page, html, toc, prev, next, sectionName }) {
       <div class="sidebar-head">
         <a class="brand" href="${hrefToOutRel("index.html", page.outRel)}" aria-label="${productName} docs home">
           <span class="mark" aria-hidden="true"></span>
-          <span><strong>${escapeHtml(productName)}</strong><small>askoracle.sh</small></span>
+          <span><strong>${escapeHtml(productName)}</strong><small>IndelibleVivi fork</small></span>
         </a>
         ${themeToggleHtml()}
       </div>
@@ -621,6 +620,10 @@ function layout({ page, html, toc, prev, next, sectionName }) {
       <nav>${navHtml(page)}</nav>
     </aside>
     <main>
+      <aside class="platform-boundary" role="note" aria-label="Unofficial automation boundary">
+        <strong>Unofficial and unsupported by OpenAI.</strong>
+        This independent source fork is not affiliated with, endorsed by, or authorized by OpenAI and makes no platform-terms-compliance claim. Operators must evaluate current terms and account risk.
+      </aside>
       ${heroBlock}
       <div class="doc-grid${home ? " doc-grid-home" : ""}">
         <article class="${articleClass}">${html}${prevNext}</article>
@@ -634,7 +637,7 @@ function layout({ page, html, toc, prev, next, sectionName }) {
 }
 
 function pageCanonicalUrl(page) {
-  if (!siteBase) return page.outRel;
+  if (!siteBase) return path.posix.basename(page.outRel);
   if (page.outRel === "index.html") return `${siteBase}/`;
   const rel = page.outRel.endsWith("/index.html")
     ? page.outRel.slice(0, -"index.html".length)

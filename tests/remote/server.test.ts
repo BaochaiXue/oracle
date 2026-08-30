@@ -26,7 +26,172 @@ const CAN_LISTEN_LOCALHOST =
     { stdio: "ignore" },
   ).status === 0;
 
+const CAN_LISTEN_ANY =
+  spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `
+      const net = require('net');
+      const s = net.createServer();
+      s.on('error', () => process.exit(1));
+      s.listen(0, '0.0.0.0', () => s.close(() => process.exit(0)));
+    `,
+    ],
+    { stdio: "ignore" },
+  ).status === 0;
+
 describe("remote browser service", () => {
+  test.skipIf(!CAN_LISTEN_LOCALHOST)(
+    "binds to loopback by default and keeps status minimally public",
+    async () => {
+      const server = await createRemoteServer(
+        { port: 0, token: "secret", logger: () => {} },
+        {
+          runBrowser: async () => ({
+            answerText: "",
+            answerMarkdown: "",
+            tookMs: 0,
+            answerTokens: 0,
+            answerChars: 0,
+          }),
+        },
+      );
+
+      try {
+        expect(server.host).toBe("127.0.0.1");
+        const status = await httpGetJson({
+          hostname: "127.0.0.1",
+          port: server.port,
+          path: "/status",
+        });
+        expect(status).toEqual({ statusCode: 200, json: { ok: true } });
+      } finally {
+        await server.close();
+      }
+    },
+  );
+
+  test.skipIf(!CAN_LISTEN_LOCALHOST)(
+    "rejects non-loopback binding without the explicit opt-in",
+    async () => {
+      await expect(
+        createRemoteServer({
+          host: "0.0.0.0",
+          port: 0,
+          token: "secret",
+          logger: () => {},
+        }),
+      ).rejects.toThrow(/allowNonLoopback|allow-non-loopback/);
+    },
+  );
+
+  test.skipIf(!CAN_LISTEN_ANY)(
+    "allows an explicit non-loopback bind and prints a security warning",
+    async () => {
+      const lines: string[] = [];
+      const server = await createRemoteServer(
+        {
+          host: "0.0.0.0",
+          allowNonLoopback: true,
+          port: 0,
+          token: "secret",
+          logger: (message) => lines.push(message),
+        },
+        {
+          runBrowser: async () => ({
+            answerText: "",
+            answerMarkdown: "",
+            tookMs: 0,
+            answerTokens: 0,
+            answerChars: 0,
+          }),
+        },
+      );
+
+      try {
+        expect(server.host).toBe("0.0.0.0");
+        expect(lines.join("\n")).toMatch(/SECURITY WARNING.*non-loopback/i);
+      } finally {
+        await server.close();
+      }
+    },
+  );
+
+  test.skipIf(!CAN_LISTEN_LOCALHOST)(
+    "rejects unauthorized run requests before parsing their body",
+    async () => {
+      let browserRuns = 0;
+      const server = await createRemoteServer(
+        { port: 0, token: "secret", logger: () => {}, maxRequestBodyBytes: 8 },
+        {
+          runBrowser: async () => {
+            browserRuns += 1;
+            return {
+              answerText: "",
+              answerMarkdown: "",
+              tookMs: 0,
+              answerTokens: 0,
+              answerChars: 0,
+            };
+          },
+        },
+      );
+
+      try {
+        const response = await httpPostRaw({
+          hostname: "127.0.0.1",
+          port: server.port,
+          path: "/runs",
+          chunks: [Buffer.alloc(64, 0x61)],
+        });
+        expect(response).toEqual({ statusCode: 401, json: { error: "unauthorized" } });
+        expect(browserRuns).toBe(0);
+      } finally {
+        await server.close();
+      }
+    },
+  );
+
+  test.skipIf(!CAN_LISTEN_LOCALHOST)(
+    "rejects a chunked request body as soon as it exceeds the configured limit",
+    async () => {
+      let browserRuns = 0;
+      const server = await createRemoteServer(
+        { port: 0, token: "secret", logger: () => {}, maxRequestBodyBytes: 32 },
+        {
+          runBrowser: async () => {
+            browserRuns += 1;
+            return {
+              answerText: "",
+              answerMarkdown: "",
+              tookMs: 0,
+              answerTokens: 0,
+              answerChars: 0,
+            };
+          },
+        },
+      );
+
+      try {
+        const response = await httpPostRaw({
+          hostname: "127.0.0.1",
+          port: server.port,
+          path: "/runs",
+          token: "secret",
+          chunks: [Buffer.from('{"prompt":"'), Buffer.alloc(64, 0x61), Buffer.from('"}')],
+        });
+        expect(response).toEqual({
+          statusCode: 413,
+          json: { error: "request_too_large", maxBytes: 32 },
+        });
+        expect(browserRuns).toBe(0);
+      } finally {
+        await server.close();
+      }
+    },
+  );
+
   test.skipIf(!CAN_LISTEN_LOCALHOST)(
     "streams logs and returns results via client executor",
     async () => {
@@ -144,6 +309,81 @@ describe("remote browser service", () => {
 
       await server.close();
       await rm(tmpDir, { recursive: true, force: true });
+    },
+  );
+
+  test.skipIf(!CAN_LISTEN_LOCALHOST)(
+    "keeps colliding sanitized attachment basenames distinct across both submissions",
+    async () => {
+      const tmpDir = await mkdtemp(path.join(os.tmpdir(), "oracle-remote-collision-test-"));
+      const sourceAttachments = await Promise.all(
+        [
+          ["0", "a b.txt", "space"],
+          ["1", "a_b.txt", "underscore"],
+          ["2", "a_b-2.txt", "reserved"],
+          ["3", "A_B.TXT", "uppercase"],
+        ].map(async ([directory, fileName, content]) => {
+          const sourceDir = path.join(tmpDir, directory!);
+          await mkdir(sourceDir);
+          const sourcePath = path.join(sourceDir, fileName!);
+          await writeFile(sourcePath, content!, "utf8");
+          return {
+            path: sourcePath,
+            displayPath: fileName!,
+            sizeBytes: Buffer.byteLength(content!),
+          };
+        }),
+      );
+      const expectedNames = ["a_b.txt", "a_b-3.txt", "a_b-2.txt", "A_B-4.TXT"];
+      const expectedContents = ["space", "underscore", "reserved", "uppercase"];
+      const server = await createRemoteServer(
+        { port: 0, token: "secret", logger: () => {} },
+        {
+          runBrowser: async (options) => {
+            for (const staged of [
+              options.attachments ?? [],
+              options.fallbackSubmission?.attachments ?? [],
+            ]) {
+              expect(staged.map((attachment) => path.basename(attachment.path))).toEqual(
+                expectedNames,
+              );
+              expect(staged.map((attachment) => attachment.displayPath)).toEqual(
+                sourceAttachments.map((attachment) => attachment.displayPath),
+              );
+              await expect(
+                Promise.all(staged.map((attachment) => readFile(attachment.path, "utf8"))),
+              ).resolves.toEqual(expectedContents);
+            }
+            return {
+              answerText: "done",
+              answerMarkdown: "done",
+              tookMs: 1,
+              answerTokens: 1,
+              answerChars: 4,
+            };
+          },
+        },
+      );
+
+      try {
+        const executor = createRemoteBrowserExecutor({
+          host: `127.0.0.1:${server.port}`,
+          token: "secret",
+        });
+        const result = await executor({
+          prompt: "remote attachment collision",
+          attachments: sourceAttachments,
+          fallbackSubmission: {
+            prompt: "remote fallback collision",
+            attachments: sourceAttachments,
+          },
+          config: {},
+        });
+        expect(result.answerText).toBe("done");
+      } finally {
+        await server.close();
+        await rm(tmpDir, { recursive: true, force: true });
+      }
     },
   );
 
@@ -576,6 +816,59 @@ async function httpGetJson({
       },
     );
     req.on("error", reject);
+    req.end();
+  });
+}
+
+async function httpPostRaw({
+  hostname,
+  port,
+  path,
+  token,
+  chunks,
+}: {
+  hostname: string;
+  port: number;
+  path: string;
+  token?: string;
+  chunks: Buffer[];
+}): Promise<{ statusCode: number; json: Record<string, unknown> | null }> {
+  return await new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        hostname,
+        port,
+        path,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+      },
+      (res) => {
+        res.setEncoding("utf8");
+        let body = "";
+        res.on("data", (chunk: string) => {
+          body += chunk;
+        });
+        res.on("end", () => {
+          const statusCode = res.statusCode ?? 0;
+          let json: Record<string, unknown> | null = null;
+          try {
+            const parsed = body.length ? JSON.parse(body) : null;
+            json =
+              parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+          } catch {
+            json = null;
+          }
+          resolve({ statusCode, json });
+        });
+      },
+    );
+    req.on("error", reject);
+    for (const chunk of chunks) {
+      req.write(chunk);
+    }
     req.end();
   });
 }
