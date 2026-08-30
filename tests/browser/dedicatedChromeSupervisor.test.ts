@@ -190,6 +190,41 @@ describe("dedicated Chrome ownership", () => {
       }),
     ).toBe("foreign-or-ambiguous");
   });
+
+  test("prefers the verified receipt root over a matching helper discovery", async () => {
+    const helperPid = 1551;
+    const inspection = await inspectDedicatedChromeState(
+      { profileDir: profileRealpath, chromePath: currentExecutable },
+      {
+        resolveExecutable: vi.fn(async () => currentExecutable),
+        listInstalled: vi.fn(async () => [
+          { buildId: "140", platform: "mac", executablePath: currentExecutable },
+        ]),
+        readReceipt: vi.fn(async () => receipt()),
+        readPid: vi.fn(async () => 4100),
+        readPort: vi.fn(async () => 9333),
+        findProfileProcess: vi.fn(async () => ({ pid: helperPid, port: 9333 })),
+        observeProcess: vi.fn(async (pid: number) =>
+          pid === 4100
+            ? observed()
+            : observed({
+                pid: helperPid,
+                ppid: 4100,
+                command: `${currentExecutable} Helper (Renderer) --type=renderer --user-data-dir=${profileRealpath} --remote-debugging-port=9333`,
+                processStartTime: "Sat Aug 30 12:01:00 2026",
+              }),
+        ),
+        probe: vi.fn(async () => ({ ok: true }) as const),
+      },
+    );
+
+    expect(inspection).toMatchObject({
+      state: "healthy-current",
+      ownership: "managed-current",
+      observed: { pid: 4100 },
+      metadataDrift: false,
+    });
+  });
 });
 
 describe("Windows process observation", () => {

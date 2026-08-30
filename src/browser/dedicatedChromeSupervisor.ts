@@ -641,18 +641,34 @@ export async function inspectDedicatedChromeState(
     )
   ).some(Boolean);
   const profileProcess = await (deps.findProfileProcess ?? findRunningChromeForProfile)(profileDir);
-  const candidatePid = profileProcess?.pid ?? receipt?.pid ?? recordedPid;
   const knownExecutables = [
     ...installedExecutableRealpaths,
     ...(receipt?.executableRealpath ? [receipt.executableRealpath] : []),
   ];
-  let observed = candidatePid
-    ? await (deps.observeProcess ?? observeProcess)(candidatePid, knownExecutables)
-    : null;
-  if (observed && !processCommandUsesAnyProfile(observed.command, [profileDir, profileRealpath])) {
-    observed = null;
+  // The runtime receipt is exact root-process evidence. Chromium helpers can
+  // inherit both the profile and CDP switches and may appear first in `ps`
+  // after PID rollover, so never let an arbitrary discovery override a live
+  // matching receipt root. If it is gone, fall back to the discovered process
+  // and finally the legacy pid file; classification below still fails closed
+  // on any receipt, start-time, executable, profile, or port conflict.
+  const candidatePids = [receipt?.pid, profileProcess?.pid, recordedPid].filter(
+    validPositiveInteger,
+  );
+  let observed: ObservedProcess | null = null;
+  for (const candidatePid of new Set(candidatePids)) {
+    const candidate = await (deps.observeProcess ?? observeProcess)(candidatePid, knownExecutables);
+    if (
+      candidate &&
+      processCommandUsesAnyProfile(candidate.command, [profileDir, profileRealpath])
+    ) {
+      observed = candidate;
+      break;
+    }
   }
-  const debugPort = profileProcess?.port ?? receipt?.debugPort ?? recordedPort;
+  const debugPort =
+    receipt && observed?.pid === receipt.pid
+      ? receipt.debugPort
+      : (profileProcess?.port ?? receipt?.debugPort ?? recordedPort);
   const endpoint = debugPort
     ? await (deps.probe ?? verifyDevToolsReachable)({
         port: debugPort,

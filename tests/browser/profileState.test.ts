@@ -208,6 +208,37 @@ describe("profileState", () => {
     });
   });
 
+  test("prefers the browser root when a matching renderer appears first", () => {
+    const dir = "/Users/example/.oracle/browser-profile";
+    const processList = `
+      1551 /Applications/Google Chrome for Testing.app/Contents/Frameworks/Google Chrome for Testing Framework.framework/Helpers/Google Chrome for Testing Helper (Renderer) --type=renderer --user-data-dir=${dir} --remote-debugging-port=9333
+      49527 /Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing --remote-debugging-port=9333 --user-data-dir=${dir} --no-startup-window
+    `;
+
+    expect(profileState.findChromeForProfileFromProcessListForTest(processList, dir)).toEqual({
+      pid: 49527,
+      port: 9333,
+    });
+    expect(
+      profileState.findChromeDebugTargetForProfileFromProcessListForTest(processList, dir),
+    ).toEqual({
+      pid: 49527,
+      port: 9333,
+    });
+  });
+
+  test("retains a matching Chrome helper as a conservative fallback", () => {
+    const dir = "/Users/example/.oracle/browser-profile";
+    const processList = `
+      1551 /Applications/Google Chrome for Testing.app/Contents/Frameworks/Google Chrome for Testing Framework.framework/Helpers/Google Chrome for Testing Helper (Renderer) --type=renderer --user-data-dir=${dir} --remote-debugging-port=9333
+    `;
+
+    expect(profileState.findChromeForProfileFromProcessListForTest(processList, dir)).toEqual({
+      pid: 1551,
+      port: 9333,
+    });
+  });
+
   test("skips the macOS LaunchServices wrapper and records the real Chrome owner", () => {
     const dir = "/Users/example/.oracle/browser-profile";
     const processList = `

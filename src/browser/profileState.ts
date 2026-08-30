@@ -131,6 +131,7 @@ function findChromeForProfileFromProcessList(
   processList: string,
   userDataDir: string,
 ): RunningChromeProfile | null {
+  let helperFallback: RunningChromeProfile | null = null;
   for (const line of processList.split("\n")) {
     const match = line.match(/^\s*(\d+)\s+(.+)$/);
     if (!match) continue;
@@ -147,9 +148,22 @@ function findChromeForProfileFromProcessList(
     if (!lower.includes("user-data-dir") || !command.includes(userDataDir)) continue;
     const portMatch = command.match(/--remote-debugging-port(?:=|\s+)(\d+)/);
     const port = Number.parseInt(portMatch?.[1] ?? "", 10);
-    return Number.isFinite(port) && port > 0 ? { pid, port } : { pid };
+    const candidate = Number.isFinite(port) && port > 0 ? { pid, port } : { pid };
+    // Chromium helpers inherit the profile and sometimes the CDP port. They
+    // are evidence that the profile is still in use, but they are not the
+    // browser owner. Prefer the root command (which has no --type switch)
+    // regardless of process-list order, while retaining a helper as a
+    // conservative fallback when no root can be observed.
+    const helper = /(?:^|\s)--type(?:=|\s+)\S+/u.test(command);
+    if (helper) {
+      if (!helperFallback || (!helperFallback.port && "port" in candidate)) {
+        helperFallback = candidate;
+      }
+      continue;
+    }
+    return candidate;
   }
-  return null;
+  return helperFallback;
 }
 
 export function findChromeDebugTargetForProfileFromProcessListForTest(
