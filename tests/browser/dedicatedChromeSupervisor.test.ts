@@ -6,6 +6,8 @@ import {
   clearDedicatedChromeMetadata,
   classifyDedicatedChromeOwnership,
   inspectDedicatedChromeState,
+  listObservedProcesses,
+  observeProcess,
   planDedicatedChromeAction,
   terminateVerifiedDedicatedChrome,
   writeDedicatedBrowserRuntimeReceipt,
@@ -114,6 +116,26 @@ describe("dedicated Chrome ownership", () => {
     ).toBe("managed-compatible");
   });
 
+  test("matches exact Windows profile and executable aliases without case sensitivity", () => {
+    const windowsProfile = "C:\\Users\\Example\\Oracle Profile";
+    const windowsExecutable = "C:\\Oracle\\Chrome for Testing\\chrome.exe";
+    expect(
+      classifyDedicatedChromeOwnership({
+        observed: observed({
+          command:
+            '"c:/oracle/chrome for testing/chrome.exe" --user-data-dir="c:/users/example/oracle profile" --remote-debugging-port=9333',
+          executablePath: "c:/oracle/chrome for testing/chrome.exe",
+          executableRealpath: "c:/oracle/chrome for testing/chrome.exe",
+        }),
+        profileRealpath: windowsProfile,
+        debugPort: 9333,
+        configuredExecutableRealpath: windowsExecutable,
+        installedExecutableRealpaths: [windowsExecutable],
+        receipt: null,
+      }),
+    ).toBe("managed-current");
+  });
+
   test("rejects everyday Chrome even when it uses the dedicated profile", () => {
     const everyday = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
     expect(
@@ -168,6 +190,21 @@ describe("dedicated Chrome ownership", () => {
       }),
     ).toBe("foreign-or-ambiguous");
   });
+});
+
+describe("Windows process observation", () => {
+  test.skipIf(process.platform !== "win32")(
+    "reads the current process identity through CIM",
+    async () => {
+      const current = await observeProcess(process.pid);
+      expect(current).toMatchObject({ pid: process.pid });
+      expect(current?.command).toBeTruthy();
+      expect(current?.processStartTime).toBeTruthy();
+
+      const inventory = await listObservedProcesses();
+      expect(inventory.some((entry) => entry.pid === process.pid)).toBe(true);
+    },
+  );
 });
 
 describe("dedicated Chrome action planner", () => {

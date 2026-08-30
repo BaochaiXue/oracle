@@ -295,8 +295,23 @@ export function browserCommandUsesExecutable(
   executablePath: string,
 ): boolean {
   if (!command) return false;
-  const expected = path.resolve(executablePath);
-  return command === expected || command.startsWith(`${expected} `);
+  const raw = executablePath.trim();
+  const windowsAbsolute = /^[A-Za-z]:[\\/]/u.test(raw) || raw.startsWith("\\\\");
+  const normalized =
+    path.posix.isAbsolute(raw) && !windowsAbsolute
+      ? path.posix.normalize(raw)
+      : path.win32.isAbsolute(raw)
+        ? path.win32.normalize(raw)
+        : path.resolve(raw);
+  const candidates = new Set([raw, normalized]);
+  if (windowsAbsolute) candidates.add(normalized.replaceAll("\\", "/"));
+  const windowsCommand = windowsAbsolute ? command.toLowerCase() : command;
+  return [...candidates].some((candidate) => {
+    const expected = windowsAbsolute ? candidate.toLowerCase() : candidate;
+    return [expected, `"${expected}"`, `'${expected}'`].some(
+      (prefix) => windowsCommand === prefix || windowsCommand.startsWith(`${prefix} `),
+    );
+  });
 }
 
 function browserIdentityError(

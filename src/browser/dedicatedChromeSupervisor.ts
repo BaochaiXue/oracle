@@ -207,7 +207,39 @@ function runtimeReceiptPath(profileDir: string): string {
 }
 
 async function canonicalizePath(candidate: string): Promise<string> {
-  return realpath(candidate).catch(() => path.resolve(candidate));
+  return realpath(candidate).catch(() => normalizeIdentityPath(candidate));
+}
+
+function isWindowsIdentityPath(candidate: string): boolean {
+  return /^[A-Za-z]:[\\/]/u.test(candidate) || candidate.startsWith("\\\\");
+}
+
+function normalizeIdentityPath(candidate: string): string {
+  const trimmed = candidate.trim();
+  if (path.posix.isAbsolute(trimmed) && !isWindowsIdentityPath(trimmed)) {
+    return path.posix.normalize(trimmed);
+  }
+  if (path.win32.isAbsolute(trimmed)) return path.win32.normalize(trimmed);
+  return path.resolve(trimmed);
+}
+
+function identityPathKey(candidate: string): string {
+  const normalized = normalizeIdentityPath(candidate);
+  return isWindowsIdentityPath(candidate)
+    ? normalized.replaceAll("/", "\\").toLowerCase()
+    : normalized;
+}
+
+function sameIdentityPath(left: string, right: string): boolean {
+  return identityPathKey(left) === identityPathKey(right);
+}
+
+function identityPathVariants(candidate: string): string[] {
+  const raw = candidate.trim();
+  const normalized = normalizeIdentityPath(raw);
+  const variants = new Set([raw, normalized]);
+  if (isWindowsIdentityPath(raw)) variants.add(normalized.replaceAll("\\", "/"));
+  return [...variants];
 }
 
 function validPositiveInteger(value: unknown): value is number {
@@ -270,33 +302,58 @@ export async function writeDedicatedBrowserRuntimeReceipt(
 }
 
 function processCommandUsesProfile(command: string, profileRealpath: string): boolean {
-  const resolved = path.resolve(profileRealpath);
-  const quoted = [
-    `--user-data-dir="${resolved}"`,
-    `--user-data-dir='${resolved}'`,
-    `--user-data-dir "${resolved}"`,
-    `--user-data-dir '${resolved}'`,
-  ];
-  if (quoted.some((candidate) => command.includes(candidate))) return true;
-  return [`--user-data-dir=${resolved}`, `--user-data-dir ${resolved}`].some((candidate) => {
-    let offset = command.indexOf(candidate);
-    while (offset >= 0) {
-      const suffix = command.slice(offset + candidate.length);
-      if (suffix.length === 0 || suffix.startsWith(" --")) return true;
-      offset = command.indexOf(candidate, offset + 1);
-    }
-    return false;
+  const windowsPath = isWindowsIdentityPath(profileRealpath);
+  const haystack = windowsPath ? command.toLowerCase() : command;
+  return identityPathVariants(profileRealpath).some((candidate) => {
+    const value = windowsPath ? candidate.toLowerCase() : candidate;
+    const forms = [
+      `--user-data-dir=${value}`,
+      `--user-data-dir="${value}"`,
+      `--user-data-dir='${value}'`,
+      `--user-data-dir ${value}`,
+      `--user-data-dir "${value}"`,
+      `--user-data-dir '${value}'`,
+    ];
+    return forms.some((form) => {
+      let offset = haystack.indexOf(form);
+      while (offset >= 0) {
+        const prefix = haystack.slice(0, offset);
+        const suffix = haystack.slice(offset + form.length);
+        const startsAtBoundary = offset === 0 || /\s$/u.test(prefix);
+        const endsAtBoundary = suffix.length === 0 || /^\s+--/u.test(suffix);
+        if (startsAtBoundary && endsAtBoundary) return true;
+        offset = haystack.indexOf(form, offset + 1);
+      }
+      return false;
+    });
   });
 }
 
 function processCommandUsesAnyProfile(command: string, profilePaths: string[]): boolean {
-  return [...new Set(profilePaths.map((candidate) => path.resolve(candidate)))].some((candidate) =>
+  const uniquePaths = new Map(
+    profilePaths.map((candidate) => [identityPathKey(candidate), candidate]),
+  );
+  return [...uniquePaths.values()].some((candidate) =>
     processCommandUsesProfile(command, candidate),
   );
 }
 
 function processCommandUsesDebugPort(command: string, port: number): boolean {
-  return new RegExp(`--remote-debugging-port(?:=|\\s+)${port}(?=\\s|$)`, "u").test(command);
+  return commandFlagValues(command, "--remote-debugging-port").includes(String(port));
+}
+
+function commandFlagValues(command: string, flag: string): string[] {
+  const escapedFlag = flag.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const matcher = new RegExp(
+    `(?:^|\\s)${escapedFlag}(?:=|\\s+)(?:"([^"]*)"|'([^']*)'|([^\\s]+))(?=\\s|$)`,
+    "gu",
+  );
+  const values: string[] = [];
+  for (const match of command.matchAll(matcher)) {
+    const value = match[1] ?? match[2] ?? match[3];
+    if (value !== undefined) values.push(value);
+  }
+  return values;
 }
 
 function commandUsesExecutable(command: string, executablePath: string): boolean {
@@ -320,7 +377,7 @@ function receiptConflicts(input: {
     receipt.pid !== observed.pid ||
     !observed.processStartTime ||
     receipt.processStartTime !== observed.processStartTime ||
-    path.resolve(receipt.profileRealpath) !== path.resolve(profileRealpath) ||
+    !sameIdentityPath(receipt.profileRealpath, profileRealpath) ||
     receipt.debugHost !== "127.0.0.1" ||
     receipt.debugPort !== debugPort ||
     !commandUsesExecutable(observed.command, receipt.executableRealpath)
@@ -354,7 +411,7 @@ export function classifyDedicatedChromeOwnership(input: {
   const current = input.configuredExecutableRealpath;
   if (
     current &&
-    ((observedExecutable && path.resolve(observedExecutable) === path.resolve(current)) ||
+    ((observedExecutable && sameIdentityPath(observedExecutable, current)) ||
       commandUsesExecutable(observed.command, current))
   ) {
     return "managed-current";
@@ -362,7 +419,7 @@ export function classifyDedicatedChromeOwnership(input: {
 
   const installedMatch = input.installedExecutableRealpaths.some(
     (candidate) =>
-      (observedExecutable && path.resolve(observedExecutable) === path.resolve(candidate)) ||
+      (observedExecutable && sameIdentityPath(observedExecutable, candidate)) ||
       commandUsesExecutable(observed.command, candidate),
   );
   if (installedMatch) {
@@ -402,7 +459,21 @@ export async function observeProcess(
   pid: number,
   knownExecutablePaths: string[] = [],
 ): Promise<ObservedProcess | null> {
-  if (!validPositiveInteger(pid) || process.platform === "win32") return null;
+  if (!validPositiveInteger(pid)) return null;
+  if (process.platform === "win32") {
+    const observations = await queryWindowsProcesses(pid);
+    const observation = observations[0];
+    if (!observation) return null;
+    const executablePath =
+      observation.executablePath ?? inferKnownExecutable(observation.command, knownExecutablePaths);
+    return {
+      ...observation,
+      executablePath,
+      executableRealpath: executablePath
+        ? await realpath(executablePath).catch(() => normalizeIdentityPath(executablePath))
+        : undefined,
+    };
+  }
   try {
     const { stdout } = await execFileAsync(
       "ps",
@@ -439,7 +510,7 @@ export async function observeProcess(
 }
 
 export async function listObservedProcesses(): Promise<ObservedProcess[]> {
-  if (process.platform === "win32") return [];
+  if (process.platform === "win32") return queryWindowsProcesses();
   try {
     const { stdout } = await execFileAsync(
       "ps",
@@ -449,6 +520,69 @@ export async function listObservedProcesses(): Promise<ObservedProcess[]> {
     return String(stdout ?? "")
       .split(/\r?\n/gu)
       .map((line) => parsePsObservation(line))
+      .filter((entry): entry is ObservedProcess => Boolean(entry));
+  } catch {
+    return [];
+  }
+}
+
+interface WindowsProcessRecord {
+  pid?: unknown;
+  ppid?: unknown;
+  command?: unknown;
+  executablePath?: unknown;
+  processStartTime?: unknown;
+}
+
+function parseWindowsProcessRecord(value: WindowsProcessRecord): ObservedProcess | null {
+  const pid = Number(value.pid);
+  const ppid = Number(value.ppid);
+  const executablePath =
+    typeof value.executablePath === "string" && value.executablePath.trim()
+      ? value.executablePath.trim()
+      : undefined;
+  const command =
+    typeof value.command === "string" && value.command.trim()
+      ? value.command.trim()
+      : executablePath;
+  const processStartTime =
+    typeof value.processStartTime === "string" && value.processStartTime.trim()
+      ? value.processStartTime.trim()
+      : undefined;
+  if (!validPositiveInteger(pid) || !command) return null;
+  return {
+    pid,
+    ppid: validPositiveInteger(ppid) ? ppid : undefined,
+    command,
+    executablePath,
+    processStartTime,
+  };
+}
+
+async function queryWindowsProcesses(pid?: number): Promise<ObservedProcess[]> {
+  const filter = pid ? ` -Filter "ProcessId = ${Math.trunc(pid)}"` : "";
+  const script =
+    `$items = Get-CimInstance Win32_Process${filter}\n` +
+    "@($items | ForEach-Object { [pscustomobject]@{ " +
+    "pid = [int]$_.ProcessId; " +
+    "ppid = [int]$_.ParentProcessId; " +
+    "command = [string]$_.CommandLine; " +
+    "executablePath = [string]$_.ExecutablePath; " +
+    "processStartTime = $(if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().ToString('o') } else { '' }) " +
+    "} }) | ConvertTo-Json -Compress";
+  try {
+    const { stdout } = await execFileAsync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+      { maxBuffer: 16 * 1024 * 1024 },
+    );
+    const raw = String(stdout ?? "")
+      .replace(/^\uFEFF/u, "")
+      .trim();
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as WindowsProcessRecord | WindowsProcessRecord[];
+    return (Array.isArray(parsed) ? parsed : [parsed])
+      .map((entry) => parseWindowsProcessRecord(entry))
       .filter((entry): entry is ObservedProcess => Boolean(entry));
   } catch {
     return [];
@@ -473,7 +607,7 @@ export async function inspectDedicatedChromeState(
   },
   deps: InspectDeps = {},
 ): Promise<DedicatedChromeInspection> {
-  const profileDir = path.resolve(input.profileDir);
+  const profileDir = normalizeIdentityPath(input.profileDir);
   const profileRealpath = await canonicalizePath(profileDir);
   const resolveExecutable = deps.resolveExecutable ?? resolveDedicatedBrowserExecutable;
   const configuredExecutablePath = await resolveExecutable(input.chromePath);
@@ -914,7 +1048,7 @@ export async function acquireDedicatedChromeForRun(
   },
   deps: AcquireDeps = {},
 ): Promise<DedicatedChromeAcquireResult> {
-  const profileDir = path.resolve(input.profileDir);
+  const profileDir = normalizeIdentityPath(input.profileDir);
   const lockTimeoutMs = Math.max(0, input.config.profileLockTimeoutMs ?? 0);
   let lock: ProfileRunLock | null = null;
   if (lockTimeoutMs > 0) {
