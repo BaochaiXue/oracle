@@ -241,6 +241,17 @@ export async function runBrowserSessionExecution(
     modelStrategy: browserConfig.modelStrategy,
   });
   const headerLine = `Launching browser mode (${launchModel}) with ~${promptArtifacts.estimatedInputTokens.toLocaleString()} tokens.`;
+  const reviewTarget =
+    runOptions.model === "gpt-5-pro"
+      ? "GPT-5.6 Pro"
+      : (launchModel.match(/target=([^;]+)/u)?.[1]?.trim() ?? "ChatGPT");
+  let sentPhaseLogged = false;
+  const logSentPhase = (): void => {
+    if (sentPhaseLogged) return;
+    sentPhaseLogged = true;
+    log("Review sent.");
+    log(`Waiting for ${reviewTarget}…`);
+  };
   const automationLogger: BrowserLogger = ((message?: string) => {
     if (typeof message !== "string") return;
     const shouldAlwaysPrint =
@@ -248,16 +259,19 @@ export async function runBrowserSessionExecution(
       /fallback|follow-up|retry|thinking|waiting for chatgpt|browser slot|browser control|browser guidance|model selection|model picker|window policy/i.test(
         message,
       );
-    if (!runOptions.verbose && !shouldAlwaysPrint) return;
+    const repairPhase = message === "Repairing Oracle’s dedicated browser…";
+    if (!runOptions.verbose && !shouldAlwaysPrint && !repairPhase) return;
     log(message);
   }) as BrowserLogger;
   automationLogger.verbose = Boolean(runOptions.verbose);
   automationLogger.sessionLog = runOptions.verbose ? log : () => {};
 
-  log(headerLine);
-  log(chalk.dim("This run can take up to an hour (usually ~10 minutes)."));
   if (runOptions.verbose) {
+    log(headerLine);
+    log(chalk.dim("This run can take up to an hour (usually ~10 minutes)."));
     log(chalk.dim("Chrome automation does not stream output; this may take a minute..."));
+  } else {
+    log("Preparing review…");
   }
   const persistRuntimeHint = deps.persistRuntimeHint ?? (() => {});
   const executionBrowserConfig = runOptions.browserResumeConversationUrl
@@ -286,6 +300,9 @@ export async function runBrowserSessionExecution(
       outputPath: runOptions.outputPath,
       followUpPrompts: runOptions.browserFollowUps,
       runtimeHintCb: async (runtime, modelSelection) => {
+        if (runtime.promptSubmitted === true) {
+          logSentPhase();
+        }
         const runtimeWithController = resolveActiveProWorkload(
           {
             ...runtime,
@@ -324,6 +341,9 @@ export async function runBrowserSessionExecution(
   } finally {
     await cleanupGeneratedBrowserBundles(promptArtifacts);
   }
+  if (browserResult.promptSubmitted === true) {
+    logSentPhase();
+  }
   const modelSelection =
     browserResult.modelSelection ?? buildUnavailableModelSelectionEvidence(browserConfig);
   if (modelSelection) {
@@ -349,6 +369,9 @@ export async function runBrowserSessionExecution(
       recoveryExpiresAt: browserResult.recoveryExpiresAt,
       reconcileNeeded: browserResult.reconcileNeeded,
       controllerPid: browserResult.controllerPid ?? process.pid,
+      browserRepairAttempted: browserResult.browserRepairAttempted,
+      browserRepairOutcome: browserResult.browserRepairOutcome,
+      browserRolloverPending: browserResult.browserRolloverPending,
       proDispatchAt: browserResult.proDispatchAt,
       proResponseElapsedMs: browserResult.proResponseElapsedMs,
       proInputTokens: browserResult.proInputTokens,
@@ -392,6 +415,7 @@ export async function runBrowserSessionExecution(
   for (const warning of warnings) {
     log(chalk.yellow(`[browser] ${warning.message}`));
   }
+  log("Review complete.");
   if (!runOptions.silent) {
     log(chalk.bold("Answer:"));
     log(browserResult.answerMarkdown || browserResult.answerText || chalk.dim("(no text output)"));

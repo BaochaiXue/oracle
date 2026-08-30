@@ -47,9 +47,31 @@ const reconcileTargets = vi.fn(async (): Promise<any> => ({
   skippedTargetIds: [],
   failedTargetIds: [],
 }));
+const profileLockRelease = vi.fn(async () => undefined);
+const acquireProfileLock = vi.fn(async () => ({
+  path: "/tmp/recovery-profile-lock",
+  lockId: "recovery-lock",
+  release: profileLockRelease,
+}));
+const hasOtherActiveLeases = vi.fn(async () => false);
+const drainDedicatedChrome = vi.fn(async (): Promise<any> => ({
+  mode: "drain",
+  planOnly: false,
+  action: "no-op",
+  stateBefore: "absent",
+  stateAfter: "absent",
+  changed: false,
+  protectedState: false,
+  reason: "already drained",
+}));
+const recordBrowserHold = vi.fn(async () => undefined);
 const ownershipDeps = {
   acquireLease,
   reconcileTargets,
+  acquireProfileLock,
+  hasOtherActiveLeases,
+  drainDedicatedChrome,
+  recordBrowserHold,
   persistRuntime: vi.fn(
     async (sessionId: string, updates: Partial<SessionMetadata>) =>
       ({
@@ -67,6 +89,11 @@ describe("recoverConversationTab flow", () => {
     leaseRelease.mockClear();
     acquireLease.mockClear();
     reconcileTargets.mockClear();
+    acquireProfileLock.mockClear();
+    profileLockRelease.mockClear();
+    hasOtherActiveLeases.mockClear();
+    drainDedicatedChrome.mockClear();
+    recordBrowserHold.mockClear();
     ownershipDeps.persistRuntime.mockClear();
   });
 
@@ -149,6 +176,7 @@ describe("recoverConversationTab flow", () => {
       logger,
       "sess-recover",
       {},
+      "recovery-lease",
     );
     expect(harvestChatGptTab).toHaveBeenLastCalledWith({
       host: "127.0.0.1",
@@ -166,6 +194,10 @@ describe("recoverConversationTab flow", () => {
     expect(reconcileTargets).toHaveBeenCalledWith(
       expect.objectContaining({ apply: true, ensureSentinel: true }),
     );
+    expect(drainDedicatedChrome).toHaveBeenCalledWith(
+      expect.objectContaining({ profileDir: "/tmp/recover-profile", lockHeld: true }),
+    );
+    expect(chrome.kill).not.toHaveBeenCalled();
   });
 
   test("does not require a local profile when reopening through a recorded endpoint", async () => {
@@ -205,7 +237,7 @@ describe("recoverConversationTab flow", () => {
     expect(acquireManualLoginChromeForRun).not.toHaveBeenCalled();
   });
 
-  test("kills launched Chrome when recovered content never becomes ready", async () => {
+  test("uses the shared verified drain when recovered content never becomes ready", async () => {
     const openChatGptTarget = vi
       .fn()
       .mockRejectedValueOnce(new Error("ECONNREFUSED"))
@@ -238,10 +270,11 @@ describe("recoverConversationTab flow", () => {
       ),
     ).rejects.toThrow(/did not become ready/);
 
-    expect(chrome.kill).toHaveBeenCalledTimes(1);
+    expect(drainDedicatedChrome).toHaveBeenCalledTimes(1);
+    expect(chrome.kill).not.toHaveBeenCalled();
   });
 
-  test("kills launched Chrome when opening the recovery target fails", async () => {
+  test("uses the shared verified drain when opening the recovery target fails", async () => {
     const openChatGptTarget = vi.fn(async () => {
       throw new Error("CDP.New failed");
     });
@@ -271,6 +304,7 @@ describe("recoverConversationTab flow", () => {
       ),
     ).rejects.toThrow(/CDP.New failed/);
 
-    expect(chrome.kill).toHaveBeenCalledTimes(1);
+    expect(drainDedicatedChrome).toHaveBeenCalledTimes(1);
+    expect(chrome.kill).not.toHaveBeenCalled();
   });
 });

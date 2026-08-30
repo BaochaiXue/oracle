@@ -64,14 +64,7 @@ import type { ProfileRunLock } from "./profileState.js";
 import {
   cleanupStaleProfileState,
   acquireProfileRunLock,
-  findRunningChromeDebugTargetForProfile,
-  readChromePid,
-  readDevToolsPort,
   shouldCleanupManualLoginProfileState,
-  terminateRecordedChromeForProfile,
-  verifyDevToolsReachable,
-  writeChromePid,
-  writeDevToolsActivePort,
 } from "./profileState.js";
 import {
   connectionLostUserMessage,
@@ -106,9 +99,11 @@ import {
 } from "./manualLoginProfile.js";
 import { describeBrowserControlPlan, formatBrowserControlPlan } from "./controlPlan.js";
 import {
-  assertDedicatedBrowserProcessIdentity,
-  resolveDedicatedBrowserExecutable,
-} from "./dedicatedBrowserBinary.js";
+  acquireDedicatedChromeForRun,
+  drainDedicatedChromeIfIdle,
+  recordDedicatedChromeHold,
+  type DedicatedChromeBootstrapOutcome,
+} from "./dedicatedChromeSupervisor.js";
 import {
   createConversationUrlMonitor,
   type ConversationUrlMonitor,
@@ -942,6 +937,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
   let reconcileNeeded = false;
   const proTimingRequired = requiresProResponseTiming(config);
   let proTimingRuntime: BrowserRuntimeMetadata = {};
+  let dedicatedBootstrap: DedicatedChromeBootstrapOutcome | undefined;
   let modelSelectionEvidence: BrowserModelSelectionEvidence | undefined;
   let tabLease: BrowserTabLease | null = null;
   let conversationUrlMonitor: ConversationUrlMonitor | null = null;
@@ -965,6 +961,9 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       reconcileNeeded: reconcileNeeded || undefined,
       userDataDir,
       controllerPid: process.pid,
+      browserRepairAttempted: dedicatedBootstrap?.repairAttempted || undefined,
+      browserRepairOutcome: dedicatedBootstrap?.repairOutcome,
+      browserRolloverPending: dedicatedBootstrap?.rolloverPending || undefined,
       ...proTimingRuntime,
     };
     try {
@@ -1102,10 +1101,21 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     throw error;
   }
 
-  let acquiredChrome: { chrome: BrowserChrome; reusedChrome: LaunchedChrome | null };
+  let acquiredChrome: {
+    chrome: BrowserChrome;
+    reusedChrome: LaunchedChrome | null;
+    bootstrap?: DedicatedChromeBootstrapOutcome;
+  };
   try {
     acquiredChrome = manualLogin
-      ? await acquireManualLoginChromeForRun(userDataDir, config, logger, options.sessionId)
+      ? await acquireManualLoginChromeForRun(
+          userDataDir,
+          config,
+          logger,
+          options.sessionId,
+          {},
+          tabLease?.id,
+        )
       : {
           chrome: await launchChrome(
             {
@@ -1128,7 +1138,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     }
     throw error;
   }
-  const { chrome, reusedChrome } = acquiredChrome;
+  dedicatedBootstrap = acquiredChrome.bootstrap;
+  const { chrome } = acquiredChrome;
   const chromeHost = (chrome as unknown as { host?: string }).host ?? "127.0.0.1";
   if (manualLogin && chrome.port) {
     const startupReconciliation = await reconcileOwnedBrowserTargets({
@@ -2402,6 +2413,9 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       recoveryExpiresAt,
       reconcileNeeded: reconcileNeeded || undefined,
       controllerPid: process.pid,
+      browserRepairAttempted: dedicatedBootstrap?.repairAttempted || undefined,
+      browserRepairOutcome: dedicatedBootstrap?.repairOutcome,
+      browserRolloverPending: dedicatedBootstrap?.rolloverPending || undefined,
       ...proTimingRuntime,
     };
   } catch (error) {
@@ -2415,8 +2429,21 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           "Cloudflare challenge detected; closing Chrome and removing the copied profile because copy-profile runs cannot be retained.",
         );
         throw new BrowserAutomationError(
-          "Cloudflare challenge detected. Copy-profile runs cannot be retained; complete the check in the source Chrome profile, then rerun.",
-          { stage: "cloudflare-challenge", reattachable: false },
+          promptSubmitted
+            ? "Cloudflare challenge detected. Copy-profile runs cannot be retained; complete the check in the source Chrome profile, then use the recorded session state."
+            : "Oracle needs you to complete the ChatGPT verification in the source browser. The review has not been sent.",
+          {
+            stage: "cloudflare-challenge",
+            reattachable: false,
+            promptSubmitted,
+            ...(promptSubmitted
+              ? {}
+              : {
+                  externalDataSent: false,
+                  retrySafe: true,
+                  retryGuidance: "complete-verification",
+                }),
+          },
           normalizedError,
         );
       }
@@ -2446,11 +2473,17 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       logger("Cloudflare challenge detected; leaving browser open so you can complete the check.");
       logger(`Reuse this browser profile with: ${reuseProfileHint}`);
       throw new BrowserAutomationError(
-        "Cloudflare challenge detected. Complete the “Just a moment…” check in the open browser, then rerun.",
+        promptSubmitted
+          ? "ChatGPT verification interrupted the submitted review. Complete it in Oracle’s dedicated browser, then recover the existing session."
+          : "Oracle needs you to complete the ChatGPT verification in its dedicated browser. The review has not been sent.",
         {
           stage: "cloudflare-challenge",
           runtime,
           reuseProfileHint,
+          promptSubmitted,
+          ...(promptSubmitted
+            ? {}
+            : { externalDataSent: false, retrySafe: true, retryGuidance: "complete-verification" }),
         },
         normalizedError,
       );
@@ -2590,7 +2623,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       preserveBrowserOnError,
       usingCopiedProfile,
     });
-    let terminatedRecordedChrome = false;
+    let dedicatedChromeDrained = false;
     if (tabLease) {
       const handle = tabLease;
       if (isolatedTargetId && ownsTarget) {
@@ -2635,15 +2668,20 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         // Serialize the final drain with launch/reuse, then re-read the registry:
         // a new caller may have acquired a lease while this run was finishing.
         const cleanupLockTimeoutMs = Math.max(0, config.profileLockTimeoutMs ?? 0);
-        const cleanupProfileLock =
-          cleanupLockTimeoutMs > 0
-            ? await acquireProfileRunLock(userDataDir, {
-                timeoutMs: cleanupLockTimeoutMs,
-                logger,
-                sessionId: options.sessionId,
-              }).catch(() => null)
-            : null;
-        if (cleanupLockTimeoutMs > 0 && !cleanupProfileLock) {
+        if (cleanupLockTimeoutMs === 0) {
+          keepBrowserOpen = true;
+          await recordDedicatedChromeHold(
+            userDataDir,
+            "Profile locking is disabled; final browser drain was deferred.",
+          ).catch(() => undefined);
+          return;
+        }
+        const cleanupProfileLock = await acquireProfileRunLock(userDataDir, {
+          timeoutMs: cleanupLockTimeoutMs,
+          logger,
+          sessionId: options.sessionId,
+        }).catch(() => null);
+        if (!cleanupProfileLock) {
           keepBrowserOpen = true;
           logger(
             "[browser] Could not acquire the profile lock for final drain; leaving Chrome running.",
@@ -2658,6 +2696,10 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           if (activeLeaseAppeared) {
             keepBrowserOpen = true;
             logger("[browser] A new ChatGPT tab lease appeared; leaving shared Chrome running.");
+            await recordDedicatedChromeHold(
+              userDataDir,
+              "A new ChatGPT tab lease appeared during final drain.",
+            ).catch(() => undefined);
           } else {
             const reconciliation = releaseReconciliation;
             if (
@@ -2670,16 +2712,41 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
                 logger(
                   `[browser] ${reconciliation.protectedTargetIds.length} recoverable Oracle tab(s) still need Chrome; leaving it running.`,
                 );
+                await recordDedicatedChromeHold(
+                  userDataDir,
+                  "Recoverable Oracle targets still require this browser generation.",
+                ).catch(() => undefined);
               } else if (reconciliation?.unknownBlockingTargetIds.length) {
                 logger(
                   `[browser] ${reconciliation.unknownBlockingTargetIds.length} unowned page(s) remain; preserving the shared Chrome window.`,
                 );
+                await recordDedicatedChromeHold(
+                  userDataDir,
+                  "An unowned meaningful target prevents automatic browser drain.",
+                ).catch(() => undefined);
               }
-            } else if (reusedChrome && !connectionClosedUnexpectedly) {
-              terminatedRecordedChrome = await terminateRecordedChromeForProfile(
-                userDataDir,
+            } else if (!connectionClosedUnexpectedly) {
+              const maintenance = await drainDedicatedChromeIfIdle({
+                profileDir: userDataDir,
+                chromePath: config.chromePath,
                 logger,
-              ).catch(() => false);
+                protectedState: false,
+                lockHeld: true,
+              }).catch(() => null);
+              if (
+                !maintenance ||
+                maintenance.action === "block-human-action" ||
+                maintenance.action === "preserve-protected" ||
+                maintenance.termination?.status === "blocked" ||
+                maintenance.termination?.status === "failed"
+              ) {
+                keepBrowserOpen = true;
+                logger(
+                  "[browser] Dedicated Chrome did not drain with verified ownership; leaving it available for recovery.",
+                );
+              } else {
+                dedicatedChromeDrained = true;
+              }
             }
           }
         } finally {
@@ -2703,7 +2770,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     if (!keepBrowserOpen) {
       if (!connectionClosedUnexpectedly) {
         try {
-          if (!terminatedRecordedChrome) {
+          if (!manualLogin || !dedicatedChromeDrained) {
             await chrome.kill();
           }
         } catch {
@@ -2836,10 +2903,17 @@ async function waitForLogin({
     }
   }
   const setupCommand = formatManualLoginSetupCommand(profileDir ?? defaultManualLoginProfileDir());
-  throw new Error(
-    "Manual login mode timed out waiting for ChatGPT session. " +
-      `Browser mode is using Oracle's private Chrome for Testing profile at ${profileDir ?? "(default profile)"}, not your normal Chrome app or profile. ` +
-      `Run first-time setup, sign in there, then retry: ${setupCommand}`,
+  throw new BrowserAutomationError(
+    "Oracle needs you to complete the ChatGPT sign-in or verification in its dedicated browser. The review has not been sent.",
+    {
+      stage: "chatgpt-login",
+      code: "dedicated-browser-login-required",
+      promptSubmitted: false,
+      externalDataSent: false,
+      retrySafe: true,
+      retryGuidance: "complete-sign-in",
+      setupCommand,
+    },
   );
 }
 
@@ -2931,149 +3005,17 @@ export async function acquireManualLoginChromeForRun(
   config: ReturnType<typeof resolveBrowserConfig>,
   logger: BrowserLogger,
   sessionId?: string,
-  deps: {
-    maybeReuse?: typeof maybeReuseRunningChrome;
-    launch?: typeof launchChrome;
-    resolveDedicatedExecutable?: typeof resolveDedicatedBrowserExecutable;
-    assertReusedProcessIdentity?: typeof assertDedicatedBrowserProcessIdentity;
-  } = {},
-): Promise<{ chrome: BrowserChrome; reusedChrome: LaunchedChrome | null }> {
-  const maybeReuse = deps.maybeReuse ?? maybeReuseRunningChrome;
-  const launch = deps.launch ?? launchChrome;
-  const resolveDedicatedExecutable =
-    deps.resolveDedicatedExecutable ?? resolveDedicatedBrowserExecutable;
-  const assertReusedProcessIdentity =
-    deps.assertReusedProcessIdentity ?? assertDedicatedBrowserProcessIdentity;
-  const dedicatedExecutable = await resolveDedicatedExecutable(config.chromePath);
-  const lockTimeoutMs = Math.max(0, config.profileLockTimeoutMs ?? 0);
-  let launchLock: ProfileRunLock | null = null;
-
-  if (lockTimeoutMs > 0) {
-    launchLock = await acquireProfileRunLock(userDataDir, {
-      timeoutMs: lockTimeoutMs,
-      logger,
-      sessionId,
-    });
-  }
-
-  try {
-    const reusedChrome = await maybeReuse(userDataDir, logger, {
-      waitForPortMs: config.reuseChromeWaitMs,
-    });
-    if (reusedChrome && dedicatedExecutable) {
-      await assertReusedProcessIdentity(reusedChrome.pid, dedicatedExecutable);
-    }
-    const chrome =
-      reusedChrome ??
-      (await launch(
-        {
-          ...config,
-          chromePath: dedicatedExecutable ?? config.chromePath,
-          remoteChrome: config.remoteChrome,
-        },
-        userDataDir,
-        logger,
-      ));
-
-    // Persist while the launch lock is still held so parallel callers reuse
-    // this Chrome instead of racing to start another one on the same profile.
-    if (chrome.port) {
-      await writeDevToolsActivePort(userDataDir, chrome.port);
-      if (!reusedChrome && chrome.pid) {
-        await writeChromePid(userDataDir, chrome.pid);
-      }
-    }
-
-    return { chrome, reusedChrome };
-  } finally {
-    if (launchLock) {
-      await launchLock.release().catch(() => undefined);
-    }
-  }
-}
-
-async function maybeReuseRunningChrome(
-  userDataDir: string,
-  logger: BrowserLogger,
-  options: { waitForPortMs?: number; probe?: typeof verifyDevToolsReachable } = {},
-): Promise<LaunchedChrome | null> {
-  const waitForPortMs = Math.max(0, options.waitForPortMs ?? 0);
-  let port = await readDevToolsPort(userDataDir);
-  if (!port && waitForPortMs > 0) {
-    const deadline = Date.now() + waitForPortMs;
-    logger(`Waiting up to ${formatElapsed(waitForPortMs)} for shared Chrome to appear...`);
-    while (!port && Date.now() < deadline) {
-      await delay(250);
-      port = await readDevToolsPort(userDataDir);
-    }
-  }
-  let pid = await readChromePid(userDataDir);
-  if (port && !pid) {
-    const discovered = await findRunningChromeDebugTargetForProfile(userDataDir);
-    if (discovered?.port === port) {
-      pid = discovered.pid;
-      await writeChromePid(userDataDir, pid);
-    }
-  }
-  if (!port) {
-    const discovered = await findRunningChromeDebugTargetForProfile(userDataDir);
-    if (!discovered) {
-      if (pid) {
-        logger(
-          `No reachable Chrome DevTools target found for ${userDataDir}; clearing stale profile state before launching new Chrome.`,
-        );
-        await cleanupStaleProfileState(userDataDir, logger, {
-          lockRemovalMode: "if_oracle_pid_dead",
-        });
-      }
-      return null;
-    }
-    const discoveredProbe = await (options.probe ?? verifyDevToolsReachable)({
-      port: discovered.port,
-    });
-    if (!discoveredProbe.ok) {
-      logger(
-        `Discovered Chrome for ${userDataDir} on port ${discovered.port} but it was unreachable (${discoveredProbe.error}); launching new Chrome.`,
-      );
-      await cleanupStaleProfileState(userDataDir, logger, {
-        lockRemovalMode: "if_oracle_pid_dead",
-      });
-      return null;
-    }
-    await writeDevToolsActivePort(userDataDir, discovered.port);
-    await writeChromePid(userDataDir, discovered.pid);
-    port = discovered.port;
-    pid = discovered.pid;
-    logger(
-      `Discovered running Chrome for ${userDataDir}; reusing (DevTools port ${port}, pid ${pid})`,
-    );
-    return {
-      port,
-      pid,
-      kill: async () => {},
-      process: undefined,
-    } as unknown as LaunchedChrome;
-  }
-
-  const probe = await (options.probe ?? verifyDevToolsReachable)({ port });
-  if (!probe.ok) {
-    logger(
-      `DevToolsActivePort found for ${userDataDir} but unreachable (${probe.error}); launching new Chrome.`,
-    );
-    // Safe cleanup: remove stale DevToolsActivePort; only remove lock files if this was an Oracle-owned pid that died.
-    await cleanupStaleProfileState(userDataDir, logger, { lockRemovalMode: "if_oracle_pid_dead" });
-    return null;
-  }
-
-  logger(
-    `Found running Chrome for ${userDataDir}; reusing (DevTools port ${port}${pid ? `, pid ${pid}` : ""})`,
+  deps: Parameters<typeof acquireDedicatedChromeForRun>[1] = {},
+  currentLeaseId?: string,
+): Promise<{
+  chrome: BrowserChrome;
+  reusedChrome: LaunchedChrome | null;
+  bootstrap: DedicatedChromeBootstrapOutcome;
+}> {
+  return acquireDedicatedChromeForRun(
+    { profileDir: userDataDir, config, logger, sessionId, currentLeaseId },
+    deps,
   );
-  return {
-    port,
-    pid: pid ?? undefined,
-    kill: async () => {},
-    process: undefined,
-  } as unknown as LaunchedChrome;
 }
 
 async function runRemoteBrowserMode(
@@ -4203,27 +4145,22 @@ export {
   waitForAttachmentCompletion,
 } from "./pageActions.js";
 
-export async function maybeReuseRunningChromeForTest(
-  userDataDir: string,
-  logger: BrowserLogger,
-  options: { waitForPortMs?: number; probe?: typeof verifyDevToolsReachable } = {},
-): Promise<LaunchedChrome | null> {
-  return maybeReuseRunningChrome(userDataDir, logger, options);
-}
-
 export async function acquireManualLoginChromeForRunForTest(
   userDataDir: string,
   config: ReturnType<typeof resolveBrowserConfig>,
   logger: BrowserLogger,
   sessionId: string | undefined,
-  deps: {
-    maybeReuse?: typeof maybeReuseRunningChrome;
-    launch?: typeof launchChrome;
-    resolveDedicatedExecutable?: typeof resolveDedicatedBrowserExecutable;
-    assertReusedProcessIdentity?: typeof assertDedicatedBrowserProcessIdentity;
-  },
+  deps: Parameters<typeof acquireDedicatedChromeForRun>[1],
+  currentLeaseId?: string,
 ): Promise<{ chrome: BrowserChrome; reusedChrome: LaunchedChrome | null }> {
-  return acquireManualLoginChromeForRun(userDataDir, config, logger, sessionId, deps);
+  return acquireManualLoginChromeForRun(
+    userDataDir,
+    config,
+    logger,
+    sessionId,
+    deps,
+    currentLeaseId,
+  );
 }
 
 export function isWebSocketClosureError(error: Error): boolean {

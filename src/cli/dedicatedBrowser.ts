@@ -9,13 +9,11 @@ import {
   positionChromeWindowOffscreen,
 } from "../browser/chromeLifecycle.js";
 import { resolveBrowserConfig } from "../browser/config.js";
-import {
-  assertDedicatedBrowserProcessIdentity,
-  resolveDedicatedBrowserExecutable,
-} from "../browser/dedicatedBrowserBinary.js";
+import { resolveDedicatedBrowserExecutable } from "../browser/dedicatedBrowserBinary.js";
 import {
   assertManualLoginProfileReadyForRun,
   ensureDedicatedBrowserProfileDirectory,
+  isManualLoginProfileInitialized,
 } from "../browser/manualLoginProfile.js";
 import {
   ensureLoggedIn,
@@ -24,8 +22,10 @@ import {
   navigateToChatGPT,
 } from "../browser/pageActions.js";
 import {
+  acquireProfileRunLock,
   cleanupStaleProfileState,
   findRunningChromeForProfile,
+  isProcessAlive,
   verifyDevToolsReachable,
 } from "../browser/profileState.js";
 import type { BrowserLogger, ChromeClient } from "../browser/types.js";
@@ -34,6 +34,13 @@ import {
   reconcileBrowserTargets,
   type BrowserTargetReconciliationReceipt,
 } from "../browser/lifecycleReconciler.js";
+import {
+  healDedicatedChrome,
+  inspectDedicatedChromeState,
+  type DedicatedChromeInspection,
+  type DedicatedChromeMaintenanceReceipt,
+} from "../browser/dedicatedChromeSupervisor.js";
+import { readBrowserTargetRegistry } from "../browser/tabLeaseRegistry.js";
 
 export interface DedicatedBrowserSetupOptions {
   profileDir: string;
@@ -57,6 +64,34 @@ export interface DedicatedBrowserReconcileOptions {
   includeUntrackedChatgpt?: boolean;
   json?: boolean;
   verbose?: boolean;
+}
+
+export interface DedicatedBrowserStatusOptions {
+  profileDir: string;
+  chromePath?: string;
+  json?: boolean;
+  verbose?: boolean;
+}
+
+export interface DedicatedBrowserHealOptions extends DedicatedBrowserStatusOptions {
+  plan?: boolean;
+}
+
+export interface DedicatedBrowserStatusResult {
+  dedicatedBrowser: "ready" | "unavailable" | "ambiguous";
+  generation: "current" | "compatible update pending" | "unavailable" | "ambiguous";
+  consultations: { active: number; recoverable: number };
+  actionRequired: "none" | "sign in" | "close unverified browser";
+  promptSubmitted: false;
+  inspection?: DedicatedChromeInspection;
+  error?: string;
+}
+
+export interface DedicatedBrowserHealResult {
+  status: DedicatedBrowserStatusResult;
+  reconciliation?: BrowserTargetReconciliationReceipt;
+  repair: DedicatedChromeMaintenanceReceipt;
+  promptSubmitted: false;
 }
 
 interface DedicatedBrowserSmokeCycle {
@@ -329,33 +364,191 @@ export async function runDedicatedBrowserSmoke(
   };
 }
 
+interface DedicatedBrowserStatusDeps {
+  inspect?: typeof inspectDedicatedChromeState;
+  readRegistry?: typeof readBrowserTargetRegistry;
+  profileInitialized?: typeof isManualLoginProfileInitialized;
+  processAlive?: typeof isProcessAlive;
+}
+
+async function consultationCounts(
+  profileDir: string,
+  deps: DedicatedBrowserStatusDeps = {},
+): Promise<{ active: number; recoverable: number }> {
+  const registry = await (deps.readRegistry ?? readBrowserTargetRegistry)(profileDir);
+  const alive = deps.processAlive ?? isProcessAlive;
+  const now = Date.now();
+  return {
+    active: registry.leases.filter((lease) => alive(lease.pid)).length,
+    recoverable: registry.targets.filter((target) => {
+      if (target.disposition !== "recoverable") return false;
+      const expiry = Date.parse(target.recoveryExpiresAt ?? "");
+      return !Number.isFinite(expiry) || expiry > now;
+    }).length,
+  };
+}
+
+function statusFromInspection(
+  inspection: DedicatedChromeInspection,
+  counts: { active: number; recoverable: number },
+  initialized: boolean,
+): DedicatedBrowserStatusResult {
+  const ambiguous = inspection.state === "ambiguous";
+  return {
+    dedicatedBrowser: ambiguous ? "ambiguous" : initialized ? "ready" : "unavailable",
+    generation: ambiguous
+      ? "ambiguous"
+      : inspection.state === "healthy-managed-compatible"
+        ? "compatible update pending"
+        : inspection.configuredExecutablePath
+          ? "current"
+          : "unavailable",
+    consultations: counts,
+    actionRequired: ambiguous ? "close unverified browser" : initialized ? "none" : "sign in",
+    promptSubmitted: false,
+    inspection,
+  };
+}
+
+export async function runDedicatedBrowserStatus(
+  options: DedicatedBrowserStatusOptions,
+  deps: DedicatedBrowserStatusDeps = {},
+): Promise<DedicatedBrowserStatusResult> {
+  const counts = await consultationCounts(options.profileDir, deps);
+  const initialized = await (deps.profileInitialized ?? isManualLoginProfileInitialized)(
+    options.profileDir,
+  );
+  try {
+    const inspection = await (deps.inspect ?? inspectDedicatedChromeState)({
+      profileDir: options.profileDir,
+      chromePath: options.chromePath,
+    });
+    return statusFromInspection(inspection, counts, initialized);
+  } catch (error) {
+    return {
+      dedicatedBrowser: "unavailable",
+      generation: "unavailable",
+      consultations: counts,
+      actionRequired: initialized ? "none" : "sign in",
+      promptSubmitted: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+interface DedicatedBrowserHealDeps extends DedicatedBrowserStatusDeps {
+  reconcile?: typeof reconcileBrowserTargets;
+  heal?: typeof healDedicatedChrome;
+  acquireLock?: typeof acquireProfileRunLock;
+}
+
+export async function runDedicatedBrowserHeal(
+  options: DedicatedBrowserHealOptions,
+  deps: DedicatedBrowserHealDeps = {},
+): Promise<DedicatedBrowserHealResult> {
+  const logger = createLogger(options.verbose);
+  const statusBefore = await runDedicatedBrowserStatus(options, deps);
+  const inspection = statusBefore.inspection;
+  if (!inspection) {
+    return {
+      status: statusBefore,
+      repair: {
+        mode: "heal",
+        planOnly: Boolean(options.plan),
+        action: "no-op",
+        stateBefore: "absent",
+        changed: false,
+        protectedState: false,
+        reason: statusBefore.error ?? "Dedicated browser is unavailable.",
+      },
+      promptSubmitted: false,
+    };
+  }
+
+  let lock: Awaited<ReturnType<typeof acquireProfileRunLock>> = null;
+  if (!options.plan) {
+    lock = await (deps.acquireLock ?? acquireProfileRunLock)(options.profileDir, {
+      timeoutMs: 30_000,
+      logger: options.verbose ? logger : undefined,
+      sessionId: "browser-heal",
+    });
+  }
+  try {
+    const inspectionForHeal = options.plan
+      ? inspection
+      : await (deps.inspect ?? inspectDedicatedChromeState)({
+          profileDir: options.profileDir,
+          chromePath: options.chromePath,
+        });
+    let reconciliation: BrowserTargetReconciliationReceipt | undefined;
+    if (inspectionForHeal.endpointReachable && inspectionForHeal.debugPort) {
+      reconciliation = await (deps.reconcile ?? reconcileBrowserTargets)({
+        profileDir: options.profileDir,
+        host: "127.0.0.1",
+        port: inspectionForHeal.debugPort,
+        logger,
+        apply: !options.plan,
+        includeUntrackedChatgpt: false,
+        ensureSentinel: false,
+      });
+    }
+    const counts = await consultationCounts(options.profileDir, deps);
+    const protectedState = Boolean(
+      counts.active > 0 ||
+      counts.recoverable > 0 ||
+      reconciliation?.protectedTargetIds.length ||
+      reconciliation?.unknownBlockingTargetIds.length,
+    );
+    const repair = await (deps.heal ?? healDedicatedChrome)({
+      profileDir: options.profileDir,
+      chromePath: options.chromePath,
+      logger,
+      protectedState,
+      protectedReason: protectedState
+        ? "An active, recoverable, or unowned meaningful target prevents browser repair."
+        : undefined,
+      planOnly: Boolean(options.plan),
+      lockHeld: Boolean(lock),
+    });
+    return {
+      status: options.plan ? statusBefore : await runDedicatedBrowserStatus(options, deps),
+      reconciliation,
+      repair,
+      promptSubmitted: false,
+    };
+  } finally {
+    await lock?.release().catch(() => undefined);
+  }
+}
+
 export async function runDedicatedBrowserReconcile(
   options: DedicatedBrowserReconcileOptions,
 ): Promise<BrowserTargetReconciliationReceipt> {
   const logger = createLogger(options.verbose);
-  const running = await findRunningChromeForProfile(options.profileDir);
-  if (!running?.port) {
+  const inspection = await inspectDedicatedChromeState({
+    profileDir: options.profileDir,
+    chromePath: options.chromePath,
+  });
+  if (!inspection.observed || !inspection.debugPort || !inspection.endpointReachable) {
     throw new Error(
       `No running Chrome DevTools process owns the exact profile ${options.profileDir}. ` +
         "This command never targets attach-running, remote, everyday, or another Chrome profile.",
     );
   }
-  if (options.port && options.port !== running.port) {
+  if (inspection.ownership === "foreign-or-ambiguous") {
     throw new Error(
-      `Profile ${options.profileDir} is running on DevTools port ${running.port}, not requested port ${options.port}.`,
+      "Oracle found an unverified browser using its dedicated profile. No targets were changed.",
     );
   }
-  const executablePath = await resolveDedicatedBrowserExecutable(options.chromePath);
-  if (!executablePath) {
+  if (options.port && options.port !== inspection.debugPort) {
     throw new Error(
-      "No configured Chrome for Testing executable was found; refusing browser target reconciliation.",
+      `Profile ${options.profileDir} is running on DevTools port ${inspection.debugPort}, not requested port ${options.port}.`,
     );
   }
-  await assertDedicatedBrowserProcessIdentity(running.pid, executablePath);
   return reconcileBrowserTargets({
     profileDir: options.profileDir,
     host: "127.0.0.1",
-    port: running.port,
+    port: inspection.debugPort,
     logger,
     apply: options.apply === true,
     includeUntrackedChatgpt: options.includeUntrackedChatgpt === true,
@@ -390,6 +583,54 @@ export function printDedicatedBrowserReconcileResult(
     lines.push("No targets were changed. Pass --apply to execute this exact-profile policy.");
   }
   process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+export function printDedicatedBrowserStatusResult(
+  result: DedicatedBrowserStatusResult,
+  json = false,
+): void {
+  if (json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(
+    [
+      `Dedicated browser: ${result.dedicatedBrowser}`,
+      `Generation: ${result.generation}`,
+      `Consultations: active ${result.consultations.active}, recoverable ${result.consultations.recoverable}`,
+      `Action required: ${result.actionRequired}`,
+    ].join("\n") + "\n",
+  );
+}
+
+export function printDedicatedBrowserHealResult(
+  result: DedicatedBrowserHealResult,
+  json = false,
+): void {
+  if (json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  const repair = result.repair;
+  if (repair.planOnly) {
+    process.stdout.write(`Dedicated browser heal plan: ${repair.action}. No changes made.\n`);
+    return;
+  }
+  if (repair.action === "block-human-action") {
+    process.stdout.write(
+      "Oracle found an unverified browser using its dedicated profile. No repair was attempted.\n",
+    );
+    return;
+  }
+  if (repair.action === "preserve-protected") {
+    process.stdout.write(
+      "Oracle kept the dedicated browser running for active or recoverable work. No prompt was sent.\n",
+    );
+    return;
+  }
+  process.stdout.write(
+    `${repair.changed ? "Oracle’s dedicated browser state was repaired." : "Oracle’s dedicated browser is already ready."} No prompt was sent.\n`,
+  );
 }
 
 export function printDedicatedBrowserSetupResult(

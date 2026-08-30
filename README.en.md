@@ -56,10 +56,11 @@ Install the official Chrome for Testing build and establish an Oracle-only brows
 ```bash
 oracle browser install
 oracle browser setup --use-mock-keychain
+oracle browser status
 oracle browser smoke
 ```
 
-`setup` is used only for the first human sign-in and does not expose a CDP endpoint. The command returns after the entire Chrome for Testing browser is closed. `smoke` performs two real cold starts and verifies persisted authentication, composer readiness, exact-target cleanup, and endpoint shutdown without submitting a prompt.
+`setup` is used only for the first human sign-in and does not expose a CDP endpoint. The command returns after the entire Chrome for Testing browser is closed. `status` provides a four-line health summary without requiring the operator to read a PID, port, or executable path. `smoke` performs two real cold starts and verifies persisted authentication, composer readiness, exact-target cleanup, and endpoint shutdown without submitting a prompt.
 
 On macOS, `--use-mock-keychain` is an explicit unattended-mode tradeoff. It prevents the isolated profile from repeatedly requesting access to everyday Chrome Safe Storage while weakening at-rest cookie protection for that profile. Keep the directory owner-only and ChatGPT-only.
 
@@ -117,6 +118,8 @@ The canonical lane in this fork uses two isolation boundaries together:
 
 Ordinary runs expose CDP only on `127.0.0.1` and manage pages by exact target ID. Oracle never points its launcher at the default personal Chrome profile and does not depend on the recurring Allow dialog used when an agent connects to everyday Chrome.
 
+After installation and the first sign-in, Oracle also owns the dedicated browser process lifecycle. A healthy older managed Chrome for Testing generation can finish current work and roll over automatically when idle. Stale PID, port, and lock metadata, plus verified ghost processes, are repaired before send or after the final lease releases. For human diagnostics, start with `oracle browser status`, then preview an explicit repair with `oracle browser heal --plan`; ordinary consultations do not require the operator to manage these internals.
+
 See [Dedicated Chrome transport](docs/dedicated-chrome.md) for the full lifecycle, privacy, and verification contract.
 
 <!-- readme-sync:trust -->
@@ -127,7 +130,7 @@ See [Dedicated Chrome transport](docs/dedicated-chrome.md) for the full lifecycl
 | ---------------------------------- | ------------------ | ---------------------------------------------------------------------------------------- |
 | Prompt and selected files          | Oracle             | Assemble locally and send only explicitly selected context                               |
 | Session truth                      | Oracle             | Persist dispatch, conversation, answer, artifacts, and lineage                           |
-| Browser process                    | Oracle             | Launch the isolated profile, bind only loopback CDP, and clean up exact owned targets    |
+| Browser process                    | Oracle             | Supervise managed generations, bind only loopback CDP, and drain exact owned idle state  |
 | Remote service                     | Host operator      | Client describes the conversation; host owns executable, profile, transport, and cookies |
 | App identity                       | Chrome for Testing | Keep Oracle processes separate from everyday Chrome                                      |
 | Browser data                       | Dedicated profile  | Separate ChatGPT login state from personal browsing and other accounts                   |

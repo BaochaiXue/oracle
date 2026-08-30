@@ -271,12 +271,27 @@ derives the HTTP timeout unless `--http-timeout` is supplied.
   terminal owned targets, coalesces blank sentinels, and reports a durable
   `complete`, `partial`, or `failed` receipt without holding the lease registry
   during CDP work. `persistent` is an explicit always-on mode.
+- Oracle owns the dedicated Chrome process lifecycle after one-time setup. A
+  healthy older managed generation may finish current work with rollover
+  pending; the final idle release drains it. Startup repairs stale PID/port/
+  lock metadata and a verified unusable managed process once before Send.
+  Check `oracle browser status`; use `oracle browser heal --plan` and then
+  `oracle browser heal` only for explicit no-prompt maintenance. Both preserve
+  active/recoverable work and refuse foreign, everyday, attach-running, remote,
+  or ambiguous owners.
 - Diagnose retained tabs with `oracle browser reconcile-tabs --plan`. Apply
   ordinary owned/blank cleanup with `--apply`; add
   `--include-untracked-chatgpt` only when the operator explicitly intends to
   purge historical ChatGPT pages from Oracle's verified exact local Chrome for
   Testing profile. Never use that mode for attach-running, remote, everyday, or
   another Chrome profile.
+- Keep caller-facing output task-level by default: preparing, sent, waiting,
+  and complete, plus a repair phase only when one actually occurs. If browser
+  startup fails before a verified Send, say that the review was not sent and
+  preserve `promptSubmitted:false`; do not describe it as a started independent
+  review, expose PID/port/executable/receipt internals, write private
+  continuity, or launch a duplicate consultation merely to make the failure
+  look complete.
 - For direct-CDP Pro runs, trust is turn-scoped. The active turn must have its
   own dispatch/elapsed/workload receipt, a verified commit, and a normalized
   prompt digest bound to the exact committed user-turn index. Reattach accepts

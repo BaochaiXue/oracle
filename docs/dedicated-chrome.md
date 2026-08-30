@@ -11,6 +11,10 @@ The operator signs in once. Ordinary consultations can then start, wait,
 recover, and finish without attaching to the operator's personal Chrome or
 asking for a new debugging approval on every connection.
 
+Oracle owns both the exact consultation targets and the managed Chrome process
+lifecycle. The operator does not need to reconcile PID files, DevTools ports,
+or installed executable paths during ordinary use.
+
 ```text
                          local machine
 ┌──────────────────────────────────────────────────────────────┐
@@ -111,6 +115,10 @@ sync data or run unrelated extensions. Keep this profile narrowly scoped: do
 not use it as a general browser and do not sign unrelated accounts into it.
 Close the Chrome for Testing browser after sign-in so the cold-start validation
 can own the profile exclusively. Closing a single tab is insufficient.
+
+After the first sign-in, `oracle browser status` reports the supported
+operator-facing state without exposing PID, port, or executable details by
+default. Use `--json` when those diagnostics are genuinely needed.
 
 On macOS, the Chrome for Testing app identity does not own everyday Chrome's
 `Chrome Safe Storage` Keychain ACL. System-Keychain mode can therefore ask for
@@ -263,14 +271,65 @@ The launcher adds `--remote-debugging-address=127.0.0.1`. A caller-specific WSL
 route may override that address as part of the separately documented host
 bridge, but local dedicated Chrome never defaults to `0.0.0.0`.
 
+## Managed process supervision and rollover
+
+Three entrypoints share one dedicated-browser supervisor: consultation
+startup, the final tab-lease release, and explicit `oracle browser heal`.
+Under the profile lock it binds process identity and start time to the exact
+profile, Chrome for Testing executable generation, and loopback DevTools port.
+The owner-only runtime receipt is diagnostic evidence; it is not a reason for
+the operator to manage the browser by hand.
+
+At startup Oracle applies one bounded decision:
+
+- reuse a healthy current generation;
+- reuse a healthy older installed or receipt-backed Chrome for Testing
+  generation and mark rollover pending;
+- clear stale PID, port, receipt, and Chromium lock metadata when no live owner
+  exists;
+- terminate a verified managed process whose endpoint is unusable, then launch
+  the current generation; or
+- fail closed before Send when the profile owner is foreign, everyday,
+  attach-running, remote, or otherwise ambiguous.
+
+After at most one safe repair Oracle re-inspects the profile. If the state is
+still inconsistent, it stops with `promptSubmitted:false`,
+`externalDataSent:false`, and a plain statement that the review was not sent.
+It never starts a second consultation to work around browser repair.
+
+When the final lease releases, target reconciliation runs first. Active leases,
+bounded recovery holds, and unowned meaningful pages preserve the existing
+process and generation. Otherwise Oracle drains the verified idle browser,
+which also completes a pending generation rollover. Termination attempts
+`Browser.close` over CDP, then revalidates the same PID/start-time/profile/
+executable/port identity before `SIGTERM` and, only if still necessary,
+`SIGKILL`. Success requires both the process and endpoint to be gone. Cleanup
+removes only runtime metadata and Chromium lock files; the persistent profile,
+cookies, login state, history, and user data remain intact.
+
+The normal operator surface is deliberately small:
+
+```bash
+oracle browser status
+oracle browser heal --plan
+oracle browser heal
+```
+
+`status` reports readiness, generation (`current` or `compatible update
+pending`), active/recoverable consultation counts, and any human action.
+`heal --plan` changes nothing. `heal` submits no prompt, preserves protected
+work, and refuses an unverified owner. `oracle browser reconcile-tabs` remains
+the advanced exact-target hygiene surface rather than a prerequisite for
+ordinary consultations.
+
 ## Dispatch and recovery lifecycle
 
 For a normal Pro consultation Oracle:
 
 1. resolves and validates the authorized prompt/file bundle;
 2. acquires a tab lease for the dedicated profile;
-3. discovers a reachable Chrome already using that exact profile or launches
-   one new process;
+3. asks the shared supervisor to reuse, repair, roll over, or launch the exact
+   managed profile before any prompt data is sent;
 4. creates and records an owned target without activating the browser window,
    preserving the exact creation-time CDP target ID for its full lifetime;
 5. verifies ChatGPT login, model `GPT-5.6 Sol`, and reasoning tier `Pro`;
@@ -285,10 +344,12 @@ For a normal Pro consultation Oracle:
 10. captures Markdown and local artifacts;
 11. closes its owned target after the browser turn is terminal, including when
     later evidence/admission rejects the captured result; retains that target
-    only when the browser turn is genuinely incomplete/recoverable; and leaves the shared dedicated
-    Chrome process running by default. Final-release and startup reconciliation
-    close terminal owned targets and coalesce duplicate blank pages, while
-    preserving untracked ChatGPT conversations during ordinary operation.
+    only when the browser turn is genuinely incomplete/recoverable; then, after
+    the last lease releases, drains the verified idle Chrome or preserves it
+    for active, recoverable, or unowned meaningful work. Final-release and
+    startup reconciliation close terminal owned targets and coalesce duplicate
+    blank pages while preserving untracked ChatGPT conversations during
+    ordinary operation.
 
 ## Target reconciliation
 
@@ -308,7 +369,8 @@ recoverable sessions. It also preserves every untracked ChatGPT page.
 
 `--include-untracked-chatgpt` is an explicit historical-tab purge. It is accepted
 only after Oracle proves that the live loopback DevTools process owns the exact
-configured dedicated profile and is the configured Chrome for Testing binary.
+configured dedicated profile and is a current or compatible managed Chrome for
+Testing generation.
 It is never applied to `--browser-attach-running`, remote Chrome, everyday
 Chrome, or another profile.
 
@@ -489,6 +551,12 @@ oracle browser smoke --json
 
 The automated suite covers:
 
+- managed current/compatible/foreign ownership classification and pure
+  startup/heal/drain planning;
+- stale PID, port, receipt, and lock recovery without deleting profile data;
+- verified CDP → SIGTERM → SIGKILL escalation with ownership revalidation;
+- active/recoverable preservation, idle rollover, concurrent startup locking,
+  and concise status/heal output;
 - dedicated-profile defaults and disabling personal cookie sync;
 - owner-only profile-root creation;
 - loopback debugging address on Oracle-launched Chrome;

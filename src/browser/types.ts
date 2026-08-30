@@ -197,6 +197,9 @@ export interface BrowserRunResult {
   recoveryExpiresAt?: string;
   reconcileNeeded?: boolean;
   controllerPid?: number;
+  browserRepairAttempted?: boolean;
+  browserRepairOutcome?: string;
+  browserRolloverPending?: boolean;
   proDispatchAt?: string;
   proResponseElapsedMs?: number;
   proInputTokens?: number;

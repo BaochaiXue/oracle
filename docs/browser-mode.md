@@ -404,9 +404,10 @@ oracle browser smoke
 - The profile root is created with owner-only permissions on Unix-like systems.
 - Cookie copy from personal Chrome is disabled. Login state is created inside
   the dedicated profile by the operator.
-- Normal runs reuse that profile and keep its shared Chrome process open by
-  default. A run owns its tab, not manually opened or concurrently generating
-  tabs in the same window.
+- Normal runs reuse that profile while work needs it. A run owns its tab, not
+  manually opened or concurrently generating tabs in the same window. After
+  the final lease release, Oracle preserves active, recoverable, and unowned
+  meaningful work; otherwise the verified idle process drains automatically.
 - `browser.hideWindow:false` keeps ordinary macOS runs visible and manually
   recoverable without activating the window or taking keyboard focus. Cold
   starts use LaunchServices background-open semantics; later targets use
@@ -419,6 +420,11 @@ oracle browser smoke
   after changing the mode.
 - Oracle automatically discovers and reuses a reachable DevTools endpoint for
   the exact profile. Do not add `--remote-chrome` merely to reuse Oracle Chrome.
+- A healthy older installed Chrome for Testing generation remains reusable for
+  current work and rolls over after the profile becomes idle. Stale metadata
+  and a verified unusable managed process are repaired before Send. Inspect
+  the concise state with `oracle browser status`; use `oracle browser heal
+--plan` and then `oracle browser heal` only for an explicit no-prompt repair.
 - A non-setup run fails fast with `oracle browser setup` guidance when the
   profile has never been initialized.
 - Remote Chrome has its own profile/network authority and participates in tab

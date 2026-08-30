@@ -24,7 +24,7 @@ import { resolveBrowserConfig } from "./config.js";
 import { clearStaleChatGptConversationCookies, syncCookies } from "./cookies.js";
 import { CHATGPT_URL } from "./constants.js";
 import { buildConversationTurnListExpression } from "./conversationTurns.js";
-import { cleanupStaleProfileState } from "./profileState.js";
+import { acquireProfileRunLock } from "./profileState.js";
 import { readDevToolsActivePortInfo } from "./detect.js";
 import {
   pickTarget,
@@ -49,8 +49,17 @@ import {
   hasProResponseTimingReceiptMarker,
   verifyStoredProResponseWorkloadTiming,
 } from "./proResponseTiming.js";
-import { acquireBrowserTabLease, type BrowserTabLease } from "./tabLeaseRegistry.js";
+import {
+  acquireBrowserTabLease,
+  hasOtherActiveBrowserTabLeases,
+  type BrowserTabLease,
+} from "./tabLeaseRegistry.js";
 import { reconcileBrowserTargets } from "./lifecycleReconciler.js";
+import {
+  acquireDedicatedChromeForRun,
+  drainDedicatedChromeIfIdle,
+  recordDedicatedChromeHold,
+} from "./dedicatedChromeSupervisor.js";
 
 export interface ReattachDeps {
   listTargets?: () => Promise<TargetInfoLite[]>;
@@ -349,7 +358,17 @@ async function resumeBrowserSessionViaNewChrome(
   });
   let chrome: Awaited<ReturnType<typeof launchChrome>>;
   try {
-    chrome = await launchChrome(resolved, userDataDir, logger);
+    chrome = manualLogin
+      ? (
+          await acquireDedicatedChromeForRun({
+            profileDir: userDataDir,
+            config: resolved,
+            logger,
+            sessionId: deps.sessionId,
+            currentLeaseId: tabLease?.id,
+          })
+        ).chrome
+      : await launchChrome(resolved, userDataDir, logger);
   } catch (error) {
     const handle = tabLease;
     tabLease = null;
@@ -431,12 +450,13 @@ async function resumeBrowserSessionViaNewChrome(
       recoveryExpiresAt,
     });
     let reconciliationFailed = false;
+    let dedicatedChromeDrained = false;
     const handle = tabLease;
     tabLease = null;
     let releaseError: unknown;
     try {
       await handle?.release({
-        onRelease: async () => {
+        onRelease: async ({ isLastLease }) => {
           const receipt = await reconcileBrowserTargets({
             profileDir: userDataDir,
             host: chromeHost,
@@ -446,6 +466,68 @@ async function resumeBrowserSessionViaNewChrome(
             ensureSentinel: Boolean(resolved.keepBrowser || disposition === "recoverable"),
           });
           reconciliationFailed = reconciliationFailed || receipt.status !== "complete";
+          if (!manualLogin || reconciliationFailed) return;
+          const protectedState =
+            disposition === "recoverable" ||
+            Boolean(resolved.keepBrowser) ||
+            !isLastLease ||
+            receipt.protectedTargetIds.length > 0 ||
+            receipt.unknownBlockingTargetIds.length > 0;
+          if (protectedState) {
+            await recordDedicatedChromeHold(
+              userDataDir,
+              disposition === "recoverable"
+                ? "The reattached consultation remains recoverable."
+                : "Another lease or meaningful target prevents reattach drain.",
+              recoveryExpiresAt,
+            ).catch(() => undefined);
+            return;
+          }
+          const lockTimeoutMs = Math.max(0, resolved.profileLockTimeoutMs ?? 0);
+          if (lockTimeoutMs === 0) {
+            reconciliationFailed = true;
+            await recordDedicatedChromeHold(
+              userDataDir,
+              "Profile locking is disabled; reattach browser drain was deferred.",
+            ).catch(() => undefined);
+            return;
+          }
+          const profileLock = await acquireProfileRunLock(userDataDir, {
+            timeoutMs: lockTimeoutMs,
+            logger: logger.verbose ? logger : undefined,
+            sessionId: deps.sessionId,
+          }).catch(() => null);
+          if (!profileLock) {
+            reconciliationFailed = true;
+            return;
+          }
+          try {
+            const activeLeaseAppeared = handle
+              ? await hasOtherActiveBrowserTabLeases(userDataDir, handle.id).catch(() => true)
+              : true;
+            if (activeLeaseAppeared) {
+              await recordDedicatedChromeHold(
+                userDataDir,
+                "A new browser lease appeared during reattach drain.",
+              ).catch(() => undefined);
+              return;
+            }
+            const maintenance = await drainDedicatedChromeIfIdle({
+              profileDir: userDataDir,
+              chromePath: resolved.chromePath,
+              logger,
+              protectedState: false,
+              lockHeld: true,
+            });
+            dedicatedChromeDrained =
+              maintenance.action !== "block-human-action" &&
+              maintenance.action !== "preserve-protected" &&
+              maintenance.termination?.status !== "blocked" &&
+              maintenance.termination?.status !== "failed";
+            reconciliationFailed = reconciliationFailed || !dedicatedChromeDrained;
+          } finally {
+            await profileLock?.release().catch(() => undefined);
+          }
         },
       });
     } catch (error) {
@@ -461,10 +543,10 @@ async function resumeBrowserSessionViaNewChrome(
     );
     if (releaseError) throw releaseError;
     if (disposition === "completed" && !resolved.keepBrowser && !reconciliationFailed) {
-      await Promise.resolve(chrome.kill());
-      if (manualLogin) {
-        await cleanupStaleProfileState(userDataDir, logger, { lockRemovalMode: "never" });
-      } else {
+      if (!manualLogin || !dedicatedChromeDrained) {
+        await Promise.resolve(chrome.kill());
+      }
+      if (!manualLogin) {
         await rm(userDataDir, { recursive: true, force: true });
       }
     }

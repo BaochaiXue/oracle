@@ -10,8 +10,13 @@ import {
 } from "./index.js";
 import { isRecoverableChatGptConversationUrl } from "./reattachability.js";
 import { harvestChatGptTab, openChatGptTarget } from "./liveTabs.js";
-import { acquireBrowserTabLease } from "./tabLeaseRegistry.js";
+import { acquireBrowserTabLease, hasOtherActiveBrowserTabLeases } from "./tabLeaseRegistry.js";
 import { reconcileBrowserTargets } from "./lifecycleReconciler.js";
+import { acquireProfileRunLock } from "./profileState.js";
+import {
+  drainDedicatedChromeIfIdle,
+  recordDedicatedChromeHold,
+} from "./dedicatedChromeSupervisor.js";
 
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
 const READY_POLL_MS = 1_000;
@@ -37,6 +42,10 @@ export interface RecoveryOwnershipDeps {
   acquireLease?: typeof acquireBrowserTabLease;
   reconcileTargets?: typeof reconcileBrowserTargets;
   persistRuntime?: typeof sessionStore.updateSession;
+  acquireProfileLock?: typeof acquireProfileRunLock;
+  hasOtherActiveLeases?: typeof hasOtherActiveBrowserTabLeases;
+  drainDedicatedChrome?: typeof drainDedicatedChromeIfIdle;
+  recordBrowserHold?: typeof recordDedicatedChromeHold;
 }
 
 /**
@@ -204,13 +213,93 @@ export async function recoverConversationTab(
   });
   let chrome: BrowserChrome;
   try {
-    ({ chrome } = await acquireManualLoginChromeForRun(userDataDir, config, logger, meta.id, {}));
+    ({ chrome } = await acquireManualLoginChromeForRun(
+      userDataDir,
+      config,
+      logger,
+      meta.id,
+      {},
+      lease.id,
+    ));
   } catch (error) {
     await lease.release();
     throw error;
   }
   const host = chrome.host ?? "127.0.0.1";
   const port = chrome.port;
+  const reconcileAndDrainAfterRelease = async (
+    leaseId: string,
+    disposition: "completed" | "recoverable",
+    ensureSentinel: boolean,
+    recoveryExpiresAt?: string,
+  ): Promise<{ reconciliationFailed: boolean; drained: boolean }> => {
+    const receipt = await (deps.reconcileTargets ?? reconcileBrowserTargets)({
+      profileDir: userDataDir,
+      host,
+      port,
+      logger,
+      apply: true,
+      ensureSentinel,
+    });
+    const reconciliationFailed = receipt.status !== "complete";
+    const protectedState = Boolean(
+      disposition === "recoverable" ||
+      receipt.protectedTargetIds?.length ||
+      receipt.unknownBlockingTargetIds?.length,
+    );
+    if (protectedState) {
+      await (deps.recordBrowserHold ?? recordDedicatedChromeHold)(
+        userDataDir,
+        disposition === "recoverable"
+          ? "The recovered consultation remains recoverable."
+          : "Another meaningful target prevents recovery-browser drain.",
+        recoveryExpiresAt,
+      ).catch(() => undefined);
+      return { reconciliationFailed, drained: false };
+    }
+
+    const lockTimeoutMs = Math.max(0, config.profileLockTimeoutMs ?? 0);
+    if (lockTimeoutMs === 0) {
+      await (deps.recordBrowserHold ?? recordDedicatedChromeHold)(
+        userDataDir,
+        "Profile locking is disabled; recovery-browser drain was deferred.",
+      ).catch(() => undefined);
+      return { reconciliationFailed, drained: false };
+    }
+    const profileLock = await (deps.acquireProfileLock ?? acquireProfileRunLock)(userDataDir, {
+      timeoutMs: lockTimeoutMs,
+      logger: logger.verbose ? logger : undefined,
+      sessionId: meta.id,
+    }).catch(() => null);
+    if (!profileLock) return { reconciliationFailed: true, drained: false };
+    try {
+      const activeLeaseAppeared = await (
+        deps.hasOtherActiveLeases ?? hasOtherActiveBrowserTabLeases
+      )(userDataDir, leaseId).catch(() => true);
+      if (activeLeaseAppeared) {
+        await (deps.recordBrowserHold ?? recordDedicatedChromeHold)(
+          userDataDir,
+          "A new browser lease appeared during recovery-browser drain.",
+        ).catch(() => undefined);
+        return { reconciliationFailed, drained: false };
+      }
+      const maintenance = await (deps.drainDedicatedChrome ?? drainDedicatedChromeIfIdle)({
+        profileDir: userDataDir,
+        chromePath: config.chromePath,
+        logger,
+        protectedState: false,
+        lockHeld: true,
+      });
+      const drained =
+        maintenance.action !== "block-human-action" &&
+        maintenance.action !== "preserve-protected" &&
+        maintenance.termination?.status !== "blocked" &&
+        maintenance.termination?.status !== "failed";
+      return { reconciliationFailed: reconciliationFailed || !drained, drained };
+    } finally {
+      await profileLock.release().catch(() => undefined);
+    }
+  };
 
   let recoveredTargetId: string | undefined;
   try {
@@ -297,20 +386,19 @@ export async function recoverConversationTab(
       });
       const handle = lease;
       let reconciliationFailed = false;
+      let dedicatedChromeDrained = false;
       let releaseError: unknown;
       try {
         await handle.release({
           onRelease: async () => {
-            const receipt = await (deps.reconcileTargets ?? reconcileBrowserTargets)({
-              profileDir: userDataDir,
-              host,
-              port,
-              logger,
-              apply: true,
-              ensureSentinel:
-                disposition === "recoverable" || finishOptions.ensureSentinel === true,
-            });
-            reconciliationFailed = receipt.status !== "complete";
+            const release = await reconcileAndDrainAfterRelease(
+              handle.id,
+              disposition,
+              disposition === "recoverable" || finishOptions.ensureSentinel === true,
+              recoveryExpiresAt,
+            );
+            reconciliationFailed = release.reconciliationFailed;
+            dedicatedChromeDrained = release.drained;
           },
         });
       } catch (error) {
@@ -340,6 +428,9 @@ export async function recoverConversationTab(
         });
       }
       if (releaseError) throw releaseError;
+      if (!dedicatedChromeDrained) {
+        chrome.process?.unref();
+      }
     };
 
     return { host, port, url, ref: targetId, chrome, finish };
@@ -347,15 +438,16 @@ export async function recoverConversationTab(
     let ownershipCleanupError: unknown;
     try {
       if (recoveredTargetId) await lease.setTargetDisposition("terminal");
-      await lease.release();
+      const handle = lease;
+      await handle.release({
+        onRelease: async () => {
+          await reconcileAndDrainAfterRelease(handle.id, "completed", false);
+        },
+      });
     } catch (cleanupError) {
       ownershipCleanupError = cleanupError;
     }
-    try {
-      chrome.kill();
-    } catch {
-      // best-effort cleanup
-    }
+    chrome.process?.unref();
     if (ownershipCleanupError) {
       throw new AggregateError(
         [error, ownershipCleanupError],

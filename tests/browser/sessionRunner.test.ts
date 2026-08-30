@@ -172,6 +172,7 @@ describe("runBrowserSessionExecution", () => {
           tookMs: 1000,
           answerTokens: 12,
           answerChars: 20,
+          promptSubmitted: true,
           modelSelection: {
             requestedModel: "GPT-5.5 Pro",
             resolvedLabel: "Pro",
@@ -190,9 +191,10 @@ describe("runBrowserSessionExecution", () => {
       resolvedLabel: "Pro",
       verified: true,
     });
-    expect(log).toHaveBeenCalledWith(
-      expect.stringContaining("Launching browser mode (target=GPT-5.5 Pro; requested=gpt-5.2-pro)"),
-    );
+    expect(log).toHaveBeenCalledWith("Preparing review…");
+    expect(log).toHaveBeenCalledWith("Review sent.");
+    expect(log).toHaveBeenCalledWith("Waiting for GPT-5.5 Pro…");
+    expect(log).toHaveBeenCalledWith("Review complete.");
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining(
         "[browser] Model selection evidence: requestedKey=gpt-5.2-pro; target=GPT-5.5 Pro; resolvedLabel=Pro",
@@ -772,13 +774,16 @@ describe("runBrowserSessionExecution", () => {
             tookMs: 1,
             answerTokens: 1,
             answerChars: 4,
+            promptSubmitted: true,
           };
         },
       },
     );
+    expect(log).toHaveBeenCalledWith("Preparing review…");
     expect(log.mock.calls.some((call) => /Launching browser mode/.test(String(call[0])))).toBe(
-      true,
+      false,
     );
+    expect(log).toHaveBeenCalledWith("Review sent.");
     expect(log.mock.calls.some((call) => /Prompt textarea ready/.test(String(call[0])))).toBe(
       false,
     );

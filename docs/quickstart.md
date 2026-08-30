@@ -56,6 +56,17 @@ browser. Setup waits for that exit. This profile is
 stored at `~/.oracle/browser-profile` by default. It is separate from personal
 Chrome and should contain only the browser state Oracle needs.
 
+Check the operator-facing state without inspecting browser internals:
+
+```bash
+oracle browser status
+```
+
+The default report names browser readiness, installed generation, active or
+recoverable consultations, and any human action required. PID, port,
+executable, and runtime-receipt details are available only through `--json` or
+verbose diagnostics.
+
 Validate the real steady-state lifecycle:
 
 ```bash
@@ -73,6 +84,20 @@ oracle browser smoke --port 9444
 
 Setup itself has no CDP port. Put the chosen smoke port in
 `browser.debugPort` for ordinary runs.
+
+After this one-time sign-in, Oracle owns normal process maintenance. It reuses
+a healthy managed generation, defers an installed-browser rollover until the
+profile is idle, clears stale PID/port/lock metadata, and drains a verified
+idle ghost process without deleting login data. If the summary requests
+attention, preview and then apply the bounded repair:
+
+```bash
+oracle browser heal --plan
+oracle browser heal
+```
+
+`heal` never submits a prompt. It preserves active and recoverable
+consultations and refuses to touch an unverified profile owner.
 
 Read [Dedicated Chrome transport](dedicated-chrome.md) for the exact trust and
 acceptance contract.
@@ -139,6 +164,12 @@ oracle --dry-run summary --files-report --engine browser \
   --file "src/storage/**/*.ts" \
   --file "!src/storage/**/*.test.ts"
 ```
+
+The ordinary terminal output stays at the task level: `Preparing review…`,
+`Review sent.`, `Waiting for GPT-5.6 Pro…`, and `Review complete.` A bounded
+self-repair adds only `Repairing Oracle’s dedicated browser…`. If startup
+cannot become safe before Send, Oracle says that the review was not sent and
+does not describe it as a started consultation.
 
 `gpt-5-pro` maps to the current browser lane: model `GPT-5.6 Sol` plus
 reasoning tier `Pro`. Oracle verifies both controls in the submission tab and

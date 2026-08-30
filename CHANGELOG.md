@@ -34,6 +34,15 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
 
 ### Fixed
 
+- Dedicated Chrome lifecycle: supervise current and older installed Chrome for
+  Testing generations through one startup/final-release/`browser heal` path.
+  Healthy old generations finish current work and roll over when idle; stale
+  PID/port/lock metadata and verified unreachable managed processes self-heal
+  before Send without deleting the persistent profile. Idle shutdown now uses
+  CDP, identity-revalidated signal escalation, and endpoint confirmation, while
+  active/recoverable or unverified owners remain untouched. Add concise
+  `oracle browser status` and plan-first `oracle browser heal`, and keep normal
+  review output at preparing/sent/waiting/complete phases.
 - Remote service: advertise only the bound loopback address when `oracle serve`
   listens on loopback instead of also printing unrelated LAN or tailnet
   addresses.

@@ -59,6 +59,7 @@ import type { BrowserSessionRunnerDeps } from "../src/browser/sessionRunner.js";
 import { isMediaFile } from "../src/browser/prompt.js";
 import { formatCompactNumber } from "../src/cli/format.js";
 import { formatIntroLine } from "../src/cli/tagline.js";
+import { shouldSuppressCliIntro } from "../src/cli/introPolicy.js";
 import { warnIfOversizeBundle } from "../src/cli/bundleWarnings.js";
 import { formatRenderedMarkdown } from "../src/cli/renderOutput.js";
 import { resolveRenderFlag, resolveRenderPlain } from "../src/cli/renderFlags.js";
@@ -328,16 +329,7 @@ function normalizePerfTraceArgs(args: string[]): {
   return { args: normalized, value };
 }
 
-const doctorArgIndex = routingCliArgs.indexOf("doctor");
-const doctorJsonRequested =
-  doctorArgIndex >= 0 && routingCliArgs.slice(doctorArgIndex).includes("--json");
-const docsArgIndex = routingCliArgs.indexOf("docs");
-const docsCheckRequested = docsArgIndex >= 0 && routingCliArgs[docsArgIndex + 1] === "check";
-const suppressIntro =
-  doctorJsonRequested ||
-  docsCheckRequested ||
-  (routingCliArgs[0] === "bridge" &&
-    (routingCliArgs[1] === "codex-config" || routingCliArgs[1] === "claude-config"));
+const suppressIntro = shouldSuppressCliIntro(routingCliArgs);
 
 const program = new Command();
 let introPrinted = false;
@@ -1135,6 +1127,67 @@ browserCommand
         commandOptions.useMockKeychain ?? userConfig.browser?.useMockKeychain ?? false,
     });
     printDedicatedBrowserSmokeResult(result, commandOptions.json);
+  });
+
+browserCommand
+  .command("status")
+  .description("Show concise health for Oracle's exact dedicated Chrome profile.")
+  .option(
+    "--profile-dir <path>",
+    "Dedicated Chrome user-data directory (default: browser.manualLoginProfileDir or ~/.oracle/browser-profile).",
+  )
+  .option("--chrome-path <path>", "Explicit Chrome for Testing executable path.")
+  .option("--json", "Print structured process and repair diagnostics.", false)
+  .option("-v, --verbose", "Show browser inspection details.", false)
+  .action(async (commandOptions) => {
+    const { printDedicatedBrowserStatusResult, runDedicatedBrowserStatus } =
+      await import("../src/cli/dedicatedBrowser.js");
+    const userConfig = (await loadUserConfig({ includeProject: false })).config;
+    const result = await runDedicatedBrowserStatus({
+      ...commandOptions,
+      profileDir: path.resolve(
+        commandOptions.profileDir ??
+          userConfig.browser?.manualLoginProfileDir ??
+          path.join(os.homedir(), ".oracle", "browser-profile"),
+      ),
+      chromePath: commandOptions.chromePath ?? userConfig.browser?.chromePath ?? undefined,
+    });
+    printDedicatedBrowserStatusResult(result, commandOptions.json);
+  });
+
+browserCommand
+  .command("heal")
+  .description("Repair verified stale or idle state for Oracle's exact dedicated Chrome profile.")
+  .option(
+    "--profile-dir <path>",
+    "Dedicated Chrome user-data directory (default: browser.manualLoginProfileDir or ~/.oracle/browser-profile).",
+  )
+  .option("--chrome-path <path>", "Explicit Chrome for Testing executable path.")
+  .option("--plan", "Show the safe repair action without changing browser state.", false)
+  .option("--json", "Print the structured repair receipt.", false)
+  .option("-v, --verbose", "Show browser inspection and repair details.", false)
+  .action(async (commandOptions) => {
+    const { printDedicatedBrowserHealResult, runDedicatedBrowserHeal } =
+      await import("../src/cli/dedicatedBrowser.js");
+    const userConfig = (await loadUserConfig({ includeProject: false })).config;
+    const result = await runDedicatedBrowserHeal({
+      ...commandOptions,
+      profileDir: path.resolve(
+        commandOptions.profileDir ??
+          userConfig.browser?.manualLoginProfileDir ??
+          path.join(os.homedir(), ".oracle", "browser-profile"),
+      ),
+      chromePath: commandOptions.chromePath ?? userConfig.browser?.chromePath ?? undefined,
+    });
+    printDedicatedBrowserHealResult(result, commandOptions.json);
+    if (
+      !commandOptions.plan &&
+      (result.repair.action === "block-human-action" ||
+        result.repair.termination?.status === "blocked" ||
+        result.repair.termination?.status === "failed")
+    ) {
+      process.exitCode = 1;
+    }
   });
 
 browserCommand

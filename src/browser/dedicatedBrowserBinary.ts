@@ -5,7 +5,6 @@ import { promisify } from "node:util";
 import type { BrowserPlatform, InstalledBrowser } from "@puppeteer/browsers";
 import { BrowserAutomationError } from "../oracle/errors.js";
 import { getOracleHomeDir } from "../oracleHome.js";
-import { readProcessCommand } from "./profileState.js";
 
 const execFileAsync = promisify(execFile);
 type PuppeteerBrowsersModule = typeof import("@puppeteer/browsers");
@@ -28,6 +27,12 @@ export interface DedicatedBrowserInstallReceipt {
   buildId: string;
   platform: string;
   cacheDir: string;
+  executablePath: string;
+}
+
+export interface InstalledDedicatedBrowser {
+  buildId: string;
+  platform: string;
   executablePath: string;
 }
 
@@ -185,16 +190,34 @@ export async function downloadArchiveWithResumeForTest(options: {
 export async function findInstalledDedicatedBrowser(
   cacheDir = defaultDedicatedBrowserCacheDir(),
 ): Promise<string | null> {
+  const installed = await listInstalledDedicatedBrowsers(cacheDir);
+  return installed[0]?.executablePath ?? null;
+}
+
+export async function listInstalledDedicatedBrowsers(
+  cacheDir = defaultDedicatedBrowserCacheDir(),
+): Promise<InstalledDedicatedBrowser[]> {
   const browserTools = await loadPuppeteerBrowsers();
   const versionComparator = browserTools.getVersionComparator(browserTools.Browser.CHROME);
   const installed = (await browserTools.getInstalledBrowsers({ cacheDir }))
     .filter((entry) => entry.browser === browserTools.Browser.CHROME)
     .sort((left, right) => versionComparator(right.buildId, left.buildId));
+  const result: InstalledDedicatedBrowser[] = [];
   for (const entry of installed) {
     const stat = await fs.stat(entry.executablePath).catch(() => null);
-    if (stat?.isFile()) return entry.executablePath;
+    if (!stat?.isFile()) continue;
+    try {
+      await assertDedicatedMacBrowserIdentity(entry.executablePath);
+    } catch {
+      continue;
+    }
+    result.push({
+      buildId: entry.buildId,
+      platform: entry.platform,
+      executablePath: entry.executablePath,
+    });
   }
-  return null;
+  return result;
 }
 
 export async function resolveDedicatedBrowserExecutable(
@@ -274,35 +297,6 @@ export function browserCommandUsesExecutable(
   if (!command) return false;
   const expected = path.resolve(executablePath);
   return command === expected || command.startsWith(`${expected} `);
-}
-
-export async function assertDedicatedBrowserProcessIdentity(
-  pid: number | undefined,
-  executablePath: string,
-): Promise<void> {
-  if (process.platform !== "darwin") return;
-  if (!pid) {
-    throw runningBrowserIdentityError(undefined, executablePath);
-  }
-  const command = await readProcessCommand(pid);
-  if (browserCommandUsesExecutable(command, executablePath)) return;
-  throw runningBrowserIdentityError(pid, executablePath);
-}
-
-function runningBrowserIdentityError(
-  pid: number | undefined,
-  executablePath: string,
-): BrowserAutomationError {
-  return new BrowserAutomationError(
-    "Refusing to reuse the Chrome process recorded for Oracle's dedicated profile because it was not launched from the configured dedicated browser executable. Close that browser and retry; Oracle will not attach to everyday Google Chrome.",
-    {
-      stage: "browser-app-identity",
-      code: "running-browser-app-identity-mismatch",
-      pid: pid ?? null,
-      executablePath,
-      retryGuidance: "close-mismatched-browser-and-retry",
-    },
-  );
 }
 
 function browserIdentityError(

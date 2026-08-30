@@ -3,7 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
-  assertDedicatedBrowserProcessIdentity,
   browserCommandUsesExecutable,
   downloadArchiveWithResumeForTest,
   findContainingAppBundle,
@@ -120,20 +119,5 @@ describe("dedicated browser application identity", () => {
         dedicatedExecutable,
       ),
     ).toBe(false);
-  });
-
-  test("fails closed when a macOS reusable process has no verifiable pid", async () => {
-    Object.defineProperty(process, "platform", { value: "darwin" });
-    await expect(
-      assertDedicatedBrowserProcessIdentity(
-        undefined,
-        "/tmp/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-      ),
-    ).rejects.toMatchObject({
-      details: expect.objectContaining({
-        code: "running-browser-app-identity-mismatch",
-        pid: null,
-      }),
-    });
   });
 });

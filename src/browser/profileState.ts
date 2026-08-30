@@ -166,30 +166,6 @@ export function findChromeForProfileFromProcessListForTest(
   return findChromeForProfileFromProcessList(processList, userDataDir);
 }
 
-export async function terminateRecordedChromeForProfile(
-  userDataDir: string,
-  logger?: ProfileStateLogger,
-): Promise<boolean> {
-  const pid = await readChromePid(userDataDir);
-  if (!pid || !isProcessAlive(pid)) {
-    return false;
-  }
-  const command = await readProcessCommand(pid);
-  if (!isChromeCommandForUserDataDir(command, userDataDir)) {
-    logger?.(`Recorded Chrome pid ${pid} does not match ${userDataDir}; skipping termination`);
-    return false;
-  }
-  try {
-    process.kill(pid, "SIGTERM");
-    logger?.(`Terminated shared manual-login Chrome pid ${pid}`);
-    return true;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger?.(`Failed to terminate shared manual-login Chrome pid ${pid}: ${message}`);
-    return false;
-  }
-}
-
 function isChromeCommandForUserDataDir(command: string | null, userDataDir: string): boolean {
   if (!command) return false;
   const lower = command.toLowerCase();

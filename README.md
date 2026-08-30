@@ -56,10 +56,11 @@ npm link
 ```bash
 oracle browser install
 oracle browser setup --use-mock-keychain
+oracle browser status
 oracle browser smoke
 ```
 
-`setup` 只用于首次人工登录，不开放 CDP endpoint。关闭整个 Chrome for Testing 后命令才会返回。`smoke` 会执行两次真实冷启动，核验登录持久化、composer readiness、exact-target cleanup 与 endpoint shutdown，全程不提交 prompt。
+`setup` 只用于首次人工登录，不开放 CDP endpoint。关闭整个 Chrome for Testing 后命令才会返回。`status` 给出无需读取 PID、port 或 executable path 的四行健康摘要。`smoke` 会执行两次真实冷启动，核验登录持久化、composer readiness、exact-target cleanup 与 endpoint shutdown，全程不提交 prompt。
 
 在 macOS 上，`--use-mock-keychain` 是显式 unattended-mode tradeoff。它避免独立 profile 反复请求日常 Chrome Safe Storage，同时降低该 profile 的静态 cookie 保护强度；请保持目录 owner-only，并只用于 ChatGPT。
 
@@ -117,6 +118,8 @@ oracle batch render <batch-id> --all
 
 普通运行只在 `127.0.0.1` 上开放 CDP，并以 exact target ID 管理自己创建的页面。Oracle 不会把 launcher 指向默认个人 Chrome profile，也不会依赖每次连接日常浏览器时出现的 Allow dialog。
 
+安装和首次登录之后，Oracle 也负责这份独立 browser 的 process lifecycle：旧的受管 Chrome for Testing generation 可以先完成当前工作，并在空闲时自动 rollover；stale PID、port、lock 与已验证的幽灵进程会在 send 前或最后一个 lease 释放后安全修复。需要人工诊断时先运行 `oracle browser status`，再用 `oracle browser heal --plan` 预览；普通咨询不要求操作者处理这些内部事实。
+
 完整 lifecycle、privacy 与 verification contract 见 [Dedicated Chrome transport](docs/dedicated-chrome.md)。
 
 <!-- readme-sync:trust -->
@@ -127,7 +130,7 @@ oracle batch render <batch-id> --all
 | ------------------ | ------------------ | ------------------------------------------------------------------------------- |
 | Prompt 与选定文件  | Oracle             | 本地组装，只发送明确选择的 context                                              |
 | Session truth      | Oracle             | 持久化 dispatch、conversation、answer、artifacts 与 lineage                     |
-| Browser process    | Oracle             | 启动独立 profile，只绑定 loopback CDP，并清理 exact owned target                |
+| Browser process    | Oracle             | 监督受管 generation，只绑定 loopback CDP，并清理 exact owned target 与空闲进程  |
 | Remote service     | Host operator      | Client 只描述 conversation；host 掌握 executable、profile、transport 与 cookies |
 | App identity       | Chrome for Testing | 不把 Oracle 进程注册成日常 Chrome                                               |
 | Browser data       | Dedicated profile  | 将 ChatGPT 登录状态与个人浏览、其他账户分离                                     |

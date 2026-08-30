@@ -137,6 +137,12 @@ export interface BrowserRuntimeMetadata {
   reconcileNeeded?: boolean;
   /** PID of the controller process that launched this browser run. Helps detect orphaned sessions. */
   controllerPid?: number;
+  /** Whether dedicated-browser bootstrap performed one bounded repair before dispatch. */
+  browserRepairAttempted?: boolean;
+  /** Structured outcome of dedicated-browser bootstrap repair or reuse. */
+  browserRepairOutcome?: string;
+  /** A healthy older managed Chrome generation is serving this run until the next idle drain. */
+  browserRolloverPending?: boolean;
   /** Dispatch timestamp used for transport-independent Pro response timing. */
   proDispatchAt?: string;
   /** First observed elapsed time from dispatch to a stable Pro answer. */
