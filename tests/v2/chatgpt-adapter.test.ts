@@ -8,7 +8,13 @@ import {
   OracleProviderFixture,
   type FixtureScenario,
 } from "../../apps/oracle-provider-fixture/src/index.js";
-import { ChatGptAdapter } from "../../packages/chatgpt-adapter/src/index.js";
+import {
+  ChatGptAdapter,
+  observeComposerControlSurface,
+  probeAttachmentWithoutSend,
+  probeLiveCompatibilityWithoutSend,
+  probeModelAndEffortControls,
+} from "../../packages/chatgpt-adapter/src/index.js";
 import { OracleClient } from "../../packages/oracle-client/src/index.js";
 import {
   JOB_SCHEMA_VERSION,
@@ -138,11 +144,15 @@ async function waitForTerminal(client: OracleClient, jobId: string, timeoutMs = 
 describe.skipIf(!executablePath)("Oracle v2 ChatGPT adapter against the provider fixture", () => {
   test("probes semantic capabilities and completes text and sealed-bundle jobs", async () => {
     const { adapter, client, paths, worker } = await harness("default");
-    expect(await client.getWorker()).toMatchObject({ ready: true, provider: "compatible" });
+    const initialWorker = await client.getWorker();
+    expect(initialWorker, JSON.stringify(initialWorker, null, 2)).toMatchObject({
+      ready: true,
+      provider: "compatible",
+    });
 
     const text = await admit(client, "text-job");
     const textResult = await waitForTerminal(client, text.job.id);
-    expect(textResult.state).toMatchObject({
+    expect(textResult.state, JSON.stringify(textResult.state, null, 2)).toMatchObject({
       kind: "completed",
       preparation: {
         model: { requested: "gpt-5.6-sol", verified: true },
@@ -273,8 +283,118 @@ describe.skipIf(!executablePath)("Oracle v2 ChatGPT adapter against the provider
   test("keeps Send disabled for an empty composer", async () => {
     const page = await browser.newPage();
     await page.goto(fixture.urlFor("empty-composer", "default"));
-    const send = page.getByRole("button", { name: /send prompt/i });
+    const send = page.locator('[data-testid="send-button"]');
     expect(await send.isDisabled()).toBe(true);
+    await page.close();
+  });
+
+  test("reports only sanitized composer controls and never composer contents", async () => {
+    const page = await browser.newPage();
+    await page.goto(fixture.urlFor("surface-observation", "default"));
+    await page.locator("#prompt-textarea").fill("private fixture text that must not escape");
+    await page.evaluate(() => {
+      const outsideMenu = document.createElement("button");
+      outsideMenu.setAttribute("aria-haspopup", "menu");
+      outsideMenu.setAttribute("aria-label", "private sidebar title that must not escape");
+      Object.defineProperty(outsideMenu, "textContent", {
+        configurable: true,
+        get() {
+          throw new Error("observer crossed the composer-form privacy boundary");
+        },
+      });
+      document.body.prepend(outsideMenu);
+    });
+    const observation = await observeComposerControlSurface(page);
+    const serialized = JSON.stringify(observation);
+    expect(serialized).not.toContain("private fixture text");
+    expect(serialized).not.toContain("private sidebar title");
+    expect(observation.composer).toMatchObject({ present: true, tag: "DIV" });
+    expect(observation.syntheticProbeAttachmentPresent).toBe(false);
+    expect(observation.syntheticProbeInputSelected).toBe(false);
+    expect(observation.composerButtons).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ testId: "composer-plus-btn" }),
+        expect.objectContaining({ testId: "send-button" }),
+      ]),
+    );
+    expect(observation.modelCandidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ testId: "model-switcher-dropdown-button" }),
+      ]),
+    );
+    expect(observation.modelSignals).toEqual(
+      expect.arrayContaining([expect.objectContaining({ observedLabel: "Pro" })]),
+    );
+    await page.close();
+  });
+
+  test("verifies GPT-5.6 Sol and Pro through the picker without Send", async () => {
+    const before = fixture.totalSendCount();
+    const page = await browser.newPage();
+    await page.goto(fixture.urlFor("model-no-send", "default"));
+    const result = await probeModelAndEffortControls(page, { timeoutMs: 5_000 });
+    expect(result).toMatchObject({
+      modelLabel: "GPT-5.6 Sol",
+      effortLabel: "Pro",
+      modelVerified: true,
+      effortVerified: true,
+      playwrightClickWorked: true,
+      promptSubmitted: false,
+    });
+    expect(fixture.totalSendCount()).toBe(before);
+    expect(await page.locator("#prompt-textarea").textContent()).toBe("");
+    await page.close();
+  });
+
+  test("uploads and removes a synthetic attachment without Send", async () => {
+    const before = fixture.totalSendCount();
+    const page = await browser.newPage();
+    await page.goto(fixture.urlFor("attachment-no-send", "default"));
+    await page.evaluate(() => {
+      const modal = document.createElement("div");
+      modal.id = "modal-conversation-history-rate-limit";
+      modal.dataset.testid = "modal-conversation-history-rate-limit";
+      modal.style.position = "fixed";
+      modal.style.inset = "0";
+      modal.style.zIndex = "1000";
+      modal.style.background = "white";
+      const close = document.createElement("button");
+      close.setAttribute("aria-label", "Close");
+      close.textContent = "Close";
+      close.addEventListener("click", () => modal.remove());
+      modal.append(close);
+      document.body.append(modal);
+    });
+    const result = await probeAttachmentWithoutSend(page, { timeoutMs: 5_000 });
+    expect(result).toMatchObject({
+      filename: "oracle-v2-no-send-probe.md",
+      uploadInputVerified: true,
+      composerAnchored: true,
+      removedAfterProbe: true,
+      blockingModalDismissed: true,
+      promptSubmitted: false,
+    });
+    expect(fixture.totalSendCount()).toBe(before);
+    expect(await page.locator("[data-attachment-chip]").count()).toBe(0);
+    expect(await page.locator("#prompt-textarea").textContent()).toBe("");
+    await page.close();
+  });
+
+  test("emits a compatible real-style receipt without submitting the composer probe", async () => {
+    const before = fixture.totalSendCount();
+    const page = await browser.newPage();
+    await page.goto(fixture.urlFor("compatibility-no-send", "default"));
+    const receipt = await probeLiveCompatibilityWithoutSend(page, {
+      adapterVersion: "chatgpt-adapter-v2-test",
+      browserRuntimeId: "fixture-cft",
+      timeoutMs: 5_000,
+    });
+    expect(receipt.compatible).toBe(true);
+    expect(Object.values(receipt.capabilities)).toEqual(
+      expect.not.arrayContaining(["missing", "unknown"]),
+    );
+    expect(fixture.totalSendCount()).toBe(before);
+    expect(await page.locator("#prompt-textarea").textContent()).toBe("");
     await page.close();
   });
 

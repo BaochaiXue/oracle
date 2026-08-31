@@ -1,4 +1,7 @@
 export * from "./adapter.js";
 export * from "./fingerprint.js";
+export * from "./liveProbe.js";
+export * from "./noSendProbe.js";
 export * from "./probe.js";
 export * from "./selectors.js";
+export * from "./surface.js";

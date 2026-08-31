@@ -67,6 +67,9 @@ export class ChatGptAdapter implements ProviderAdapter {
     const locators = chatGptLocators(page);
     await locators.modelButton.click({ timeout: this.actionTimeoutMs });
     await locators.modelOption.click({ timeout: this.actionTimeoutMs });
+    if (!(await locators.effort.isVisible())) {
+      await locators.modelButton.click({ timeout: this.actionTimeoutMs });
+    }
     await locators.effort.fill("5", { timeout: this.actionTimeoutMs });
 
     const bundleSha256 = context.spec.input.bundleSha256;
@@ -129,10 +132,10 @@ export class ChatGptAdapter implements ProviderAdapter {
       this.readObject(context.spec.input.prompt),
       createFooter(context),
     );
-    if ((await locators.composer.inputValue()) !== expectedPrompt) {
+    if ((await readComposer(locators.composer)) !== expectedPrompt) {
       throw new Error("Final verification rejected composer prompt drift");
     }
-    if ((await locators.modelButton.textContent())?.trim() !== "GPT-5.6 Sol") {
+    if (!/GPT-5\.6\s+Sol/iu.test((await locators.modelButton.textContent())?.trim() ?? "")) {
       throw new Error("Final verification rejected model drift");
     }
     if ((await locators.effort.inputValue()) !== "5") {
@@ -325,6 +328,18 @@ async function waitForEnabled(
     if (Date.now() >= deadline) throw new Error("Send control did not become enabled");
     await delay(10);
   }
+}
+
+async function readComposer(
+  composer: ReturnType<typeof chatGptLocators>["composer"],
+): Promise<string> {
+  return composer.evaluate((element) => {
+    if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
+      return element.value;
+    }
+    if (!(element instanceof HTMLElement)) return element.textContent ?? "";
+    return element.innerText.replace(/\n{2,}/gu, (run) => "\n".repeat(Math.ceil(run.length / 2)));
+  });
 }
 
 async function waitForUploadToSettle(page: Page, timeoutMs: number): Promise<void> {

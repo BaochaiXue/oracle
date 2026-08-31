@@ -145,10 +145,34 @@ dispatch mutex; committed conversations may then capture concurrently.
 
 ## Browser and provider contract
 
-One G1 spike compares supported Playwright runtimes with fresh dedicated
-profiles. Exactly one satisfying candidate becomes canonical. There is no
-automatic runtime fallback. The selected profile is never a normal browser
-profile and is owned by the worker's persistent context.
+G1 began by comparing three fresh dedicated-profile candidates: Playwright's
+bundled Chromium, the supported branded Chrome channel, and the exact Oracle
+Chrome for Testing executable launched as a Playwright persistent context. On
+the accepted macOS host, both executable candidates were rejected by Google
+OAuth and the branded stable channel was safety-blocked because its macOS
+application identity could interfere with everyday Chrome.
+
+Faye therefore selected one revised canonical runtime mechanism on 2026-08-31:
+the exact Oracle Chrome for Testing executable is launched and owned by the v2
+worker/runtime host, binds CDP only to loopback, and is controlled by Playwright
+through `connectOverCDP`. The fixed profile is never a normal browser profile.
+PID and port remain disposable runtime resources rather than job truth or
+normal operator output. There is no automatic runtime or transport fallback.
+The rejected candidate implementations are retained only as spike evidence,
+not as executable production alternatives.
+
+G1 completed on 2026-08-31 with all eight owner acceptance checks passing for
+`managed-chrome-for-testing-direct-cdp:152.0.7977.42`. The authenticated fixed
+profile survived repeated complete close/reopen cycles; background Playwright
+control verified GPT-5.6 Sol, Pro effort, and a synthetic composer-anchored
+attachment that was explicitly removed without a Send. The private runtime
+certification lives under `~/.oracle/v2/`; it is installed-runtime evidence,
+not a default-engine switch or a live consultation receipt.
+
+This G1 delta changes process ownership only. It does not import legacy browser
+source, change provider/model/effort guarantees, authorize a Send, switch the
+default engine, or alter G2-G4 owner authority. The current direct-CDP engine
+remains an independent safety baseline until the later cutover gates.
 
 All ChatGPT selectors, locators, page evaluation, upload behavior, message
 identity, completion detection, recovery, and UI fingerprinting live in
@@ -170,8 +194,8 @@ and cannot complete without attachment evidence on the committed user turn.
 | R2       | SQLite store, migrations, transactional append, explicit idempotency, CAS, projections, integrity/backup | R1           | crash consistency, duplicate admission, projection rebuild                | verified    |
 | R3       | Unix-socket worker, singleton, scheduler, event stream, fake provider, client, restart recovery          | R1-R2        | client/worker kill recovery; bounded 1,000 fake jobs                      | verified    |
 | R4       | provider fixture, Playwright adapter, capability probe, UI fingerprint, test faults                      | R3           | 500 fixture jobs; all fault points; Send count at most one                | verified    |
-| R5 / G1  | compare runtime candidates; owner login and runtime selection                                            | R4           | persistent login, cold restart, model/effort/upload/click stability       | owner-gated |
-| R6       | real ChatGPT no-Send adapter probe and sanitized fixture capture                                         | G1           | compatibility receipt; no prompt submitted                                | planned     |
+| R5 / G1  | certify worker-managed Chrome for Testing over direct CDP after owner login                              | R4           | persistent login, cold restart, model/effort/upload/click stability       | verified    |
+| R6       | real ChatGPT no-Send adapter probe and sanitized fixture capture                                         | G1           | compatibility receipt; no prompt submitted                                | verified    |
 | R7 / G2  | text, bundle, and committed-capture-recovery live canaries                                               | R6           | exact model/effort/turn/bundle/conversation/capture receipts; one Send    | owner-gated |
 | R8       | CLI and MCP v2 engine/cutover candidate; legacy remains default                                          | G2           | repeated reviews; client reconnect; MCP timeout retrieval                 | planned     |
 | R9       | Batch lane/synthesis jobs preserve sealing, barrier, blind lanes, owner closure                          | R8           | restart/recoverable/accept-missing/synthesis Batch with no duplicate Send | planned     |
@@ -197,7 +221,7 @@ separate facts.
 | D07 | bundle completion requires committed-turn attachment evidence  | R1, R4, R7   | reducer, fixture, canary       | in-progress |
 | D08 | model and Pro effort have independent receipts                 | R1, R4, R7   | schema + fixture + canary      | in-progress |
 | D09 | incompatible provider UI blocks before Send globally           | R3-R4        | compatibility incident test    | verified    |
-| D10 | worker owns browser runtime without normal PID/port operations | R5-R7        | runtime and canary evidence    | owner-gated |
+| D10 | worker owns browser runtime without normal PID/port operations | R5-R7        | runtime and canary evidence    | in-progress |
 | D11 | CLI, MCP, and Batch use only the client protocol               | R8-R9        | boundary check + integration   | planned     |
 | D12 | Batch sealing, barrier, and owner authority remain intact      | R9           | Batch integration              | planned     |
 | D13 | session projections rebuild from DB/CAS                        | R2           | deletion/rebuild test          | verified    |
@@ -250,6 +274,11 @@ execution disabled.
 
 ## Scope and order deltas
 
-None. The plan preserves the accepted v2 product boundary, R0-R12 dependency
-order, four owner gates, and D01-D20 acceptance set. File-level organization
-may evolve without changing these contracts.
+2026-08-31 G1 mechanism delta: the three Playwright-owned persistent-context
+candidates were replaced by one worker-owned exact Chrome for Testing process
+controlled through loopback direct CDP and Playwright `connectOverCDP`.
+Candidate evidence showed Google OAuth rejection for the isolated
+persistent-context paths and a macOS application-identity risk for branded
+stable Chrome. This delta changes process ownership only; it preserves the
+accepted v2 product boundary, R0-R12 dependency order, four owner gates, and
+D01-D20 acceptance set.

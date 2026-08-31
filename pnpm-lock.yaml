@@ -149,6 +149,15 @@ importers:
         specifier: ^1.62.1
         version: 1.62.1
 
+  packages/oracle-browser-runtime:
+    dependencies:
+      chrome-launcher:
+        specifier: ^1.2.1
+        version: 1.2.1(supports-color@10.2.2)
+      playwright-core:
+        specifier: ^1.62.1
+        version: 1.62.1
+
   packages/oracle-bundle: {}
 
   packages/oracle-client:
