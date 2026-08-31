@@ -1,0 +1,5 @@
+{
+  "name": "@oracle-v2/client",
+  "private": true,
+  "type": "module"
+}

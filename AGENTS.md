@@ -20,6 +20,25 @@ or maintainer-only release instructions.
 - Never click or auto-click ChatGPT's `Answer now` control. A quiet Pro run is
   recovered by reattaching its exact stored session, not by resubmitting.
 
+## Oracle v2 development boundary
+
+- `fork/main@e6f170ff` is the legacy direct-CDP safety baseline. On the v2
+  development line, do not add capabilities to or broadly refactor
+  `src/browser/**`; only bounded P0/P1 safety, data-loss, duplicate-send, or
+  current-user-blocking fixes belong there.
+- The accepted v2 architecture and complete coverage ledger live in
+  `docs/oracle-v2-master-plan.md`. Current tranche and gate evidence live in
+  `docs/oracle-v2-progress.md`.
+- New v2 source lives under `packages/*` and `apps/*`. It must not import the
+  legacy browser implementation. ChatGPT selectors and page scripts belong
+  only in `packages/chatgpt-adapter`.
+- CLI, MCP, and Batch remain on the legacy implementation until their named
+  cutover tranches pass. A workspace skeleton or green fixture suite is not a
+  default-engine switch, installed-runtime update, live canary, or legacy
+  retirement.
+- Keep G1 runtime/login selection, G2 first live Send, G3 default-engine
+  cutover, and G4 legacy removal as separate owner decisions.
+
 ## Batch Oracle source and documentation
 
 - Canonical Batch implementation: `src/batch/` and `src/cli/batchCommand.ts`.

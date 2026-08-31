@@ -126,6 +126,20 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.1)(tsx@4.23.11))
 
+  apps/oracle-provider-fixture: {}
+
+  apps/oracle-worker: {}
+
+  packages/chatgpt-adapter: {}
+
+  packages/oracle-bundle: {}
+
+  packages/oracle-client: {}
+
+  packages/oracle-kernel: {}
+
+  packages/oracle-store: {}
+
 packages:
 
   '@anthropic-ai/tokenizer@0.0.4':

@@ -1,0 +1,5 @@
+{
+  "name": "@oracle-v2/bundle",
+  "private": true,
+  "type": "module"
+}
