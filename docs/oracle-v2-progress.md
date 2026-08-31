@@ -121,6 +121,9 @@ not create per-job DOM incidents or Send. All ten test-only hard fault points
 default off and recover from the same DB/socket/fixture state with at most one
 Send per attempt.
 
+R4 implementation commit: `4d30c010` (`add Oracle v2 provider fixture`),
+published only to `fork/codex/oracle-v2`.
+
 ## Tranche ledger
 
 | Tranche                        | State       | Evidence / blocker                                                                        |
@@ -150,7 +153,7 @@ Send per attempt.
 
 ## Next safe action
 
-Publish the verified R4 source branch to Faye's fork only, then stop at G1. The
+Stop at G1. The verified R4 source branch is published to Faye's fork only. The
 next action requires owner authorization and participation: compare the three
 fresh dedicated runtime candidates, select exactly one canonical runtime, and
 perform manual ChatGPT login plus no-Send cold-restart probes. No real ChatGPT
