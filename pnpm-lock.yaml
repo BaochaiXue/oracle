@@ -128,13 +128,24 @@ importers:
 
   apps/oracle-provider-fixture: {}
 
-  apps/oracle-worker: {}
+  apps/oracle-worker:
+    dependencies:
+      '@oracle-v2/kernel':
+        specifier: workspace:*
+        version: link:../../packages/oracle-kernel
+      '@oracle-v2/store':
+        specifier: workspace:*
+        version: link:../../packages/oracle-store
 
   packages/chatgpt-adapter: {}
 
   packages/oracle-bundle: {}
 
-  packages/oracle-client: {}
+  packages/oracle-client:
+    dependencies:
+      '@oracle-v2/kernel':
+        specifier: workspace:*
+        version: link:../oracle-kernel
 
   packages/oracle-kernel:
     dependencies:
