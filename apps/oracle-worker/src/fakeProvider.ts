@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
+import { PROVIDER_CAPABILITIES } from "../../../packages/oracle-kernel/src/index.js";
 import type {
+  CompatibilityReceipt,
   PreparationReceipt,
   ProviderAdapter,
   ProviderCaptureContext,
@@ -35,6 +37,20 @@ export class FakeProvider implements ProviderAdapter {
     this.options = options;
     this.remainingCaptureFailures = options.captureFailures ?? 0;
     this.remainingVerificationFailures = options.verificationFailures ?? 0;
+  }
+
+  async probe(): Promise<CompatibilityReceipt> {
+    return {
+      compatible: true,
+      adapterVersion: "fake-provider-v1",
+      browserRuntimeId: "fake-runtime-v1",
+      uiFingerprint: "fake-ui-v1",
+      locale: "en-US",
+      capabilities: Object.fromEntries(
+        PROVIDER_CAPABILITIES.map((name) => [name, "verified" as const]),
+      ) as CompatibilityReceipt["capabilities"],
+      probedAt: new Date().toISOString(),
+    };
   }
 
   async prepare(context: ProviderJobContext): Promise<PreparationReceipt> {
@@ -137,6 +153,8 @@ export class FakeProvider implements ProviderAdapter {
       const answerBytes = Buffer.from(`Fake answer for ${context.jobId}.\n`, "utf8");
       return {
         answerBytes,
+        plainTextBytes: answerBytes,
+        htmlBytes: Buffer.from(`<p>Fake answer for ${context.jobId}.</p>\n`, "utf8"),
         mediaType: "text/markdown",
         receipt: {
           conversationId: context.submission.conversationId,

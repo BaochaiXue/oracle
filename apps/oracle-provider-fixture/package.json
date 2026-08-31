@@ -1,5 +1,6 @@
 {
   "name": "@oracle-v2/provider-fixture",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "exports": "./src/index.ts"
 }

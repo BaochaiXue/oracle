@@ -7,16 +7,19 @@ import {
   type ProviderAdapter,
 } from "../../../packages/oracle-kernel/src/index.js";
 import { OracleStore } from "../../../packages/oracle-store/src/index.js";
-import { JobOperationConflictError, JobRunner, type WorkerFaultPoint } from "./runner.js";
+import { EnvironmentHardExitFaultInjector, type WorkerFaultInjector } from "./faults.js";
+import { JobOperationConflictError, JobRunner } from "./runner.js";
 
 const MAX_BODY_BYTES = 16 * 1024 * 1024;
+const DEBUG_TTL_MS = 14 * 24 * 60 * 60 * 1_000;
+const DEBUG_MAX_BYTES = 512 * 1024 * 1024;
 
 export interface OracleWorkerOptions {
   rootDir: string;
   sessionsDir: string;
   socketPath: string;
   provider: ProviderAdapter;
-  faultAt?: WorkerFaultPoint;
+  faultInjector?: WorkerFaultInjector;
 }
 
 export class WorkerAlreadyRunningError extends Error {
@@ -35,14 +38,17 @@ class RequestValidationError extends Error {
 
 export class OracleWorker {
   readonly options: OracleWorkerOptions;
+  private readonly faultInjector: WorkerFaultInjector;
   private store?: OracleStore;
   private runner?: JobRunner;
   private server?: http.Server;
   private ownedSocket?: SocketIdentity;
   private ready = false;
+  private providerStatus: "compatible" | "incompatible" = "incompatible";
 
   constructor(options: OracleWorkerOptions) {
     this.options = options;
+    this.faultInjector = options.faultInjector ?? new EnvironmentHardExitFaultInjector();
   }
 
   async start(): Promise<void> {
@@ -75,19 +81,26 @@ export class OracleWorker {
         rootDir: this.options.rootDir,
         sessionsDir: this.options.sessionsDir,
       });
+      store.pruneDebugObjects({ ttlMs: DEBUG_TTL_MS, maxBytes: DEBUG_MAX_BYTES, keepLatest: 0 });
+      this.options.provider.bindRuntime?.({ readObject: (ref) => store!.readObject(ref) });
+      const compatibility = await this.options.provider.probe();
+      const providerStatus = store.setProviderStatus("chatgpt-web", compatibility);
       const runner = new JobRunner({
         store,
         provider: this.options.provider,
-        ...(this.options.faultAt ? { faultAt: this.options.faultAt } : {}),
+        allowDispatch: providerStatus.state === "compatible",
+        faultInjector: this.faultInjector,
       });
       this.store = store;
       this.runner = runner;
       this.server = server;
       this.ownedSocket = boundSocket;
+      this.providerStatus = providerStatus.state;
       this.ready = true;
       runner.recover();
     } catch (error) {
       store?.close();
+      await this.options.provider.close?.().catch(() => undefined);
       if (didBind) {
         await closeServer(server).catch(() => undefined);
         unlinkSocketIfOwned(this.options.socketPath, boundSocket);
@@ -99,6 +112,7 @@ export class OracleWorker {
   async stop(): Promise<void> {
     this.ready = false;
     if (this.runner) await this.runner.stop();
+    await this.options.provider.close?.();
     if (this.server) await closeServer(this.server);
     this.store?.close();
     unlinkSocketIfOwned(this.options.socketPath, this.ownedSocket);
@@ -106,6 +120,7 @@ export class OracleWorker {
     this.runner = undefined;
     this.store = undefined;
     this.ownedSocket = undefined;
+    this.providerStatus = "incompatible";
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -115,7 +130,11 @@ export class OracleWorker {
       const url = new URL(request.url ?? "/", "http://oracle.local");
       if (request.method === "GET" && url.pathname === "/v2/worker") {
         const status = runner.status();
-        sendJson(response, 200, { ready: this.ready && !status.blocked, ...status });
+        sendJson(response, 200, {
+          ready: this.ready && !status.blocked,
+          provider: this.providerStatus,
+          ...status,
+        });
         return;
       }
       if (request.method !== "GET" && (!this.ready || runner.isBlocked())) {
@@ -147,7 +166,11 @@ export class OracleWorker {
       }
       if (request.method === "POST" && url.pathname === "/v2/jobs") {
         const spec = parseJobSpec(JSON.parse((await readBody(request)).toString("utf8")));
-        const admission = store.admitJob(spec);
+        const admission = store.admitJob(
+          spec,
+          this.providerStatus === "incompatible" ? { blockedBy: "provider" } : {},
+        );
+        this.faultInjector.hit("after-job-admission");
         if (!admission.specMatches) {
           sendJson(response, 409, {
             error: "idempotency_spec_conflict",
@@ -165,7 +188,11 @@ export class OracleWorker {
           sendJson(response, 400, { error: "canary_owner_required" });
           return;
         }
-        const admission = store.admitJob(spec);
+        const admission = store.admitJob(
+          spec,
+          this.providerStatus === "incompatible" ? { blockedBy: "provider" } : {},
+        );
+        this.faultInjector.hit("after-job-admission");
         if (!admission.specMatches) {
           sendJson(response, 409, {
             error: "idempotency_spec_conflict",

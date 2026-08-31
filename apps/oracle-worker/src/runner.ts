@@ -3,18 +3,20 @@ import {
   type DispatchIntent,
   type FailureReceipt,
   type JobEvent,
+  type ObjectRef,
   type ProviderAdapter,
 } from "../../../packages/oracle-kernel/src/index.js";
+import { createHash } from "node:crypto";
 import { OracleStore, type StoredJob } from "../../../packages/oracle-store/src/index.js";
+import type { WorkerFaultInjector } from "./faults.js";
 import { Mutex, Semaphore } from "./synchronization.js";
-
-export type WorkerFaultPoint = "after-provider-dispatch";
 
 export interface JobRunnerOptions {
   store: OracleStore;
   provider: ProviderAdapter;
-  faultAt?: WorkerFaultPoint;
+  faultInjector: WorkerFaultInjector;
   maxConcurrentCaptures?: number;
+  allowDispatch?: boolean;
 }
 
 export class JobOperationConflictError extends Error {
@@ -33,9 +35,10 @@ type JobEventInput = JobEvent extends infer Event
 export class JobRunner {
   readonly store: OracleStore;
   readonly provider: ProviderAdapter;
-  private readonly faultAt?: WorkerFaultPoint;
+  private readonly faultInjector: WorkerFaultInjector;
   private readonly dispatchMutex = new Mutex();
   private readonly captureSemaphore: Semaphore;
+  private readonly allowDispatch: boolean;
   private readonly running = new Map<string, Promise<void>>();
   private readonly ownerRequestedReruns = new Set<string>();
   private accepting = true;
@@ -44,7 +47,8 @@ export class JobRunner {
   constructor(options: JobRunnerOptions) {
     this.store = options.store;
     this.provider = options.provider;
-    this.faultAt = options.faultAt;
+    this.faultInjector = options.faultInjector;
+    this.allowDispatch = options.allowDispatch ?? true;
     this.captureSemaphore = new Semaphore(options.maxConcurrentCaptures ?? 3);
   }
 
@@ -53,17 +57,18 @@ export class JobRunner {
       if (job.state.kind === "preparing") {
         job = this.append(job, { type: "preparation-deferred" });
       }
-      if (needsDispatchLane(job) || needsCaptureLane(job)) this.schedule(job.id);
+      if ((this.allowDispatch && needsDispatchLane(job)) || needsCaptureLane(job)) {
+        this.schedule(job.id);
+      }
     }
   }
 
   schedule(jobId: string): void {
     if (!this.accepting || this.running.has(jobId)) return;
     const task = this.run(jobId)
-      .catch((error) => {
+      .catch(() => {
         this.blocked = true;
         this.accepting = false;
-        if (error instanceof SimulatedWorkerCrash) return;
       })
       .finally(() => {
         this.running.delete(jobId);
@@ -85,7 +90,7 @@ export class JobRunner {
 
   resume(jobId: string): StoredJob {
     const job = this.store.getJob(jobId);
-    if (needsDispatchLane(job) || needsCaptureLane(job)) {
+    if ((this.allowDispatch && needsDispatchLane(job)) || needsCaptureLane(job)) {
       if (this.running.has(job.id)) this.ownerRequestedReruns.add(job.id);
       else this.schedule(job.id);
       return job;
@@ -119,7 +124,7 @@ export class JobRunner {
 
   private async run(jobId: string): Promise<void> {
     let job = this.store.getJob(jobId);
-    if (needsDispatchLane(job)) {
+    if (this.allowDispatch && needsDispatchLane(job)) {
       await this.dispatchMutex.run(async () => {
         await this.advanceToCommitted(jobId);
       });
@@ -144,6 +149,7 @@ export class JobRunner {
           try {
             const receipt = await this.provider.prepare(context(job));
             this.append(job, { type: "preparation-completed", receipt });
+            this.faultInjector.hit("after-preparation");
           } catch (error) {
             this.append(job, {
               type: "preparation-failed",
@@ -161,6 +167,7 @@ export class JobRunner {
         case "ready-to-dispatch": {
           const intent = createIntent(job);
           this.append(job, { type: "dispatch-reserved", intent });
+          this.faultInjector.hit("after-dispatch-reserved");
           break;
         }
         case "dispatch-reserved": {
@@ -171,6 +178,7 @@ export class JobRunner {
               type: "dispatch-marked-at-risk",
               atRiskAt: new Date().toISOString(),
             });
+            this.faultInjector.hit("after-dispatch-at-risk");
           } catch (error) {
             this.append(job, {
               type: "preparation-failed",
@@ -191,7 +199,7 @@ export class JobRunner {
           } catch (error) {
             dispatchError = error;
           }
-          if (this.faultAt === "after-provider-dispatch") throw new SimulatedWorkerCrash();
+          this.faultInjector.hit("immediately-after-click");
           await this.commitObserved(atRisk, dispatchError);
           break;
         }
@@ -220,7 +228,9 @@ export class JobRunner {
         intent: job.state.intent,
       });
       if (receipt) {
+        this.faultInjector.hit("after-commit-observed");
         this.append(job, { type: "submission-committed", receipt });
+        this.faultInjector.hit("after-submission-receipt");
         return;
       }
       this.append(job, {
@@ -257,6 +267,7 @@ export class JobRunner {
     }
     if (job.state.kind !== "capturing") return;
     try {
+      this.faultInjector.hit("during-capture");
       const result = await this.provider.capture({
         ...context(job),
         submission: job.state.submission,
@@ -266,6 +277,30 @@ export class JobRunner {
         objectClass: "answer",
         expectedSha256: result.receipt.responseSha256,
       });
+      const representations = new Map<string, ObjectRef>([[answer.sha256, answer]]);
+      const putRepresentation = (
+        bytes: Uint8Array,
+        metadata: { mediaType: string; objectClass: "text" | "html" },
+      ): ObjectRef => {
+        const digest = sha256(bytes);
+        const existing = representations.get(digest);
+        if (existing) return existing;
+        const ref = this.store.putObject(bytes, metadata);
+        representations.set(digest, ref);
+        return ref;
+      };
+      const plainText = putRepresentation(result.plainTextBytes, {
+        mediaType: "text/plain",
+        objectClass: "text",
+      });
+      const html = putRepresentation(result.htmlBytes, {
+        mediaType: "text/html",
+        objectClass: "html",
+      });
+      this.store.linkJobObject(job.id, "response-plain", plainText, "authority");
+      this.store.linkJobObject(job.id, "response-html", html, "authority");
+      this.faultInjector.hit("after-answer-object-write");
+      this.faultInjector.hit("before-completed-event");
       this.append(job, { type: "capture-completed", receipt: result.receipt, answer });
     } catch (error) {
       this.append(job, {
@@ -302,7 +337,7 @@ function needsCaptureLane(job: StoredJob): boolean {
 }
 
 function context(job: StoredJob) {
-  return { jobId: job.id, spec: job.spec, state: job.state };
+  return { jobId: job.id, spec: job.spec, state: job.state, stateVersion: job.stateVersion };
 }
 
 function createIntent(job: StoredJob): DispatchIntent {
@@ -336,4 +371,6 @@ function failure(
   };
 }
 
-class SimulatedWorkerCrash extends Error {}
+function sha256(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}

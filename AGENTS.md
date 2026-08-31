@@ -30,8 +30,11 @@ or maintainer-only release instructions.
   `docs/oracle-v2-master-plan.md`. Current tranche and gate evidence live in
   `docs/oracle-v2-progress.md`.
 - New v2 source lives under `packages/*` and `apps/*`. It must not import the
-  legacy browser implementation. ChatGPT selectors and page scripts belong
-  only in `packages/chatgpt-adapter`.
+  legacy browser implementation. ChatGPT page-reading and Playwright
+  automation knowledge belongs only in `packages/chatgpt-adapter`. The
+  sanitized `apps/oracle-provider-fixture` may define simulated provider
+  markup and scenarios, but it must not become a second adapter or production
+  selector authority.
 - CLI, MCP, and Batch remain on the legacy implementation until their named
   cutover tranches pass. A workspace skeleton or green fixture suite is not a
   default-engine switch, installed-runtime update, live canary, or legacy

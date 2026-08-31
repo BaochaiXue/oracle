@@ -3,6 +3,19 @@ import { z } from "zod";
 export const JOB_SCHEMA_VERSION = "oracle.job.v2" as const;
 export const JOB_EVENT_SCHEMA_VERSION = "oracle.job-event.v2" as const;
 
+export const PROVIDER_CAPABILITIES = [
+  "loginState",
+  "composer",
+  "modelControl",
+  "modelVerification",
+  "effortVerification",
+  "attachmentControl",
+  "sendControl",
+  "userTurnLocator",
+  "assistantTurnLocator",
+  "conversationUrlParser",
+] as const;
+
 const nonEmpty = z.string().trim().min(1);
 const timestamp = z.string().datetime({ offset: true });
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u, "must be a lowercase SHA-256 digest");
@@ -22,6 +35,25 @@ export const objectRefSchema = z
       "html",
       "text",
     ]),
+  })
+  .strict();
+
+const capabilityStateSchema = z.enum(["verified", "missing", "unknown"]);
+
+export const compatibilityReceiptSchema = z
+  .object({
+    compatible: z.boolean(),
+    adapterVersion: nonEmpty,
+    browserRuntimeId: nonEmpty,
+    uiFingerprint: nonEmpty,
+    locale: nonEmpty,
+    capabilities: z
+      .object(
+        Object.fromEntries(PROVIDER_CAPABILITIES.map((name) => [name, capabilityStateSchema])),
+      )
+      .strict(),
+    diagnosticObject: objectRefSchema.optional(),
+    probedAt: timestamp,
   })
   .strict();
 
@@ -441,6 +473,7 @@ const eventSchemas = [
 export const jobEventSchema = z.discriminatedUnion("type", eventSchemas);
 
 export type ObjectRef = z.infer<typeof objectRefSchema>;
+export type CompatibilityReceipt = z.infer<typeof compatibilityReceiptSchema>;
 export type JobSpec = z.infer<typeof jobSpecSchema>;
 export type PreparationReceipt = z.infer<typeof preparationReceiptSchema>;
 export type DispatchIntent = z.infer<typeof dispatchIntentSchema>;

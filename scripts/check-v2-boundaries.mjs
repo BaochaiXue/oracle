@@ -56,14 +56,18 @@ for (const relativePath of v2Roots.flatMap(walk)) {
   }
 
   const normalizedPath = relativePath.replaceAll("\\", "/");
-  if (!normalizedPath.startsWith("packages/chatgpt-adapter/")) {
+  const isAdapter = normalizedPath.startsWith("packages/chatgpt-adapter/");
+  const isProviderFixture = normalizedPath.startsWith("apps/oracle-provider-fixture/");
+  if (!isAdapter) {
     const pageKnowledgePatterns = [
       { label: "Playwright page evaluation", pattern: /\.evaluate\s*\(/g },
-      {
+    ];
+    if (!isProviderFixture) {
+      pageKnowledgePatterns.push({
         label: "ChatGPT selector literal",
         pattern: /(?:data-testid|aria-label)[^\n]{0,120}(?:composer|send|message|model)/gi,
-      },
-    ];
+      });
+    }
     for (const { label, pattern } of pageKnowledgePatterns) {
       for (const match of source.matchAll(pattern)) {
         violations.push(

@@ -8,8 +8,10 @@ release, signing, domain, account, or deployment authority.
 Oracle v2 is being built beside the current direct-CDP implementation. Follow
 [the v2 master plan](docs/oracle-v2-master-plan.md) and its explicit gate
 boundaries. Do not grow or broadly refactor `src/browser/**` for v2 features,
-import legacy browser code into `packages/*` or `apps/*`, or put ChatGPT page
-knowledge outside `packages/chatgpt-adapter`.
+import legacy browser code into `packages/*` or `apps/*`, or put ChatGPT
+page-reading/automation knowledge outside `packages/chatgpt-adapter`. The
+sanitized provider fixture may define simulated markup and scenarios only; do
+not put a second adapter or production selector policy there.
 
 ## Protect private data
 

@@ -4,6 +4,7 @@ import { backup, DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import {
   initialJobState,
+  compatibilityReceiptSchema,
   objectRefSchema,
   parseJobEvent,
   parseJobSpec,
@@ -13,6 +14,7 @@ import {
   type JobEvent,
   type JobSpec,
   type JobState,
+  type CompatibilityReceipt,
   type ObjectRef,
 } from "../../oracle-kernel/src/index.js";
 import {
@@ -82,6 +84,13 @@ export interface StorageVerification {
   checkedObjects: number;
   objectErrors: { sha256: string; message: string }[];
   ledgerErrors: { jobId: string; message: string }[];
+}
+
+export interface ProviderStatusRecord {
+  provider: "chatgpt-web";
+  state: "compatible" | "incompatible";
+  receipt: CompatibilityReceipt;
+  updatedAt: string;
 }
 
 export class OracleStore {
@@ -174,7 +183,10 @@ export class OracleStore {
     return row !== undefined && this.objects.has(sha256);
   }
 
-  admitJob(specInput: JobSpec, options: { jobId?: string } = {}): AdmissionResult {
+  admitJob(
+    specInput: JobSpec,
+    options: { jobId?: string; blockedBy?: "capacity" | "auth" | "provider" | "owner" } = {},
+  ): AdmissionResult {
     const spec = parseJobSpec(specInput);
     const specBytes = serializeJson(spec);
     const specSha256 = digest(specBytes);
@@ -200,7 +212,7 @@ export class OracleStore {
       expectedSha256: specSha256,
     });
     const jobId = requireJobId(options.jobId ?? this.idGenerator());
-    const state = initialJobState();
+    const state = initialJobState(options.blockedBy);
     const now = this.nowIso();
 
     this.transaction(() => {
@@ -228,6 +240,7 @@ export class OracleStore {
         type: "job-admitted",
         jobId,
         specObjectSha256: specRef.sha256,
+        ...(options.blockedBy ? { blockedBy: options.blockedBy } : {}),
       };
       this.database
         .prepare(
@@ -240,6 +253,54 @@ export class OracleStore {
     });
     this.tryProjection(jobId);
     return { created: true, specMatches: true, job: this.getJob(jobId) };
+  }
+
+  setProviderStatus(
+    provider: "chatgpt-web",
+    receiptInput: CompatibilityReceipt,
+  ): ProviderStatusRecord {
+    const receipt = compatibilityReceiptSchema.parse(receiptInput);
+    const state = receipt.compatible ? "compatible" : "incompatible";
+    const updatedAt = this.nowIso();
+    this.database
+      .prepare(
+        `INSERT INTO provider_status(provider, state, adapter_version, ui_fingerprint, receipt_json, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(provider) DO UPDATE SET
+           state = excluded.state,
+           adapter_version = excluded.adapter_version,
+           ui_fingerprint = excluded.ui_fingerprint,
+           receipt_json = excluded.receipt_json,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        provider,
+        state,
+        receipt.adapterVersion,
+        receipt.uiFingerprint,
+        JSON.stringify(receipt),
+        updatedAt,
+      );
+    return { provider, state, receipt, updatedAt };
+  }
+
+  getProviderStatus(provider: "chatgpt-web"): ProviderStatusRecord | undefined {
+    const row = this.database
+      .prepare(
+        "SELECT provider, state, receipt_json, updated_at FROM provider_status WHERE provider = ?",
+      )
+      .get(provider) as SqlRow | undefined;
+    if (!row) return undefined;
+    const state = String(row.state);
+    if (state !== "compatible" && state !== "incompatible") {
+      throw new StorageIntegrityError(`Invalid provider state for ${provider}: ${state}`);
+    }
+    return {
+      provider,
+      state,
+      receipt: compatibilityReceiptSchema.parse(JSON.parse(String(row.receipt_json))),
+      updatedAt: String(row.updated_at),
+    };
   }
 
   getJob(jobId: string): StoredJob {
@@ -575,7 +636,7 @@ export class OracleStore {
         ) {
           throw new Error("missing or invalid seq=1 job-admitted authority event");
         }
-        let replayed = initialJobState();
+        let replayed = initialJobState(admissionBlockedBy(admission.event));
         let expectedSeq = 2;
         for (const item of events.slice(1)) {
           if (item.seq !== expectedSeq) {
@@ -702,6 +763,21 @@ function isAdmissionEvent(event: unknown, jobId: string, specObjectSha256: strin
     candidate.schemaVersion === "oracle.job-authority.v2" &&
     candidate.type === "job-admitted" &&
     candidate.jobId === jobId &&
-    candidate.specObjectSha256 === specObjectSha256
+    candidate.specObjectSha256 === specObjectSha256 &&
+    (candidate.blockedBy === undefined ||
+      ["capacity", "auth", "provider", "owner"].includes(String(candidate.blockedBy)))
   );
+}
+
+function admissionBlockedBy(
+  event: unknown,
+): "capacity" | "auth" | "provider" | "owner" | undefined {
+  if (!event || typeof event !== "object" || Array.isArray(event)) return undefined;
+  const blockedBy = (event as Record<string, unknown>).blockedBy;
+  return blockedBy === "capacity" ||
+    blockedBy === "auth" ||
+    blockedBy === "provider" ||
+    blockedBy === "owner"
+    ? blockedBy
+    : undefined;
 }

@@ -169,7 +169,7 @@ and cannot complete without attachment evidence on the committed user turn.
 | R1       | typed JobSpec/events/states/receipts, pure reducer, retry and owner policy, schema upcasting             | R0           | illegal-transition and completion-invariant tests                         | verified    |
 | R2       | SQLite store, migrations, transactional append, explicit idempotency, CAS, projections, integrity/backup | R1           | crash consistency, duplicate admission, projection rebuild                | verified    |
 | R3       | Unix-socket worker, singleton, scheduler, event stream, fake provider, client, restart recovery          | R1-R2        | client/worker kill recovery; bounded 1,000 fake jobs                      | verified    |
-| R4       | provider fixture, Playwright adapter, capability probe, UI fingerprint, test faults                      | R3           | 500 fixture jobs; all fault points; Send count at most one                | planned     |
+| R4       | provider fixture, Playwright adapter, capability probe, UI fingerprint, test faults                      | R3           | 500 fixture jobs; all fault points; Send count at most one                | verified    |
 | R5 / G1  | compare runtime candidates; owner login and runtime selection                                            | R4           | persistent login, cold restart, model/effort/upload/click stability       | owner-gated |
 | R6       | real ChatGPT no-Send adapter probe and sanitized fixture capture                                         | G1           | compatibility receipt; no prompt submitted                                | planned     |
 | R7 / G2  | text, bundle, and committed-capture-recovery live canaries                                               | R6           | exact model/effort/turn/bundle/conversation/capture receipts; one Send    | owner-gated |
@@ -190,22 +190,22 @@ separate facts.
 | --- | -------------------------------------------------------------- | ------------ | ------------------------------ | ----------- |
 | D01 | client exit does not stop an admitted job                      | R3           | worker integration             | verified    |
 | D02 | duplicate idempotency key returns one job                      | R2-R3        | store/API integration          | verified    |
-| D03 | each turn attempt sends at most once                           | R1-R4        | reducer + fixture send counter | in-progress |
-| D04 | hard exit after click cannot cause resend                      | R3-R4        | process fault injection        | planned     |
+| D03 | each turn attempt sends at most once                           | R1-R4        | reducer + fixture send counter | verified    |
+| D04 | hard exit after click cannot cause resend                      | R3-R4        | process fault injection        | verified    |
 | D05 | committed job stays bound to its conversation                  | R1, R4, R7   | fixture and canary receipts    | in-progress |
-| D06 | wrong-conversation navigation is rejected                      | R4           | fixture scenario               | planned     |
+| D06 | wrong-conversation navigation is rejected                      | R4           | fixture scenario               | verified    |
 | D07 | bundle completion requires committed-turn attachment evidence  | R1, R4, R7   | reducer, fixture, canary       | in-progress |
 | D08 | model and Pro effort have independent receipts                 | R1, R4, R7   | schema + fixture + canary      | in-progress |
-| D09 | incompatible provider UI blocks before Send globally           | R3-R4        | compatibility incident test    | planned     |
+| D09 | incompatible provider UI blocks before Send globally           | R3-R4        | compatibility incident test    | verified    |
 | D10 | worker owns browser runtime without normal PID/port operations | R5-R7        | runtime and canary evidence    | owner-gated |
 | D11 | CLI, MCP, and Batch use only the client protocol               | R8-R9        | boundary check + integration   | planned     |
 | D12 | Batch sealing, barrier, and owner authority remain intact      | R9           | Batch integration              | planned     |
 | D13 | session projections rebuild from DB/CAS                        | R2           | deletion/rebuild test          | verified    |
-| D14 | debug objects obey TTL/cap/pinning                             | R2-R3        | retention tests                | in-progress |
+| D14 | debug objects obey TTL/cap/pinning                             | R2-R3        | retention tests                | verified    |
 | D15 | default output excludes forensic internals                     | R3, R8       | output tests                   | planned     |
-| D16 | v2 page knowledge exists only in chatgpt-adapter               | R0, R4       | boundary check                 | in-progress |
+| D16 | v2 page knowledge exists only in chatgpt-adapter               | R0, R4       | boundary check                 | verified    |
 | D17 | real canary receipts pass                                      | R7           | owner-authorized live canaries | owner-gated |
-| D18 | fixture fault suite passes                                     | R4           | fixture/fault suite            | planned     |
+| D18 | fixture fault suite passes                                     | R4           | fixture/fault suite            | verified    |
 | D19 | worker/browser/page soak has no continuing growth              | R4, R7-R10   | fixture and live soak          | planned     |
 | D20 | canonical flow works with legacy engine disabled               | R12          | canonical E2E with legacy off  | owner-gated |
 

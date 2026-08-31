@@ -159,7 +159,11 @@ describe("Oracle v2 local worker protocol", () => {
     const firstWorker = new OracleWorker({
       ...paths,
       provider,
-      faultAt: "after-provider-dispatch",
+      faultInjector: {
+        hit(point) {
+          if (point === "immediately-after-click") throw new Error("Injected worker crash");
+        },
+      },
     });
     await firstWorker.start();
     const firstClient = new OracleClient({ socketPath: paths.socketPath });
@@ -253,7 +257,7 @@ describe("Oracle v2 local worker protocol", () => {
 
     client.close();
     await worker.stop();
-  });
+  }, 15_000);
 
   test("resumes committed capture only and abandons an ambiguous job without resending", async () => {
     const recoverablePaths = workerPaths();

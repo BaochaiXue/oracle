@@ -28,6 +28,7 @@ export interface ClientEvent {
 export interface WorkerStatus {
   ready: boolean;
   blocked: boolean;
+  provider: "compatible" | "incompatible";
   queued: number;
   running: number;
 }
