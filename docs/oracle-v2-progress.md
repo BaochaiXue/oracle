@@ -15,7 +15,7 @@ Legacy safety baseline: `fork/main@e6f170ff`
 
 ## Current state
 
-R0 and R1 are source-complete and verified. The v2 worktree is isolated from the clean, usable
+R0 through R2 are source-complete and verified. The v2 worktree is isolated from the clean, usable
 `fork-main` checkout. No browser behavior, installed payload, browser profile,
 account state, live conversation, default engine, or legacy implementation has
 been changed.
@@ -46,14 +46,31 @@ action policy. `dispatch-at-risk` and every later state forbid Send;
 verified-unsent work requires a new owner-authorized attempt, while committed
 failures permit capture recovery only.
 
+R1 commit: `2c5ab030` (`add Oracle v2 job kernel`).
+
+Fresh R2 evidence:
+
+- `pnpm exec vitest run tests/v2/oracle-store.test.ts tests/v2/oracle-kernel.test.ts`:
+  21 tests passed;
+- `pnpm check`: passed, including v2 boundaries;
+- `pnpm test`: 170 files passed, 15 skipped; 1,980 tests passed, 32 skipped;
+- `pnpm build`: passed;
+- `git diff --check`: passed.
+
+The store now owns migration v1, SQLite WAL/FULL transactions, explicit
+idempotent admission, event/snapshot CAS updates, replay-based startup
+integrity, owner-only CAS objects, rebuildable session projections, bounded
+SQLite backups, and debug TTL/cap/pinning. Injected faults after event insert
+and after snapshot update both roll back to the same last-good version.
+
 ## Tranche ledger
 
 | Tranche                        | State       | Evidence / blocker                                                                        |
 | ------------------------------ | ----------- | ----------------------------------------------------------------------------------------- |
 | R0 freeze and architecture     | verified    | public plan, coverage ledger, workspace skeleton, contribution contract, boundary checker |
 | R1 kernel                      | verified    | 13 focused tests plus full repository gates                                               |
-| R2 store/CAS/projection        | next        | strict red-green migration, transaction, CAS, and rebuild contract                        |
-| R3 worker/client/fake provider | planned     | depends on R1-R2                                                                          |
+| R2 store/CAS/projection        | verified    | 8 store tests, 13 kernel tests, and full repository gates                                 |
+| R3 worker/client/fake provider | next        | Unix socket, singleton, scheduler, fake adapter, restart, and reconnect                   |
 | R4 fixture/adapter/faults      | planned     | depends on R3                                                                             |
 | R5 / G1 runtime and login      | owner-gated | not reached                                                                               |
 | R6 real no-Send probe          | planned     | depends on G1                                                                             |
@@ -75,6 +92,7 @@ failures permit capture recovery only.
 
 ## Next safe action
 
-Commit R1 as a kernel-only tranche, then begin R2 with red-green store, CAS,
-projection, integrity, backup, and retention tests. The next owner action is
-G1, after R4 is complete; no owner intervention is currently required.
+Commit R2 as a store-only tranche, then begin R3 with red-green Unix-socket
+protocol, singleton, scheduler, fake adapter, restart, and reconnect tests. The
+next owner action is G1, after R4 is complete; no owner intervention is
+currently required.

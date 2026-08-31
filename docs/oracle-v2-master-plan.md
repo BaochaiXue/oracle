@@ -167,8 +167,8 @@ and cannot complete without attachment evidence on the committed user turn.
 | -------- | -------------------------------------------------------------------------------------------------------- | ------------ | ------------------------------------------------------------------------- | ----------- |
 | R0       | freeze boundary, public architecture authority, progress ledger, workspace skeleton, boundary checker    | baseline     | unchanged legacy tests; boundary check                                    | verified    |
 | R1       | typed JobSpec/events/states/receipts, pure reducer, retry and owner policy, schema upcasting             | R0           | illegal-transition and completion-invariant tests                         | verified    |
-| R2       | SQLite store, migrations, transactional append, explicit idempotency, CAS, projections, integrity/backup | R1           | crash consistency, duplicate admission, projection rebuild                | in-progress |
-| R3       | Unix-socket worker, singleton, scheduler, event stream, fake provider, client, restart recovery          | R1-R2        | client/worker kill recovery; bounded 1,000 fake jobs                      | planned     |
+| R2       | SQLite store, migrations, transactional append, explicit idempotency, CAS, projections, integrity/backup | R1           | crash consistency, duplicate admission, projection rebuild                | verified    |
+| R3       | Unix-socket worker, singleton, scheduler, event stream, fake provider, client, restart recovery          | R1-R2        | client/worker kill recovery; bounded 1,000 fake jobs                      | in-progress |
 | R4       | provider fixture, Playwright adapter, capability probe, UI fingerprint, test faults                      | R3           | 500 fixture jobs; all fault points; Send count at most one                | planned     |
 | R5 / G1  | compare runtime candidates; owner login and runtime selection                                            | R4           | persistent login, cold restart, model/effort/upload/click stability       | owner-gated |
 | R6       | real ChatGPT no-Send adapter probe and sanitized fixture capture                                         | G1           | compatibility receipt; no prompt submitted                                | planned     |
@@ -189,7 +189,7 @@ separate facts.
 | ID  | Required outcome                                               | Owning slice | Verification                   | Status      |
 | --- | -------------------------------------------------------------- | ------------ | ------------------------------ | ----------- |
 | D01 | client exit does not stop an admitted job                      | R3           | worker integration             | planned     |
-| D02 | duplicate idempotency key returns one job                      | R2-R3        | store/API integration          | planned     |
+| D02 | duplicate idempotency key returns one job                      | R2-R3        | store/API integration          | in-progress |
 | D03 | each turn attempt sends at most once                           | R1-R4        | reducer + fixture send counter | in-progress |
 | D04 | hard exit after click cannot cause resend                      | R3-R4        | process fault injection        | planned     |
 | D05 | committed job stays bound to its conversation                  | R1, R4, R7   | fixture and canary receipts    | in-progress |
@@ -200,8 +200,8 @@ separate facts.
 | D10 | worker owns browser runtime without normal PID/port operations | R5-R7        | runtime and canary evidence    | owner-gated |
 | D11 | CLI, MCP, and Batch use only the client protocol               | R8-R9        | boundary check + integration   | planned     |
 | D12 | Batch sealing, barrier, and owner authority remain intact      | R9           | Batch integration              | planned     |
-| D13 | session projections rebuild from DB/CAS                        | R2           | deletion/rebuild test          | planned     |
-| D14 | debug objects obey TTL/cap/pinning                             | R2-R3        | retention tests                | planned     |
+| D13 | session projections rebuild from DB/CAS                        | R2           | deletion/rebuild test          | verified    |
+| D14 | debug objects obey TTL/cap/pinning                             | R2-R3        | retention tests                | in-progress |
 | D15 | default output excludes forensic internals                     | R3, R8       | output tests                   | planned     |
 | D16 | v2 page knowledge exists only in chatgpt-adapter               | R0, R4       | boundary check                 | in-progress |
 | D17 | real canary receipts pass                                      | R7           | owner-authorized live canaries | owner-gated |

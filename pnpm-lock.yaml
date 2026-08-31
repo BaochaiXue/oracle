@@ -142,7 +142,11 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
 
-  packages/oracle-store: {}
+  packages/oracle-store:
+    dependencies:
+      '@oracle-v2/kernel':
+        specifier: workspace:*
+        version: link:../oracle-kernel
 
 packages:
 
