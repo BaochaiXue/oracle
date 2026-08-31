@@ -183,6 +183,12 @@ assert profile is not already in use
   → repeat from a cold process
 ```
 
+On macOS, `chrome-launcher` briefly owns an `open -W` wrapper before Chrome for
+Testing settles. Smoke replaces that intermediate PID receipt with the
+discovered browser owner, then gives the unchanged receipt a bounded exit grace
+after the endpoint is confirmed down. A changed receipt or any Chrome still
+using the profile is preserved; only unchanged dead metadata is removed.
+
 A passing second cycle demonstrates that the important state survived the first
 shutdown: the custom profile exists, its ChatGPT login is reusable, and a fresh
 CDP client can attach without borrowing personal Chrome state. The command

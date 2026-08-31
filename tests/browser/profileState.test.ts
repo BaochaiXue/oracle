@@ -84,6 +84,26 @@ describe("profileState", () => {
     }
   });
 
+  test("waits for a short-lived launcher pid before clearing its receipt", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "oracle-profile-"));
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => process.exit(0), 150)"], {
+      stdio: "ignore",
+    });
+    try {
+      await profileState.writeChromePid(dir, child.pid ?? 0);
+      await expect(
+        profileState.clearDeadChromePidReceipt(dir, undefined, {
+          waitMs: 2_000,
+          pollMs: 25,
+        }),
+      ).resolves.toBe(true);
+      await expect(profileState.readChromePid(dir)).resolves.toBeNull();
+    } finally {
+      child.kill();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("skips manual-login cleanup when DevTools port is still reachable", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "oracle-profile-"));
     try {

@@ -28,6 +28,7 @@ import {
   findRunningChromeForProfile,
   isProcessAlive,
   verifyDevToolsReachable,
+  writeChromePid,
 } from "../browser/profileState.js";
 import type { BrowserLogger, ChromeClient } from "../browser/types.js";
 import { delay } from "../browser/utils.js";
@@ -170,7 +171,7 @@ async function closeLaunchedChrome(
   }
   await waitForDevToolsToStop(chrome.port);
   await cleanupStaleProfileState(profileDir, logger, { lockRemovalMode: "never" });
-  await clearDeadChromePidReceipt(profileDir, logger);
+  await clearDeadChromePidReceipt(profileDir, logger, { waitMs: 3_000, pollMs: 50 });
 }
 
 async function assertSmokePortAvailable(profileDir: string, port: number): Promise<void> {
@@ -287,6 +288,10 @@ export async function runDedicatedBrowserSmoke(
     let cycleError: unknown;
     try {
       chrome = await launchChrome(config, options.profileDir, logger);
+      // chrome-launcher records its macOS `open -W` wrapper PID. Replace that
+      // intermediate receipt with the actual discovered browser owner used by
+      // the smoke result and bounded shutdown checks.
+      await writeChromePid(options.profileDir, chrome.pid);
       const connection = await connectWithNewTab(chrome.port, logger, "about:blank", "127.0.0.1", {
         fallbackToDefault: false,
         retries: 6,

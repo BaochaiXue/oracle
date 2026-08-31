@@ -78,24 +78,42 @@ export async function writeChromePid(userDataDir: string, pid: number): Promise<
 export async function clearDeadChromePidReceipt(
   userDataDir: string,
   logger?: ProfileStateLogger,
+  options: { waitMs?: number; pollMs?: number } = {},
 ): Promise<boolean> {
-  const pid = await readChromePid(userDataDir);
-  if (!pid) return false;
-  if (isProcessAlive(pid)) {
-    logger?.(`Chrome pid ${pid} is still alive; preserving pid receipt`);
-    return false;
+  const initialPid = await readChromePid(userDataDir);
+  if (!initialPid) return false;
+  const waitMs = Math.max(0, options.waitMs ?? 0);
+  const pollMs = Math.max(10, options.pollMs ?? 100);
+  const deadline = Date.now() + waitMs;
+
+  for (;;) {
+    const pid = await readChromePid(userDataDir);
+    if (!pid) return false;
+    if (pid !== initialPid) {
+      logger?.("Chrome pid receipt changed during cleanup; preserving the newer receipt");
+      return false;
+    }
+    const alive = isProcessAlive(pid);
+    const profileInUse = alive ? false : await isChromeUsingUserDataDir(userDataDir);
+    if (!alive && !profileInUse) {
+      if ((await readChromePid(userDataDir)) !== pid) {
+        logger?.("Chrome pid receipt changed during cleanup; preserving the newer receipt");
+        return false;
+      }
+      await rm(path.join(userDataDir, CHROME_PID_FILENAME), { force: true });
+      logger?.(`Removed dead Chrome pid receipt: ${pid}`);
+      return true;
+    }
+    if (Date.now() >= deadline) {
+      logger?.(
+        alive
+          ? `Chrome pid ${pid} is still alive; preserving pid receipt`
+          : "Detected running Chrome using this profile; preserving pid receipt",
+      );
+      return false;
+    }
+    await delay(Math.min(pollMs, Math.max(1, deadline - Date.now())));
   }
-  if (await isChromeUsingUserDataDir(userDataDir)) {
-    logger?.("Detected running Chrome using this profile; preserving pid receipt");
-    return false;
-  }
-  if ((await readChromePid(userDataDir)) !== pid) {
-    logger?.("Chrome pid receipt changed during cleanup; preserving the newer receipt");
-    return false;
-  }
-  await rm(path.join(userDataDir, CHROME_PID_FILENAME), { force: true });
-  logger?.(`Removed dead Chrome pid receipt: ${pid}`);
-  return true;
 }
 
 export interface RunningChromeDebugTarget {

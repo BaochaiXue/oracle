@@ -34,6 +34,12 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
 
 ### Fixed
 
+- Browser attachments: stop treating disabled Send as proof of an unfinished
+  upload while Oracle has intentionally left the composer prompt empty. Stable
+  complete attachment evidence can now advance to prompt composition after a
+  longer settle window; populated composers, missing attachments, and explicit
+  upload progress still fail closed, and the final submission gate re-verifies
+  every attachment before requiring an enabled Send button.
 - Browser pre-send recovery: wait for `Page.navigate` to commit a new document
   instead of accepting the already-ready `about:blank` page. If the model
   selector is still absent on an Oracle-owned target, reload that same target
@@ -60,8 +66,10 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   active/recoverable or unverified owners remain untouched. Add concise
   `oracle browser status` and plan-first `oracle browser heal`, and keep normal
   review output at preparing/sent/waiting/complete phases. The two-cold-start
-  smoke now removes its exact dead PID receipt after confirmed shutdown, so an
-  idle profile does not remain classified as `stale-metadata`.
+  smoke now replaces macOS's intermediate `open -W` launcher PID with the
+  discovered browser owner and gives the exact receipt a bounded exit grace
+  after confirmed endpoint shutdown, so an idle profile does not remain
+  classified as `stale-metadata`.
 - Remote service: advertise only the bound loopback address when `oracle serve`
   listens on loopback instead of also printing unrelated LAN or tailnet
   addresses.

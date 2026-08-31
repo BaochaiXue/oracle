@@ -185,6 +185,82 @@ describe("attachment completion fallbacks", () => {
     useRealTime();
   });
 
+  test("waitForAttachmentCompletion accepts stable attachment chips while an empty prompt keeps Send disabled", async () => {
+    useFakeTime();
+
+    const runtime = {
+      evaluate: vi.fn().mockResolvedValue({
+        result: {
+          value: {
+            state: "disabled",
+            uploading: false,
+            filesAttached: true,
+            attachedNames: ["a.txt", "b.txt"],
+            inputNames: ["b.txt"],
+            fileCount: 0,
+            promptEmpty: true,
+          },
+        },
+      }),
+    } as unknown as ChromeClient["Runtime"];
+
+    const promise = waitForAttachmentCompletion(runtime, 10_000, ["a.txt", "b.txt"]);
+    await vi.advanceTimersByTimeAsync(6_000);
+    await expect(promise).resolves.toBeUndefined();
+    useRealTime();
+  });
+
+  test("waitForAttachmentCompletion keeps waiting when a populated prompt has disabled Send", async () => {
+    useFakeTime();
+
+    const runtime = {
+      evaluate: vi.fn().mockResolvedValue({
+        result: {
+          value: {
+            state: "disabled",
+            uploading: false,
+            filesAttached: true,
+            attachedNames: ["oracle-attach-verify.txt"],
+            inputNames: ["oracle-attach-verify.txt"],
+            fileCount: 0,
+            promptEmpty: false,
+          },
+        },
+      }),
+    } as unknown as ChromeClient["Runtime"];
+
+    const promise = waitForAttachmentCompletion(runtime, 800, ["oracle-attach-verify.txt"]);
+    const assertion = expect(promise).rejects.toThrow(/did not finish uploading/i);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await assertion;
+    useRealTime();
+  });
+
+  test("waitForAttachmentCompletion accepts an exact input-only match while an empty prompt keeps Send disabled", async () => {
+    useFakeTime();
+
+    const runtime = {
+      evaluate: vi.fn().mockResolvedValue({
+        result: {
+          value: {
+            state: "disabled",
+            uploading: false,
+            filesAttached: false,
+            attachedNames: [],
+            inputNames: ["a.txt", "b.txt"],
+            fileCount: 0,
+            promptEmpty: true,
+          },
+        },
+      }),
+    } as unknown as ChromeClient["Runtime"];
+
+    const promise = waitForAttachmentCompletion(runtime, 10_000, ["a.txt", "b.txt"]);
+    await vi.advanceTimersByTimeAsync(6_000);
+    await expect(promise).resolves.toBeUndefined();
+    useRealTime();
+  });
+
   test("waitForAttachmentCompletion times out when neither UI nor file input matches", async () => {
     useFakeTime();
 

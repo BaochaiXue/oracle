@@ -1399,6 +1399,14 @@ export async function waitForAttachmentCompletion(
       const parentHasSend = parent && sendSelectors.some((selector) => parent.querySelector(selector));
       return parentHasSend ? parent : composerRoot;
     })();
+    const promptNode = findPromptNode();
+    const promptValue =
+      promptNode instanceof HTMLTextAreaElement || promptNode instanceof HTMLInputElement
+        ? promptNode.value
+        : promptNode?.innerText ?? promptNode?.textContent ?? '';
+    const promptEmpty = promptNode
+      ? String(promptValue).replace(/\u00a0/g, ' ').trim().length === 0
+      : null;
     let button = null;
     for (const selector of sendSelectors) {
       button = document.querySelector(selector);
@@ -1547,6 +1555,7 @@ export async function waitForAttachmentCompletion(
       attachedNames,
       inputNames,
       fileCount,
+      promptEmpty,
     };
   })()`;
   while (Date.now() < deadline) {
@@ -1560,6 +1569,7 @@ export async function waitForAttachmentCompletion(
           attachedNames?: string[];
           inputNames?: string[];
           fileCount?: number;
+          promptEmpty?: boolean | null;
         }
       | undefined;
     if (!value && logger?.verbose) {
@@ -1586,6 +1596,7 @@ export async function waitForAttachmentCompletion(
               attachedNames: (value.attachedNames ?? []).slice(0, 3),
               inputNames: (value.inputNames ?? []).slice(0, 3),
               fileCount: value.fileCount ?? 0,
+              promptEmpty: value.promptEmpty ?? null,
             })}`,
           );
         }
@@ -1599,6 +1610,11 @@ export async function waitForAttachmentCompletion(
       const fileCount = typeof value.fileCount === "number" ? value.fileCount : 0;
       const fileCountSatisfied =
         expectedNormalized.length > 0 && fileCount >= expectedNormalized.length;
+      const prePromptDisabled =
+        expectedNormalized.length > 0 &&
+        value.state === "disabled" &&
+        value.promptEmpty === true &&
+        value.uploading === false;
       const matchesExpected = (expected: string): boolean => {
         const baseName = expected.split("/").pop()?.split("\\").pop() ?? expected;
         const normalizedExpected = baseName.toLowerCase().replace(/\s+/g, " ").trim();
@@ -1621,7 +1637,7 @@ export async function waitForAttachmentCompletion(
       };
       const missing = expectedNormalized.filter((expected) => !matchesExpected(expected));
       if (missing.length === 0 || fileCountSatisfied) {
-        const stableThresholdMs = value.uploading ? 3000 : 1500;
+        const stableThresholdMs = value.uploading ? 3000 : prePromptDisabled ? 5000 : 1500;
         if (attachmentMatchSince === null) {
           attachmentMatchSince = Date.now();
         }
@@ -1629,8 +1645,16 @@ export async function waitForAttachmentCompletion(
         if (stable && value.state === "ready") {
           return;
         }
-        // Don't treat disabled button as complete - wait for it to become 'ready'.
-        // The spinner detection is unreliable, so a disabled button likely means upload is in progress.
+        // Oracle uploads files before it writes the prompt. Some ChatGPT surfaces keep Send
+        // disabled while that prompt is still empty even after every attachment chip has
+        // settled. Treat stable, complete attachment evidence as upload completion here; the
+        // later submission gate re-verifies the chips after writing the prompt and still
+        // requires an enabled Send button before it can click.
+        if (stable && prePromptDisabled && (Boolean(value.filesAttached) || fileCountSatisfied)) {
+          return;
+        }
+        // Outside the exact empty-prompt case above, keep treating disabled Send as incomplete.
+        // The spinner detection is unreliable, so it may still mean upload processing is active.
         if (value.state === "missing" && (value.filesAttached || fileCountSatisfied)) {
           return;
         }
@@ -1648,7 +1672,7 @@ export async function waitForAttachmentCompletion(
         expectedInputBasenames.length > 0 && inputOnlySignatureNow === expectedInputSignature;
       const inputOnlyReady =
         inputOnlyNamesSatisfied &&
-        value.state === "ready" &&
+        (value.state === "ready" || prePromptDisabled) &&
         value.uploading === false &&
         !value.filesAttached &&
         fileCount === 0;
@@ -1657,7 +1681,8 @@ export async function waitForAttachmentCompletion(
           inputOnlyReadySince = Date.now();
           inputOnlySignature = inputOnlySignatureNow;
         }
-        if (Date.now() - inputOnlyReadySince > 1500) {
+        const inputOnlyStableThresholdMs = prePromptDisabled ? 5000 : 1500;
+        if (Date.now() - inputOnlyReadySince > inputOnlyStableThresholdMs) {
           return;
         }
       } else {
@@ -1677,11 +1702,12 @@ export async function waitForAttachmentCompletion(
             (expectedNoExt.length >= 6 && raw.includes(expectedNoExt)),
         );
       });
-      // Don't include 'disabled' - a disabled button likely means upload is still in progress.
-      const inputStateOk = value.state === "ready" || value.state === "missing";
+      // Only include disabled Send for the exact empty-prompt state established above.
+      const inputStateOk =
+        value.state === "ready" || value.state === "missing" || prePromptDisabled;
       const inputSeenNow = inputMissing.length === 0 || fileCountSatisfied;
       const inputEvidenceOk = Boolean(value.filesAttached) || fileCountSatisfied;
-      const stableThresholdMs = value.uploading ? 3000 : 1500;
+      const stableThresholdMs = value.uploading ? 3000 : prePromptDisabled ? 5000 : 1500;
       if (inputSeenNow && inputStateOk && inputEvidenceOk) {
         if (inputMatchSince === null) {
           inputMatchSince = Date.now();
