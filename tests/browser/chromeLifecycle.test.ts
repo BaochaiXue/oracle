@@ -127,6 +127,41 @@ describe("copied-profile launch flags", () => {
 });
 
 describe("persistent-profile launch flags", () => {
+  test("keeps a guest-local WSL Linux profile in POSIX form", async () => {
+    const { resolveWslLauncherProfileForTest } =
+      await import("../../src/browser/chromeLifecycle.js");
+    const profile = resolveWslLauncherProfileForTest({
+      chromeFlags: ["--password-store=basic"],
+      chromePath: "/home/example/.oracle/chrome",
+      connectHost: "127.0.0.1",
+      userDataDir: "/home/example/.oracle/browser-profile",
+      wsl: true,
+    });
+
+    expect(profile.userDataDir).toBe(false);
+    expect(profile.chromeFlags).toEqual([
+      "--user-data-dir=/home/example/.oracle/browser-profile",
+      "--password-store=basic",
+    ]);
+  });
+
+  test("preserves chrome-launcher's Windows profile conversion for a WSL bridge", async () => {
+    const { resolveWslLauncherProfileForTest } =
+      await import("../../src/browser/chromeLifecycle.js");
+    const profile = resolveWslLauncherProfileForTest({
+      chromeFlags: [],
+      chromePath: "/mnt/c/Program Files/Google/Chrome/Application/chrome.exe",
+      connectHost: "10.0.0.1",
+      userDataDir: "/mnt/c/Users/example/oracle-profile",
+      wsl: true,
+    });
+
+    expect(profile).toEqual({
+      chromeFlags: [],
+      userDataDir: "/mnt/c/Users/example/oracle-profile",
+    });
+  });
+
   test("resolves the dedicated executable to its macOS app bundle", async () => {
     const { __macLaunchTest__ } = await import("../../src/browser/chromeLifecycle.js");
 
@@ -172,6 +207,26 @@ describe("persistent-profile launch flags", () => {
       expect(flags).not.toContain("--password-store=basic");
     } else {
       expect(flags).not.toContain("--use-mock-keychain");
+    }
+  });
+
+  test("can explicitly reuse a Linux profile with the basic password store", async () => {
+    const original = process.env.ORACLE_BROWSER_LINUX_BASIC_PASSWORD_STORE;
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "linux" });
+    process.env.ORACLE_BROWSER_LINUX_BASIC_PASSWORD_STORE = "1";
+    try {
+      const { buildChromeFlagsForTest } = await import("../../src/browser/chromeLifecycle.js");
+      const flags = buildChromeFlagsForTest(false, "127.0.0.1", false, true);
+
+      expect(flags).toContain("--password-store=basic");
+    } finally {
+      if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
+      if (original === undefined) {
+        delete process.env.ORACLE_BROWSER_LINUX_BASIC_PASSWORD_STORE;
+      } else {
+        process.env.ORACLE_BROWSER_LINUX_BASIC_PASSWORD_STORE = original;
+      }
     }
   });
 });

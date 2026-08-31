@@ -11,9 +11,15 @@ import {
 import { buildDedicatedSetupArgsForTest } from "../../src/cli/dedicatedBrowser.js";
 
 const originalPlatform = process.platform;
+const originalBasicPasswordStore = process.env.ORACLE_BROWSER_LINUX_BASIC_PASSWORD_STORE;
 
 afterEach(() => {
   Object.defineProperty(process, "platform", { value: originalPlatform });
+  if (originalBasicPasswordStore === undefined) {
+    delete process.env.ORACLE_BROWSER_LINUX_BASIC_PASSWORD_STORE;
+  } else {
+    process.env.ORACLE_BROWSER_LINUX_BASIC_PASSWORD_STORE = originalBasicPasswordStore;
+  }
 });
 
 describe("dedicated browser setup", () => {
@@ -51,6 +57,16 @@ describe("dedicated browser setup", () => {
     expect(args).toContain("--use-mock-keychain");
     expect(args).not.toContain("--password-store=basic");
     expect(args.some((arg) => arg.startsWith("--remote-debugging"))).toBe(false);
+  });
+
+  test("uses the basic password store only for an explicit Linux profile", () => {
+    Object.defineProperty(process, "platform", { value: "linux" });
+    process.env.ORACLE_BROWSER_LINUX_BASIC_PASSWORD_STORE = "1";
+
+    const args = buildDedicatedSetupArgsForTest("/home/example/.oracle/browser-profile");
+
+    expect(args).toContain("--password-store=basic");
+    expect(args).not.toContain("--use-mock-keychain");
   });
 
   test("resumes a retained partial Chrome for Testing archive", async () => {

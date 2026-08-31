@@ -11,6 +11,7 @@ import {
 } from "./profileState.js";
 import { delay } from "./utils.js";
 import { isWsl, resolveWslChromeLaunchRoute } from "./wslHost.js";
+import { useExplicitLinuxBasicPasswordStore } from "./passwordStore.js";
 
 const MAC_BACKGROUND_STARTING_URL = "--no-startup-window";
 
@@ -45,6 +46,12 @@ export async function launchChrome(
     usingCopiedProfile,
     persistentProfile,
   );
+  const launcherProfile = resolveWslLauncherProfile({
+    chromeFlags: launchOptions.chromeFlags,
+    chromePath,
+    connectHost,
+    userDataDir,
+  });
   const shouldLaunchWithoutActivation =
     process.platform === "darwin" && persistentProfile && !config.headless;
   const launcher = usePatchedLauncher
@@ -67,8 +74,8 @@ export async function launchChrome(
         })
       : await launch({
           chromePath: chromePath ?? undefined,
-          chromeFlags: launchOptions.chromeFlags,
-          userDataDir,
+          chromeFlags: launcherProfile.chromeFlags,
+          userDataDir: launcherProfile.userDataDir,
           handleSIGINT: false,
           port: debugPort ?? undefined,
           ignoreDefaultFlags: launchOptions.ignoreDefaultFlags,
@@ -79,6 +86,46 @@ export async function launchChrome(
   return Object.assign(launcher, { host: connectHost ?? "127.0.0.1" }) as LaunchedChrome & {
     host?: string;
   };
+}
+
+function resolveWslLauncherProfile({
+  chromeFlags,
+  chromePath,
+  connectHost,
+  userDataDir,
+  wsl = isWsl(),
+}: {
+  chromeFlags: string[];
+  chromePath: string | null | undefined;
+  connectHost: string | null;
+  userDataDir: string;
+  wsl?: boolean;
+}): { chromeFlags: string[]; userDataDir: string | false } {
+  const usesGuestLocalLinuxChrome =
+    wsl &&
+    connectHost === "127.0.0.1" &&
+    Boolean(chromePath) &&
+    !chromePath?.toLowerCase().endsWith(".exe");
+  if (!usesGuestLocalLinuxChrome) {
+    return { chromeFlags, userDataDir };
+  }
+  return {
+    chromeFlags: [`--user-data-dir=${userDataDir}`, ...chromeFlags],
+    // chrome-launcher converts every supplied WSL userDataDir to a Windows UNC
+    // path. Suppress its generated flag because this executable and profile
+    // both live inside the WSL guest.
+    userDataDir: false,
+  };
+}
+
+export function resolveWslLauncherProfileForTest(options: {
+  chromeFlags: string[];
+  chromePath: string | null | undefined;
+  connectHost: string | null;
+  userDataDir: string;
+  wsl: boolean;
+}): { chromeFlags: string[]; userDataDir: string | false } {
+  return resolveWslLauncherProfile(options);
 }
 
 async function launchVisibleChromeWithoutMacActivation({
@@ -920,6 +967,7 @@ function buildChromeFlags(
   persistentProfile = false,
   useMockKeychain = false,
 ): string[] {
+  const useBasicPasswordStore = persistentProfile && useExplicitLinuxBasicPasswordStore();
   const persistentProfileFlags = [
     // A dedicated profile may stay alive behind the caller's active app for a
     // long Pro turn. Do not let macOS window occlusion background that page:
@@ -969,6 +1017,8 @@ function buildChromeFlags(
 
   if (!persistentProfile && process.platform !== "win32" && !isWsl()) {
     flags.push("--password-store=basic", "--use-mock-keychain");
+  } else if (useBasicPasswordStore) {
+    flags.push("--password-store=basic");
   } else if (persistentProfile && useMockKeychain && process.platform === "darwin") {
     // Chrome for Testing has a different app identity from everyday Chrome.
     // Opting into Chromium's test keychain avoids a macOS permission dialog on

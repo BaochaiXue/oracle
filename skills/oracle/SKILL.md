@@ -97,6 +97,31 @@ cannot rely on a detached stale node.
 4. If a run detaches or times out, reattach to the stored session instead of
    starting a duplicate.
 
+## WSLg Linux Chrome ownership
+
+When Oracle runs its Linux Chrome for Testing inside WSLg, invoke every
+`oracle` and `oracle-mcp` command with both
+`ORACLE_BROWSER_REMOTE_DEBUG_HOST=127.0.0.1` and
+`ORACLE_BROWSER_LINUX_BASIC_PASSWORD_STORE=1`. The first keeps CDP inside the
+WSL guest instead of routing it to the Windows resolver host. The second is an
+explicit tradeoff for WSL installations without Secret Service: it lets the
+dedicated profile retain ChatGPT cookies with Chromium's weaker basic password
+store. Keep that profile owner-only and never reuse an everyday browser profile.
+
+The human performs only ChatGPT sign-in and real account challenges. The agent
+owns browser setup, exact-process closure, status, smoke, recovery, and normal
+lifecycle. Changing password-store mode requires moving the old dedicated
+profile to a recoverable backup and creating a fresh owner-only profile before
+sign-in; restored tabs from an old profile are not login-persistence evidence.
+After the human confirms sign-in, verify that the setup PID belongs to Oracle's
+Chrome for Testing executable, names the dedicated `--user-data-dir`, and
+carries the expected password-store flag. Identify the exact window owned by
+that PID and send `WM_DELETE_WINDOW`, then wait for the setup command's
+successful completion receipt so Chrome flushes its profile normally. Never ask
+the human to close the window, never use a broad `pkill`, and never signal an
+unverified browser process. Run the account-safe two-cold-start smoke after
+first setup or a concrete browser-contract change; it submits no prompt.
+
 ## Commands
 
 - Show help:

@@ -13,6 +13,18 @@ Read this file whenever you're working from Windows and add new findings so the 
 - Native Windows file stats do not expose POSIX permission bits. Keep sealed-content and argv tests active there, but assert owner-only `0600` modes on POSIX runners.
 - Cross-platform tests should build path fragments with `node:path` and normalize CRLF before asserting multiline tracked text.
 - WSL browser launch host detection: a systemd-resolved stub such as `nameserver 127.0.0.53` is guest loopback, not the Windows host. Keep resolver-derived non-loopback hosts for Windows Chrome compatibility, but route resolver-derived `127/8` values to the standard local Chrome launcher.
+- WSLg can run Oracle's Linux Chrome for Testing inside WSL instead of bridging
+  to Windows Chrome. Set `ORACLE_BROWSER_REMOTE_DEBUG_HOST=127.0.0.1` so CDP
+  remains guest-local. If no Secret Service is available, explicitly set
+  `ORACLE_BROWSER_LINUX_BASIC_PASSWORD_STORE=1` for both `browser setup` and
+  normal runs. This stores the dedicated profile's cookies with Chromium's
+  weaker Linux basic store; keep `~/.oracle/browser-profile` owner-only. The
+  variable is rejected outside Linux and values other than `1` fail closed.
+  For this guest-local route Oracle must also bypass `chrome-launcher`'s
+  unconditional WSL conversion of `userDataDir` to a Windows UNC path: pass the
+  POSIX profile as an explicit Chrome flag and set the launcher's generated
+  profile option to `false`. Preserve the conversion for `.exe`/Windows-host
+  bridge launches.
 
 Future Windows gotchas belong here. Update this doc when you learn something new.
 

@@ -43,6 +43,7 @@ import {
   type DedicatedChromeMaintenanceReceipt,
 } from "../browser/dedicatedChromeSupervisor.js";
 import { readBrowserTargetRegistry } from "../browser/tabLeaseRegistry.js";
+import { useExplicitLinuxBasicPasswordStore } from "../browser/passwordStore.js";
 
 export interface DedicatedBrowserSetupOptions {
   profileDir: string;
@@ -245,6 +246,7 @@ export async function runDedicatedBrowserSetup(options: DedicatedBrowserSetupOpt
 }
 
 function buildDedicatedSetupArgs(profileDir: string, useMockKeychain = false): string[] {
+  const useBasicPasswordStore = useExplicitLinuxBasicPasswordStore();
   return [
     `--user-data-dir=${profileDir}`,
     "--no-first-run",
@@ -255,6 +257,7 @@ function buildDedicatedSetupArgs(profileDir: string, useMockKeychain = false): s
     "--disable-extensions",
     "--disable-sync",
     ...(useMockKeychain && process.platform === "darwin" ? ["--use-mock-keychain"] : []),
+    ...(useBasicPasswordStore ? ["--password-store=basic"] : []),
     "--new-window",
     CHATGPT_URL,
   ];
