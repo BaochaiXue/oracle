@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { createConversationUrlMonitor } from "../../src/browser/conversationUrlMonitor.js";
 import type { BrowserLogger } from "../../src/browser/types.js";
+import { BrowserAutomationError } from "../../src/oracle/errors.js";
 
 describe("createConversationUrlMonitor", () => {
   test("persists a conversation URL that appears after prompt submission", async () => {
@@ -182,5 +183,111 @@ describe("createConversationUrlMonitor", () => {
     await expect(monitor.update("assistant-timeout", 500)).resolves.toBe(false);
 
     expect(persistUrl).not.toHaveBeenCalled();
+  });
+
+  test("does not bind a durable URL until the committed prompt identity verifies", async () => {
+    const validateCandidate = vi
+      .fn<() => Promise<"pending" | "verified">>()
+      .mockResolvedValueOnce("pending")
+      .mockResolvedValue("verified");
+    const persistUrl = vi.fn(async () => {});
+    let now = 0;
+    const monitor = createConversationUrlMonitor({
+      readUrl: async () => "https://chatgpt.com/c/committed-a",
+      persistUrl,
+      validateCandidate,
+      logger: vi.fn() as BrowserLogger,
+      wait: async () => {
+        now += 250;
+      },
+      now: () => now,
+    });
+
+    await expect(monitor.update("post-submit", 1_000)).resolves.toBe(true);
+
+    expect(validateCandidate).toHaveBeenCalledTimes(2);
+    expect(monitor.boundConversationId()).toBe("committed-a");
+    expect(persistUrl).toHaveBeenCalledOnce();
+  });
+
+  test("rejects the first durable URL when its user turn does not match the committed prompt", async () => {
+    const persistUrl = vi.fn(async () => {});
+    const monitor = createConversationUrlMonitor({
+      readUrl: async () => "https://chatgpt.com/c/unrelated-b",
+      persistUrl,
+      validateCandidate: async () => "mismatch",
+      logger: vi.fn() as BrowserLogger,
+    });
+
+    await expect(monitor.update("post-submit", 1_000)).rejects.toMatchObject({
+      name: "BrowserAutomationError",
+      details: {
+        stage: "conversation-identity",
+        code: "committed-prompt-mismatch",
+        observedConversationId: "unrelated-b",
+      },
+    } satisfies Partial<BrowserAutomationError>);
+    expect(persistUrl).not.toHaveBeenCalled();
+    expect(() => monitor.assertHealthy()).toThrow(/different ChatGPT conversation/u);
+  });
+
+  test("does not let a transient WEB route hide a later unrelated durable conversation", async () => {
+    const persistUrl = vi.fn(async () => {});
+    let now = 0;
+    const readUrl = vi
+      .fn<() => Promise<string>>()
+      .mockResolvedValueOnce("https://chatgpt.com/c/WEB:temporary-request")
+      .mockResolvedValue("https://chatgpt.com/c/unrelated-b");
+    const monitor = createConversationUrlMonitor({
+      readUrl,
+      persistUrl,
+      validateCandidate: async () => "mismatch",
+      logger: vi.fn() as BrowserLogger,
+      wait: async () => {
+        now += 250;
+      },
+      now: () => now,
+    });
+
+    await expect(monitor.update("post-submit", 1_000)).rejects.toMatchObject({
+      name: "BrowserAutomationError",
+      details: {
+        stage: "conversation-identity",
+        code: "committed-prompt-mismatch",
+        observedConversationId: "unrelated-b",
+      },
+    } satisfies Partial<BrowserAutomationError>);
+    expect(readUrl).toHaveBeenCalledTimes(2);
+    expect(persistUrl).not.toHaveBeenCalled();
+  });
+
+  test("fails an active capture when the bound target navigates from conversation A to B", async () => {
+    let currentUrl = "https://chatgpt.com/c/conversation-a";
+    const persistUrl = vi.fn(async () => {});
+    const monitor = createConversationUrlMonitor({
+      readUrl: async () => currentUrl,
+      persistUrl,
+      logger: vi.fn() as BrowserLogger,
+      watchAfterBind: true,
+      pollIntervalMs: 1,
+    });
+
+    await expect(monitor.update("post-submit", 1_000)).resolves.toBe(true);
+    const guarded = monitor.guard(() => new Promise<never>(() => {}));
+    currentUrl = "https://chatgpt.com/c/conversation-b";
+
+    await expect(guarded).rejects.toMatchObject({
+      name: "BrowserAutomationError",
+      details: {
+        stage: "conversation-identity",
+        code: "conversation-id-mismatch",
+        expectedConversationId: "conversation-a",
+        observedConversationId: "conversation-b",
+      },
+    } satisfies Partial<BrowserAutomationError>);
+    expect(monitor.boundConversationId()).toBe("conversation-a");
+    expect(monitor.boundConversationUrl()).toBe("https://chatgpt.com/c/conversation-a");
+    expect(persistUrl).toHaveBeenCalledOnce();
+    await monitor.stop();
   });
 });

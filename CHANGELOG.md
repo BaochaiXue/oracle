@@ -34,6 +34,18 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
 
 ### Fixed
 
+- Browser pre-send recovery: wait for `Page.navigate` to commit a new document
+  instead of accepting the already-ready `about:blank` page. If the model
+  selector is still absent on an Oracle-owned target, reload that same target
+  once and re-verify the requested model; attached user tabs are never
+  redirected, and a second failure remains unsent instead of suggesting a
+  weaker `current`/`ignore` strategy.
+- Browser capture: bind the first durable conversation URL to the exact
+  committed user-turn digest, freeze that conversation identity for the rest
+  of the run, and fail closed before thinking/copy/artifact capture if the same
+  CDP target later navigates to another conversation. The original submitted
+  conversation remains the recovery authority; Oracle never accepts or copies
+  the other tab state as this run's answer.
 - Browser picker: select GPT-5.6 Pro from ChatGPT's current five-step Power
   slider even when no static `Pro` option exists in the menu. Oracle reads the
   slider's ARIA position, sends bounded ArrowRight input to its keyboard-owning

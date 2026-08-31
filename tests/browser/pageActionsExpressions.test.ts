@@ -137,6 +137,22 @@ describe("browser automation expressions", () => {
     expect(expression).toContain("copy-turn-action-button");
   });
 
+  test("copy expression refuses a different durable conversation before clicking", async () => {
+    const expression = buildCopyExpressionForTest({}, "conversation-a");
+    const result = await Function(
+      "location",
+      `return ${expression};`,
+    )({
+      href: "https://chatgpt.com/c/conversation-b",
+    });
+
+    expect(result).toEqual({
+      success: false,
+      status: "conversation-mismatch",
+      observedConversationId: "conversation-b",
+    });
+  });
+
   test("user-turn attachment expression requires non-empty prompt text for prefix fallback", () => {
     const expression = buildUserTurnAttachmentExpressionForTest({
       expectedPromptPrefix: "expected prompt text",

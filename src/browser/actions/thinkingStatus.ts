@@ -19,6 +19,7 @@ export interface ThinkingStatusSnapshot {
 interface ThinkingStatusMonitorOptions {
   intervalMs?: number;
   now?: () => number;
+  expectedConversationId?: string;
 }
 
 export function startThinkingStatusMonitor(
@@ -43,7 +44,7 @@ export function startThinkingStatusMonitor(
     }
     pending = true;
     try {
-      const snapshot = await readThinkingStatus(Runtime);
+      const snapshot = await readThinkingStatus(Runtime, options.expectedConversationId);
       if (stopped) {
         return;
       }
@@ -131,8 +132,9 @@ function buildThinkingStatusFingerprint(snapshot: ThinkingStatusSnapshot): strin
 
 async function readThinkingStatus(
   Runtime: ChromeClient["Runtime"],
+  expectedConversationId?: string,
 ): Promise<ThinkingStatusSnapshot | null> {
-  const expression = buildThinkingStatusExpression();
+  const expression = buildThinkingStatusExpression(expectedConversationId);
   const { result } = await Runtime.evaluate({
     expression,
     awaitPromise: true,
@@ -187,7 +189,7 @@ export function sanitizeThinkingText(raw: string): string {
   return SAFE_THINKING_STATUS_MESSAGES.has(normalizedKey) ? normalizedKey : "active";
 }
 
-function buildThinkingStatusExpression(): string {
+function buildThinkingStatusExpression(expectedConversationId?: string): string {
   const conversationLiteral = JSON.stringify(CONVERSATION_TURN_SELECTOR);
   const assistantLiteral = JSON.stringify(ASSISTANT_ROLE_SELECTOR);
   const selectors = [
@@ -203,7 +205,20 @@ function buildThinkingStatusExpression(): string {
   const selectorLiteral = JSON.stringify(selectors);
   const keywordsLiteral = JSON.stringify(keywords);
   const stopSelectorLiteral = JSON.stringify(stopSelector);
+  const expectedConversationLiteral =
+    typeof expectedConversationId === "string" && expectedConversationId.trim().length > 0
+      ? JSON.stringify(expectedConversationId.trim())
+      : "null";
   return `(async () => {
+    const EXPECTED_CONVERSATION_ID = ${expectedConversationLiteral};
+    const href = typeof location === 'object' && location.href ? location.href : '';
+    const observedConversationId = href.match(/\\/c\\/([a-zA-Z0-9-]+)(?=[/?#]|$)/)?.[1] ?? null;
+    if (
+      EXPECTED_CONVERSATION_ID &&
+      observedConversationId !== EXPECTED_CONVERSATION_ID
+    ) {
+      return null;
+    }
     const CONVERSATION_SELECTOR = ${conversationLiteral};
     const ASSISTANT_SELECTOR = ${assistantLiteral};
     const selectors = ${selectorLiteral};

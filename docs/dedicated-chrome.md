@@ -332,17 +332,27 @@ For a normal Pro consultation Oracle:
    managed profile before any prompt data is sent;
 4. creates and records an owned target without activating the browser window,
    preserving the exact creation-time CDP target ID for its full lifetime;
-5. verifies ChatGPT login, model `GPT-5.6 Sol`, and reasoning tier `Pro`;
-6. re-reads the visible composer and refuses to send if its exact contents were
+5. waits for navigation to commit a new ChatGPT document rather than accepting
+   the old ready `about:blank` page. If the selector is still absent on this
+   Oracle-owned target, reloads that same target once and retries model
+   verification; it never redirects an attached user-owned tab or creates a
+   replacement target for this repair;
+6. verifies ChatGPT login, model `GPT-5.6 Sol`, and reasoning tier `Pro`;
+7. re-reads the visible composer and refuses to send if its exact contents were
    changed after Oracle populated it;
-7. records dispatch intent at the actual Send boundary while keeping
+8. records dispatch intent at the actual Send boundary while keeping
    `promptSubmitted:false`;
-8. marks `promptSubmitted:true` only after the exact user turn is verified in
-   the conversation, then persists its id/URL as soon as it becomes stable;
-9. waits in the browser worker for completion instead of spawning repeated
-   command/tab polls;
-10. captures Markdown and local artifacts;
-11. closes its owned target after the browser turn is terminal, including when
+9. marks `promptSubmitted:true` only after the exact user turn is verified,
+   accepts the first durable conversation id/URL only when that same committed
+   user-turn index and privacy-safe prompt digest are present, then freezes the
+   conversation id for the rest of the run;
+10. waits in the browser worker for completion instead of spawning repeated
+    command/tab polls;
+11. scopes thinking, assistant reads, Copy, and artifact capture to that frozen
+    conversation id. Same-target navigation to another conversation fails
+    closed before capture and keeps the original conversation as recovery
+    authority;
+12. closes its owned target after the browser turn is terminal, including when
     later evidence/admission rejects the captured result; retains that target
     only when the browser turn is genuinely incomplete/recoverable; then, after
     the last lease releases, drains the verified idle Chrome or preserves it
@@ -390,6 +400,13 @@ it does not submit the prompt again. A connection failure before submission is
 safe to retry. A state where submission may have occurred but no conversation
 can be identified remains an explicit ambiguity rather than an automatic
 duplicate.
+
+The creation-time CDP target ID proves which page Oracle owns; it does not make
+every later URL in that mutable page authoritative. Once a submitted turn is
+bound to conversation A, a later navigation of the same target to conversation
+B is recorded as a `conversation-identity` failure. Oracle does not overwrite
+the stored A receipt, wait on B's thinking state, click B's Copy action, or
+report B's answer as the result of A.
 
 If ChatGPT instead renders a request-frequency/rate-limit warning before the
 turn commits, Oracle stops the commit wait promptly and stores a terminal

@@ -84,7 +84,7 @@ oracle --followup <session-id> \
   -p "Challenge the previous recommendation and return the final decision."
 ```
 
-Oracle 会记录已提交 turn 的 identity 与 timing evidence。恢复必须回到原 conversation；只有 durable receipt 明确证明 prompt 尚未提交、尚未 commit 且 `retrySafe:true` 时，显式 resume 才能创建新 attempt。
+Oracle 会记录已提交 turn 的 identity 与 timing evidence，并把 durable conversation ID 冻结为 capture authority；同一 tab 后来跳到别的 conversation 时不会复制或接纳那边的答案。恢复必须回到原 conversation；只有 durable receipt 明确证明 prompt 尚未提交、尚未 commit 且 `retrySafe:true` 时，显式 resume 才能创建新 attempt。
 
 <!-- readme-sync:batch -->
 

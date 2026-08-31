@@ -46,6 +46,16 @@ describe("shouldPreserveBrowserOnErrorForTest", () => {
     expect(classifyPreservedBrowserErrorForTest(recheck, false)).toBe("reattachable-capture");
   });
 
+  test("preserves the authoritative conversation after a same-target identity mismatch", () => {
+    const mismatch = new BrowserAutomationError("conversation changed", {
+      stage: "conversation-identity",
+      code: "conversation-id-mismatch",
+    });
+
+    expect(shouldPreserveBrowserOnErrorForTest(mismatch, false)).toBe(true);
+    expect(classifyPreservedBrowserErrorForTest(mismatch, false)).toBe("reattachable-capture");
+  });
+
   test("does not preserve assistant capture errors in headless mode", () => {
     const error = new BrowserAutomationError("assistant timed out", {
       stage: "assistant-timeout",
@@ -106,6 +116,66 @@ describe("authenticated model-selection errors", () => {
     expect(normalized).toBe(error);
     expect(normalized.message).toContain("Available: GPT-5.6 Sol");
     expect(normalized.message).not.toMatch(/cookies|log in/i);
+  });
+
+  test("repairs the same owned target once when the selector button is absent", async () => {
+    const select = vi
+      .fn<() => Promise<never>>()
+      .mockRejectedValueOnce(
+        new BrowserAutomationError("selector missing", {
+          stage: "model-selection",
+          code: "model-selector-button-missing",
+          promptSubmitted: false,
+        }),
+      )
+      .mockResolvedValueOnce({
+        requestedModel: "GPT-5.6 Sol",
+        resolvedLabel: "GPT-5.6 Sol",
+        strategy: "select",
+        status: "already-selected",
+        verified: true,
+        source: "chatgpt-model-picker",
+        capturedAt: "2026-08-31T00:00:00.000Z",
+      } as never);
+    const repair = vi.fn().mockResolvedValue(undefined);
+    const repairLogger = vi.fn<(message: string) => void>();
+
+    await expect(
+      __test__.ensureModelSelectionWithTargetRepair({
+        select,
+        repair,
+        canRepair: true,
+        logger: repairLogger,
+      }),
+    ).resolves.toMatchObject({ verified: true, resolvedLabel: "GPT-5.6 Sol" });
+
+    expect(select).toHaveBeenCalledTimes(2);
+    expect(repair).toHaveBeenCalledTimes(1);
+    expect(repairLogger).toHaveBeenCalledWith(
+      expect.stringMatching(/reloading the same owned target once/i),
+    );
+  });
+
+  test("does not navigate an attached user-owned tab to repair a missing selector", async () => {
+    const error = new BrowserAutomationError("selector missing", {
+      stage: "model-selection",
+      code: "model-selector-button-missing",
+      promptSubmitted: false,
+    });
+    const select = vi.fn().mockRejectedValue(error);
+    const repair = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      __test__.ensureModelSelectionWithTargetRepair({
+        select,
+        repair,
+        canRepair: false,
+        logger: vi.fn<(message: string) => void>(),
+      }),
+    ).rejects.toBe(error);
+
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(repair).not.toHaveBeenCalled();
   });
 });
 
@@ -519,6 +589,32 @@ describe("ChatGPT UI warning detection", () => {
     expect(__test__.isAssistantResponseTimeoutError(new Error("Navigation timeout"))).toBe(false);
   });
 
+  test("never reloads a different conversation after the prompt is committed", () => {
+    expect(() =>
+      __test__.resolveAssistantReloadConversationUrl(
+        "https://chatgpt.com/c/conversation-b",
+        "conversation-a",
+      ),
+    ).toThrowError(
+      expect.objectContaining({
+        name: "BrowserAutomationError",
+        details: expect.objectContaining({
+          stage: "conversation-identity",
+          code: "assistant-reload-conversation-mismatch",
+          expectedConversationId: "conversation-a",
+          actualConversationId: "conversation-b",
+          promptSubmitted: true,
+        }),
+      }),
+    );
+  });
+
+  test("reconstructs the committed conversation URL after a transient root navigation", () => {
+    expect(__test__.resolveAssistantReloadConversationUrl(null, "conversation-a")).toBe(
+      "https://chatgpt.com/c/conversation-a",
+    );
+  });
+
   test("waits for prior turns to hydrate before retrying capture after a stall reload", async () => {
     vi.useFakeTimers();
     try {
@@ -536,6 +632,17 @@ describe("ChatGPT UI warning detection", () => {
           const expression = String(params.expression ?? "");
           if (expression === "location.href") {
             return { result: { value: "https://chatgpt.com/c/synthetic-recovery" } };
+          }
+          if (expression.includes("timeOrigin:")) {
+            return {
+              result: {
+                value: {
+                  readyState: "complete",
+                  href: "https://chatgpt.com/c/synthetic-recovery",
+                  timeOrigin: reloaded ? 2 : 1,
+                },
+              },
+            };
           }
           if (expression.startsWith("document.querySelectorAll(")) {
             return { result: { value: hydrated ? 2 : 0 } };

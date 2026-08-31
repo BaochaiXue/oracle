@@ -281,6 +281,12 @@ derives the HTTP timeout unless `--http-timeout` is supplied.
   `oracle browser heal` only for explicit no-prompt maintenance. Both preserve
   active/recoverable work and refuse foreign, everyday, attach-running, remote,
   or ambiguous owners.
+- A missing model-selector button is not permission to retry a Pro request with
+  `--browser-model-strategy current` or `ignore`. The canonical lane reloads
+  the same Oracle-owned target once before Send and re-runs strict model/effort
+  verification. If that bounded repair still fails, report the consultation as
+  unsent and stop; never navigate an attached user-owned tab, create a
+  replacement target, switch transport, or weaken the requested model.
 - Diagnose retained tabs with `oracle browser reconcile-tabs --plan`. Apply
   ordinary owned/blank cleanup with `--apply`; add
   `--include-untracked-chatgpt` only when the operator explicitly intends to
@@ -297,8 +303,13 @@ derives the HTTP timeout unless `--http-timeout` is supplied.
 - For direct-CDP Pro runs, trust is turn-scoped. The active turn must have its
   own dispatch/elapsed/workload receipt, a verified commit, and a normalized
   prompt digest bound to the exact committed user-turn index. Reattach accepts
-  only the assistant successor of that matched turn. Treat
+  only the assistant successor of that matched turn. The first durable
+  conversation URL is accepted only after that committed turn matches, then its
+  conversation ID is frozen: same-target navigation to another conversation
+  must stop thinking/response/Copy capture without overwriting the original
+  recovery receipt. Treat
   `pro-turn-not-committed`, `pro-turn-identity-mismatch`,
+  `conversation-id-mismatch`, `committed-prompt-mismatch`,
   `pro-response-timing-indeterminate`, and partial active workload as terminal;
   never start a duplicate to work around them.
 - Attachment bytes are established before each Pro dispatch, including

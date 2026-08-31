@@ -9,6 +9,7 @@ import {
 import { logDomFailure } from "../domDebug.js";
 import { buildClickDispatcher } from "./domEvents.js";
 import { delay } from "../utils.js";
+import { BrowserAutomationError } from "../../oracle/errors.js";
 
 const LEGACY_PRO_VERSION_WORD_TOKENS = ["5 4", "5 2", "5 1", "5 0", "gpt 5 pro"] as const;
 const LEGACY_PRO_VERSION_COMPACT_TOKENS = ["gpt54", "gpt52", "gpt51", "gpt50"] as const;
@@ -98,8 +99,13 @@ export async function ensureModelSelection(
     }
     default: {
       await logDomFailure(Runtime, logger, "model-switcher-button");
-      throw new Error(
-        "Unable to locate the ChatGPT model selector button. If the desired model is already selected in the browser, retry with --browser-model-strategy current; otherwise retry with --browser-model-strategy ignore to skip model selection.",
+      throw new BrowserAutomationError(
+        "Unable to locate the ChatGPT model selector button. Oracle will not submit until the requested model can be verified.",
+        {
+          stage: "model-selection",
+          code: "model-selector-button-missing",
+          promptSubmitted: false,
+        },
       );
     }
   }

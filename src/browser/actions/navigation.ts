@@ -58,8 +58,16 @@ export async function navigateToChatGPT(
   logger: BrowserLogger,
 ) {
   logger(`Navigating to ${url}`);
-  await Page.navigate({ url });
-  await waitForDocumentReady(Runtime, 45_000);
+  const before = await readDocumentNavigationState(Runtime).catch(() => null);
+  const navigation = await Page.navigate({ url });
+  if (navigation?.errorText) {
+    throw new BrowserAutomationError(`ChatGPT navigation failed: ${navigation.errorText}`, {
+      stage: "chatgpt-navigation",
+      code: "navigation-failed",
+      targetUrl: url,
+    });
+  }
+  await waitForDocumentReady(Runtime, 45_000, url, before);
 }
 
 export interface PromptReadyNavigationOptions {
@@ -736,19 +744,100 @@ export async function waitForResumedConversationHydration(
   return priorTurns;
 }
 
-async function waitForDocumentReady(Runtime: ChromeClient["Runtime"], timeoutMs: number) {
+interface DocumentNavigationState {
+  readyState: string | null;
+  href: string | null;
+  timeOrigin: number | null;
+}
+
+async function readDocumentNavigationState(
+  Runtime: ChromeClient["Runtime"],
+): Promise<DocumentNavigationState> {
+  const { result } = await Runtime.evaluate({
+    expression: `(() => ({
+      readyState: typeof document === 'object' ? document.readyState : null,
+      href: typeof location === 'object' && location.href ? location.href : null,
+      timeOrigin:
+        typeof performance === 'object' && Number.isFinite(performance.timeOrigin)
+          ? performance.timeOrigin
+          : null,
+    }))()`,
+    returnByValue: true,
+  });
+  const value = result?.value as Partial<DocumentNavigationState> | undefined;
+  return {
+    readyState: typeof value?.readyState === "string" ? value.readyState : null,
+    href: typeof value?.href === "string" ? value.href : null,
+    timeOrigin: typeof value?.timeOrigin === "number" ? value.timeOrigin : null,
+  };
+}
+
+function normalizedNavigationUrl(value: string): string | null {
+  if (value === "about:blank") return value;
+  try {
+    const parsed = new URL(value);
+    const pathname = parsed.pathname.replace(/\/+$/, "") || "/";
+    return `${parsed.protocol}//${parsed.host}${pathname}`;
+  } catch {
+    return null;
+  }
+}
+
+function navigationCommitted(
+  state: DocumentNavigationState,
+  expectedUrl: string,
+  before: DocumentNavigationState | null,
+): boolean {
+  if (!state.href) return false;
+  const expected = normalizedNavigationUrl(expectedUrl);
+  const actual = normalizedNavigationUrl(state.href);
+  if (!expected || !actual) return false;
+  if (expected === "about:blank") return actual === expected;
+
+  const beforeUrl = before?.href ? normalizedNavigationUrl(before.href) : null;
+  const hrefChanged = beforeUrl !== null && actual !== beforeUrl;
+  const documentChanged =
+    before?.timeOrigin !== null &&
+    before?.timeOrigin !== undefined &&
+    state.timeOrigin !== null &&
+    state.timeOrigin !== before.timeOrigin;
+
+  // A changed URL is allowed to be a same-site redirect (for example a missing
+  // project route falling back to the ChatGPT home page) or an authentication
+  // route. The next login/prompt checks classify that destination precisely.
+  if (hrefChanged || documentChanged) return true;
+
+  // When the previous document could not be inspected, an exact destination is
+  // the strongest available evidence. Otherwise do not mistake the old, already
+  // complete about:blank/root document for completion of the new navigation.
+  return before === null && actual === expected;
+}
+
+async function waitForDocumentReady(
+  Runtime: ChromeClient["Runtime"],
+  timeoutMs: number,
+  expectedUrl: string,
+  before: DocumentNavigationState | null,
+) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const { result } = await Runtime.evaluate({
-      expression: `document.readyState`,
-      returnByValue: true,
-    });
-    if (result?.value === "complete" || result?.value === "interactive") {
+    const state = await readDocumentNavigationState(Runtime);
+    if (
+      (state.readyState === "complete" || state.readyState === "interactive") &&
+      navigationCommitted(state, expectedUrl, before)
+    ) {
       return;
     }
     await delay(100);
   }
-  throw new Error("Page did not reach ready state in time");
+  throw new BrowserAutomationError(
+    `ChatGPT navigation did not commit to a ready document within ${Math.round(timeoutMs / 1000)}s.`,
+    {
+      stage: "chatgpt-navigation",
+      code: "navigation-not-committed",
+      targetUrl: expectedUrl,
+    },
+  );
 }
 
 async function currentUrl(Runtime: ChromeClient["Runtime"]): Promise<string | null> {

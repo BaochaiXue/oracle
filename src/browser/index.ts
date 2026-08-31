@@ -59,7 +59,11 @@ import { CHATGPT_URL, DEFAULT_MODEL_STRATEGY } from "./constants.js";
 import type { LaunchedChrome } from "chrome-launcher";
 import { BrowserAutomationError } from "../oracle/errors.js";
 import { alignPromptEchoPair, buildPromptEchoMatcher } from "./reattachHelpers.js";
-import { buildConversationTurnCountExpression } from "./conversationTurns.js";
+import {
+  buildConversationTurnCountExpression,
+  readCommittedPromptIdentityStatus,
+  type CommittedPromptIdentity,
+} from "./conversationTurns.js";
 import type { ProfileRunLock } from "./profileState.js";
 import {
   cleanupStaleProfileState,
@@ -115,6 +119,7 @@ import {
 import {
   beginProResponseTimingTurn,
   completeProResponseTimingTurn,
+  hashProPromptIdentity,
   markProPromptCommitted,
   markProPromptDispatched,
   resolveProAttachmentBytes,
@@ -171,7 +176,11 @@ function isCloudflareChallengeError(error: unknown): error is BrowserAutomationE
 function isReattachableCaptureError(error: unknown): error is BrowserAutomationError {
   if (!(error instanceof BrowserAutomationError)) return false;
   const stage = (error.details as { stage?: string } | undefined)?.stage;
-  return stage === "assistant-timeout" || stage === "assistant-recheck";
+  return (
+    stage === "assistant-timeout" ||
+    stage === "assistant-recheck" ||
+    stage === "conversation-identity"
+  );
 }
 
 function isRetainedDraftError(error: unknown): error is BrowserAutomationError {
@@ -215,6 +224,33 @@ function shouldPreserveBrowserOnError(error: unknown, headless: boolean): boolea
 
 function normalizeAuthenticatedModelSelectionError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+function isMissingModelSelectorButton(error: unknown): boolean {
+  return (
+    error instanceof BrowserAutomationError &&
+    error.details?.code === "model-selector-button-missing"
+  );
+}
+
+async function ensureModelSelectionWithTargetRepair(options: {
+  select: () => Promise<BrowserModelSelectionEvidence>;
+  repair: () => Promise<void>;
+  canRepair: boolean;
+  logger: BrowserLogger;
+}): Promise<BrowserModelSelectionEvidence> {
+  try {
+    return await options.select();
+  } catch (error) {
+    if (!options.canRepair || !isMissingModelSelectorButton(error)) {
+      throw error;
+    }
+    options.logger(
+      "[browser] Model selector was absent on the ready composer; reloading the same owned target once before submission.",
+    );
+    await options.repair();
+    return await options.select();
+  }
 }
 
 function shouldKeepLocalBrowserOpen(options: {
@@ -941,18 +977,27 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
   let modelSelectionEvidence: BrowserModelSelectionEvidence | undefined;
   let tabLease: BrowserTabLease | null = null;
   let conversationUrlMonitor: ConversationUrlMonitor | null = null;
+  let committedPromptIdentity: CommittedPromptIdentity | null = null;
+  const authoritativeConversationUrl = (): string | undefined =>
+    conversationUrlMonitor?.boundConversationUrl() ??
+    (isConversationUrl(config.resumeConversationUrl ?? "")
+      ? (config.resumeConversationUrl ?? undefined)
+      : lastUrl);
+  const authoritativeConversationId = () =>
+    conversationUrlMonitor?.boundConversationId() ??
+    extractConversationIdFromUrl(authoritativeConversationUrl() ?? "");
   const emitRuntimeHint = async (strict = false): Promise<void> => {
     if (!chrome?.port) {
       return;
     }
-    const conversationId = lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined;
+    const conversationId = authoritativeConversationId();
     const hint = {
       browserTransport: "cdp" as const,
       chromePid: chrome.pid,
       chromePort: chrome.port,
       chromeHost,
       chromeTargetId: lastTargetId,
-      tabUrl: lastUrl,
+      tabUrl: authoritativeConversationUrl(),
       conversationId,
       promptSubmitted,
       browserDisposition,
@@ -972,7 +1017,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         chromeHost,
         chromePort: chrome.port,
         chromeTargetId: lastTargetId,
-        tabUrl: lastUrl,
+        tabUrl: authoritativeConversationUrl(),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -991,16 +1036,25 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
   const markPromptCommitted = async (
     _committedTurns: number | null,
     committedUserTurnIndex: number | null,
+    committedPrompt: string,
   ): Promise<void> => {
     if (proTimingRequired) {
       proTimingRuntime = markProPromptCommitted(proTimingRuntime, committedUserTurnIndex);
     }
     const firstPrompt = !promptSubmitted;
+    if (
+      firstPrompt &&
+      typeof committedUserTurnIndex === "number" &&
+      Number.isSafeInteger(committedUserTurnIndex) &&
+      committedUserTurnIndex >= 0
+    ) {
+      committedPromptIdentity = {
+        committedUserTurnIndex,
+        promptSha256: hashProPromptIdentity(committedPrompt),
+      };
+    }
     promptSubmitted = true;
     await emitRuntimeHint();
-    if (firstPrompt) {
-      void conversationUrlMonitor?.schedule("post-submit", config.timeoutMs ?? 120_000);
-    }
   };
   if (config.debug || process.env.CHATGPT_DEVTOOLS_TRACE === "1") {
     logger(
@@ -1168,8 +1222,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         chromeHost,
         userDataDir,
         chromeTargetId: lastTargetId,
-        tabUrl: lastUrl,
-        conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+        tabUrl: authoritativeConversationUrl(),
+        conversationId: authoritativeConversationId(),
         promptSubmitted,
         controllerPid: process.pid,
         ...proTimingRuntime,
@@ -1294,11 +1348,10 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
                 chromeHost,
                 userDataDir,
                 chromeTargetId: lastTargetId ?? isolatedTargetId ?? undefined,
-                tabUrl: liveness.matchedUrl ?? lastUrl,
+                tabUrl: authoritativeConversationUrl() ?? liveness.matchedUrl,
                 conversationId:
-                  (liveness.matchedUrl ?? lastUrl)
-                    ? extractConversationIdFromUrl(liveness.matchedUrl ?? lastUrl ?? "")
-                    : undefined,
+                  authoritativeConversationId() ??
+                  extractConversationIdFromUrl(liveness.matchedUrl ?? ""),
                 promptSubmitted,
                 controllerPid: process.pid,
                 ...proTimingRuntime,
@@ -1496,7 +1549,14 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           returnByValue: true,
         });
         if (typeof result?.value === "string") {
-          lastUrl = result.value;
+          const observedUrl = result.value;
+          if (!promptSubmitted || !conversationUrlMonitor) {
+            lastUrl = observedUrl;
+          } else if (isConversationUrl(observedUrl)) {
+            // Never let a later same-target navigation overwrite the committed
+            // conversation authority. The identity monitor records the mismatch.
+            await conversationUrlMonitor.update("runtime-snapshot", 1);
+          }
         }
       } catch {
         // ignore
@@ -1529,27 +1589,53 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         await emitRuntimeHint();
       },
       logger,
+      initialConversationUrl:
+        config.resumeConversationUrl && isConversationUrl(config.resumeConversationUrl)
+          ? config.resumeConversationUrl
+          : lastUrl && isConversationUrl(lastUrl)
+            ? lastUrl
+            : undefined,
+      validateCandidate: async () =>
+        committedPromptIdentity
+          ? readCommittedPromptIdentityStatus(Runtime, committedPromptIdentity)
+          : "pending",
+      watchAfterBind: true,
     });
     conversationUrlMonitor = activeConversationUrlMonitor;
-    const updateConversationHint = conversationUrlMonitor.update;
+    const requireConversationIdentity = async (
+      label: string,
+      timeoutMs = 15_000,
+    ): Promise<string> => {
+      const verified = await activeConversationUrlMonitor.update(label, timeoutMs);
+      const conversationId = activeConversationUrlMonitor.boundConversationId();
+      if (!verified || !conversationId) {
+        throw new BrowserAutomationError(
+          "Oracle could not verify which ChatGPT conversation owns the submitted review. The review was sent; recover this session instead of submitting it again.",
+          {
+            stage: "conversation-identity",
+            code: "conversation-id-unbound",
+            promptSubmitted,
+          },
+        );
+      }
+      return conversationId;
+    };
     await captureRuntimeSnapshot();
     const modelStrategy = config.modelStrategy ?? DEFAULT_MODEL_STRATEGY;
     if (config.desiredModel && modelStrategy !== "ignore" && !isResumingConversation) {
       modelSelectionEvidence = await raceWithDisconnect(
-        withRetries(
-          () => ensureModelSelection(Runtime, config.desiredModel as string, logger, modelStrategy),
-          {
-            retries: 2,
-            delayMs: 300,
-            onRetry: (attempt, error) => {
-              if (options.verbose) {
-                logger(
-                  `[retry] Model picker attempt ${attempt + 1}: ${error instanceof Error ? error.message : error}`,
-                );
-              }
-            },
+        ensureModelSelectionWithTargetRepair({
+          select: () =>
+            ensureModelSelection(Runtime, config.desiredModel as string, logger, modelStrategy),
+          repair: async () => {
+            await navigateToChatGPT(Page, Runtime, config.url, logger);
+            await ensureNotBlocked(Runtime, config.headless, logger);
+            await ensureLoggedIn(Runtime, logger);
+            await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
           },
-        ),
+          canRepair: ownsTarget,
+          logger,
+        }),
       ).catch((error) => {
         // Login has already been verified above. Preserve the picker failure instead of
         // misdiagnosing an unavailable model as missing cookies.
@@ -1692,7 +1778,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         baselineTurns: baselineTurns ?? undefined,
         attachmentNames: attachmentExpectations,
         onPromptDispatched: markPromptDispatched,
-        onPromptCommitted: markPromptCommitted,
+        onPromptCommitted: (committedTurns: number | null, committedUserTurnIndex: number | null) =>
+          markPromptCommitted(committedTurns, committedUserTurnIndex, prompt),
         onPromptCommitPending: () =>
           throwChatGptUiWarningIfPresent({
             Runtime,
@@ -1704,7 +1791,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
               chromeHost,
               userDataDir,
               chromeTargetId: lastTargetId,
-              tabUrl: lastUrl,
+              tabUrl: authoritativeConversationUrl(),
               conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
               promptSubmitted,
               controllerPid: process.pid,
@@ -1820,26 +1907,29 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     }
     const imageArtifactMinTurnIndex = baselineTurns;
     if (deepResearch) {
+      await requireConversationIdentity("deep-research-wait");
       await raceWithDisconnect(waitForResearchPlanAutoConfirm(Runtime, logger));
-      const researchResult = await raceWithDisconnect(
-        waitForDeepResearchCompletion(
-          Runtime,
-          logger,
-          config.timeoutMs,
-          baselineTurns,
-          Page,
-          client,
-          {
-            ignoredTargetKeys: deepResearchTargetKeys,
-            targetBaselineCaptured: deepResearchTargetBaselineCaptured,
-          },
+      const researchResult = await activeConversationUrlMonitor.guard(() =>
+        raceWithDisconnect(
+          waitForDeepResearchCompletion(
+            Runtime,
+            logger,
+            config.timeoutMs,
+            baselineTurns,
+            Page,
+            client!,
+            {
+              ignoredTargetKeys: deepResearchTargetKeys,
+              targetBaselineCaptured: deepResearchTargetBaselineCaptured,
+            },
+          ),
         ),
       );
       browserTurnState = "terminal";
       answerCaptured = true;
       recordResponseTiming(researchResult.text);
       await emitRuntimeHint();
-      await updateConversationHint("post-deep-research", 15_000).catch(() => false);
+      await requireConversationIdentity("post-deep-research");
       runStatus = "complete";
       const durationMs = Date.now() - startedAt;
       const tokens = estimateTokenCount(researchResult.text);
@@ -1848,7 +1938,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           saveDeepResearchReportArtifact({
             sessionId: options.sessionId,
             reportMarkdown: researchResult.text,
-            conversationUrl: lastUrl,
+            conversationUrl: authoritativeConversationUrl(),
             logger,
           }),
         logger,
@@ -1859,7 +1949,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
             sessionId: options.sessionId,
             prompt: promptText,
             answerMarkdown: researchResult.text,
-            conversationUrl: lastUrl,
+            conversationUrl: authoritativeConversationUrl(),
             artifacts: appendArtifacts(undefined, [reportArtifact]),
             logger,
           }),
@@ -1881,8 +1971,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         chromeHost,
         userDataDir,
         chromeTargetId: lastTargetId,
-        tabUrl: lastUrl,
-        conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+        tabUrl: authoritativeConversationUrl(),
+        conversationId: authoritativeConversationId(),
         promptSubmitted,
         controllerPid: process.pid,
         ...proTimingRuntime,
@@ -1891,8 +1981,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     // Helper to normalize text for echo detection (collapse whitespace, lowercase)
     const normalizeForComparison = (text: string): string =>
       text.toLowerCase().replace(/\s+/g, " ").trim();
-    const expectedConversationId = () =>
-      lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined;
+    const expectedConversationId = authoritativeConversationId;
     const waitForFreshAssistantResponse = async (baselineNormalized: string, timeoutMs: number) => {
       const baselinePrefix =
         baselineNormalized.length >= 80
@@ -1930,6 +2019,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       stopThinkingMonitor?.();
       stopThinkingMonitor = startThinkingStatusMonitor(Runtime, logger, {
         intervalMs: options.heartbeatIntervalMs,
+        expectedConversationId: expectedConversationId(),
       });
       try {
         return await operation();
@@ -1946,12 +2036,12 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         `[browser] Assistant response timed out; waiting ${formatElapsed(recheckDelayMs)} before rechecking conversation.`,
       );
       await raceWithDisconnect(delay(recheckDelayMs));
-      await updateConversationHint("assistant-recheck", 15_000).catch(() => false);
+      await requireConversationIdentity("assistant-recheck");
       await captureRuntimeSnapshot().catch(() => undefined);
-      const conversationUrl = await readConversationUrl(Runtime);
+      const conversationUrl = activeConversationUrlMonitor.boundConversationUrl();
       if (conversationUrl && isConversationUrl(conversationUrl)) {
         logger(`[browser] Rechecking assistant response at ${conversationUrl}`);
-        await raceWithDisconnect(Page.navigate({ url: conversationUrl }));
+        await raceWithDisconnect(navigateToChatGPT(Page, Runtime, conversationUrl, logger));
         await raceWithDisconnect(
           waitForResumedConversationHydration(Runtime, recheckTimeoutMs || 30_000, logger, {
             requirePriorTurns: true,
@@ -1984,8 +2074,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
               chromeHost,
               userDataDir,
               chromeTargetId: lastTargetId,
-              tabUrl: lastUrl,
-              conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+              tabUrl: conversationUrl ?? lastUrl,
+              conversationId: authoritativeConversationId(),
               promptSubmitted,
               controllerPid: process.pid,
               ...proTimingRuntime,
@@ -2029,26 +2119,28 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     ): Promise<BrowserConversationTurn & { answerHtml: string }> => {
       let turnAnswer: AssistantAnswer;
       try {
-        await updateConversationHint("assistant-wait", 15_000).catch(() => false);
-        turnAnswer = await waitWithThinkingMonitor(() =>
-          raceWithDisconnect(
-            waitForAssistantOrGeneratedImageResponse({
-              Runtime,
-              waitForText: () =>
-                waitForAssistantResponseWithReload(
-                  Runtime,
-                  Page,
-                  config.timeoutMs,
-                  logger,
-                  baselineTurns ?? undefined,
-                  expectedConversationId(),
-                ),
-              timeoutMs: config.timeoutMs,
-              logger,
-              minTurnIndex: baselineTurns ?? undefined,
-              expectedConversationId: expectedConversationId(),
-              imageOutputRequested,
-            }),
+        await requireConversationIdentity("assistant-wait");
+        turnAnswer = await activeConversationUrlMonitor.guard(() =>
+          waitWithThinkingMonitor(() =>
+            raceWithDisconnect(
+              waitForAssistantOrGeneratedImageResponse({
+                Runtime,
+                waitForText: () =>
+                  waitForAssistantResponseWithReload(
+                    Runtime,
+                    Page,
+                    config.timeoutMs,
+                    logger,
+                    baselineTurns ?? undefined,
+                    expectedConversationId(),
+                  ),
+                timeoutMs: config.timeoutMs,
+                logger,
+                minTurnIndex: baselineTurns ?? undefined,
+                expectedConversationId: expectedConversationId(),
+                imageOutputRequested,
+              }),
+            ),
           ),
         );
       } catch (error) {
@@ -2057,7 +2149,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           if (rechecked) {
             turnAnswer = rechecked;
           } else {
-            await updateConversationHint("assistant-timeout", 15_000).catch(() => false);
+            await requireConversationIdentity("assistant-timeout");
             await captureRuntimeSnapshot().catch(() => undefined);
             const diagnostics = await captureBrowserDiagnostics(
               Runtime,
@@ -2075,8 +2167,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
               chromeHost,
               userDataDir,
               chromeTargetId: lastTargetId,
-              tabUrl: lastUrl,
-              conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+              tabUrl: authoritativeConversationUrl(),
+              conversationId: authoritativeConversationId(),
               promptSubmitted,
               controllerPid: process.pid,
               ...proTimingRuntime,
@@ -2094,7 +2186,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         }
       }
       // Ensure we store the final conversation URL even if the UI updated late.
-      await updateConversationHint("post-response", 15_000);
+      await requireConversationIdentity("post-response");
       const baselineNormalized = baselineAssistantText
         ? normalizeForComparison(baselineAssistantText)
         : "";
@@ -2120,7 +2212,12 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       const copiedMarkdown = await raceWithDisconnect(
         withRetries(
           async () => {
-            const attempt = await captureAssistantMarkdown(Runtime, turnAnswer.meta, logger);
+            const attempt = await captureAssistantMarkdown(
+              Runtime,
+              turnAnswer.meta,
+              logger,
+              expectedConversationId(),
+            );
             if (!attempt) {
               throw new Error("copy-missing");
             }
@@ -2138,7 +2235,15 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
             },
           },
         ),
-      ).catch(() => null);
+      ).catch((error) => {
+        if (
+          error instanceof BrowserAutomationError &&
+          (error.details as { stage?: string } | undefined)?.stage === "conversation-identity"
+        ) {
+          throw error;
+        }
+        return null;
+      });
       let turnAnswerMarkdown = copiedMarkdown ?? turnAnswerText;
 
       const promptEchoMatcher = buildPromptEchoMatcher(turnPrompt);
@@ -2150,6 +2255,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           answerMarkdown: turnAnswerMarkdown,
           logger,
           allowMarkdownUpdate: !copiedMarkdown,
+          expectedConversationId: expectedConversationId(),
         }));
 
       // Final sanity check: ensure we didn't accidentally capture the user prompt instead of the assistant turn.
@@ -2272,6 +2378,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     for (let index = 0; index < followUpPrompts.length; index += 1) {
       const followUpPrompt = followUpPrompts[index];
       logger(`[browser] Sending follow-up ${index + 1}/${followUpPrompts.length}`);
+      await requireConversationIdentity(`follow-up-${index + 1}-owner`);
       await acquireProfileLockIfNeeded();
       try {
         await raceWithDisconnect(clearPromptComposer(Runtime, logger));
@@ -2314,55 +2421,60 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       // Bail out on mid-run disconnects so the session stays reattachable.
       throw new Error("Chrome disconnected before completion");
     }
-    const imageArtifacts = await collectGeneratedImageArtifacts({
-      Browser: client.Browser,
-      Client: client,
-      Page,
-      Runtime,
-      Network,
-      logger,
-      minTurnIndex: imageArtifactMinTurnIndex,
-      sessionId: options.sessionId,
-      generateImagePath: options.generateImagePath,
-      outputPath: options.outputPath,
-      answerText,
-      waitTimeoutMs: options.config?.timeoutMs,
-      checkBlockingUiWarning: () =>
-        throwChatGptUiWarningIfPresent({
-          Runtime,
-          logger,
-          stage: "image-artifact-wait",
-          waitTarget: "generated image artifacts",
-          runtime: {
-            browserTransport: "cdp",
-            chromePid: chrome.pid,
-            chromePort: chrome.port,
-            chromeHost,
-            userDataDir,
-            chromeTargetId: lastTargetId,
-            tabUrl: lastUrl,
-            conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
-            promptSubmitted,
-            controllerPid: process.pid,
-            ...proTimingRuntime,
-          },
-        }),
-    });
+    await requireConversationIdentity("artifact-capture");
+    const imageArtifacts = await activeConversationUrlMonitor.guard(() =>
+      collectGeneratedImageArtifacts({
+        Browser: client!.Browser,
+        Client: client!,
+        Page,
+        Runtime,
+        Network,
+        logger,
+        minTurnIndex: imageArtifactMinTurnIndex,
+        sessionId: options.sessionId,
+        generateImagePath: options.generateImagePath,
+        outputPath: options.outputPath,
+        answerText,
+        waitTimeoutMs: options.config?.timeoutMs,
+        checkBlockingUiWarning: () =>
+          throwChatGptUiWarningIfPresent({
+            Runtime,
+            logger,
+            stage: "image-artifact-wait",
+            waitTarget: "generated image artifacts",
+            runtime: {
+              browserTransport: "cdp",
+              chromePid: chrome.pid,
+              chromePort: chrome.port,
+              chromeHost,
+              userDataDir,
+              chromeTargetId: lastTargetId,
+              tabUrl: authoritativeConversationUrl(),
+              conversationId: authoritativeConversationId(),
+              promptSubmitted,
+              controllerPid: process.pid,
+              ...proTimingRuntime,
+            },
+          }),
+      }),
+    );
     answerText = imageArtifacts.answerText || answerText;
     if (imageArtifacts.markdownSuffix) {
       answerMarkdown += imageArtifacts.markdownSuffix;
     }
-    const fileArtifacts = await collectChatGptFileArtifacts({
-      Browser: client.Browser,
-      Client: client,
-      Page,
-      Runtime,
-      Network,
-      answerText: [answerText, answerMarkdown, answerHtml].filter(Boolean).join("\n"),
-      logger,
-      minTurnIndex: imageArtifactMinTurnIndex,
-      sessionId: options.sessionId,
-    });
+    const fileArtifacts = await activeConversationUrlMonitor.guard(() =>
+      collectChatGptFileArtifacts({
+        Browser: client!.Browser,
+        Client: client!,
+        Page,
+        Runtime,
+        Network,
+        answerText: [answerText, answerMarkdown, answerHtml].filter(Boolean).join("\n"),
+        logger,
+        minTurnIndex: imageArtifactMinTurnIndex,
+        sessionId: options.sessionId,
+      }),
+    );
     const savedImageArtifacts = appendArtifacts(undefined, imageArtifacts.savedImages);
     const savedBrowserArtifacts = appendArtifacts(savedImageArtifacts, fileArtifacts.savedFiles);
     const transcriptArtifact = await saveOptionalArtifact(
@@ -2371,7 +2483,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           sessionId: options.sessionId,
           prompt: promptText,
           answerMarkdown,
-          conversationUrl: lastUrl,
+          conversationUrl: authoritativeConversationUrl(),
           artifacts: savedBrowserArtifacts,
           logger,
         }),
@@ -2405,8 +2517,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       chromeHost,
       userDataDir,
       chromeTargetId: lastTargetId,
-      tabUrl: lastUrl,
-      conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+      tabUrl: authoritativeConversationUrl(),
+      conversationId: authoritativeConversationId(),
       promptSubmitted,
       browserDisposition,
       recoveryKind,
@@ -2458,7 +2570,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         chromeHost,
         userDataDir,
         chromeTargetId: lastTargetId,
-        tabUrl: lastUrl,
+        tabUrl: authoritativeConversationUrl(),
         promptSubmitted,
         browserDisposition,
         recoveryKind,
@@ -2530,8 +2642,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
             chromeHost,
             userDataDir,
             chromeTargetId: lastTargetId,
-            tabUrl: lastUrl,
-            conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+            tabUrl: authoritativeConversationUrl(),
+            conversationId: authoritativeConversationId(),
             promptSubmitted,
             browserDisposition,
             recoveryKind,
@@ -2585,11 +2697,10 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           chromeHost,
           userDataDir,
           chromeTargetId: lastTargetId,
-          tabUrl: liveness.matchedUrl ?? lastUrl,
+          tabUrl: authoritativeConversationUrl() ?? liveness.matchedUrl,
           conversationId:
-            (liveness.matchedUrl ?? lastUrl)
-              ? extractConversationIdFromUrl(liveness.matchedUrl ?? lastUrl ?? "")
-              : undefined,
+            authoritativeConversationId() ??
+            (liveness.matchedUrl ? extractConversationIdFromUrl(liveness.matchedUrl) : undefined),
           promptSubmitted,
           browserDisposition,
           recoveryKind,
@@ -2632,7 +2743,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
             ? "terminal"
             : "recoverable",
           {
-            tabUrl: lastUrl,
+            tabUrl: authoritativeConversationUrl(),
             recoveryKind,
             recoveryExpiresAt,
           },
@@ -2924,6 +3035,7 @@ async function maybeRecoverLongAssistantResponse({
   answerMarkdown,
   logger,
   allowMarkdownUpdate,
+  expectedConversationId,
 }: {
   runtime: ChromeClient["Runtime"];
   baselineTurns: number | null;
@@ -2931,6 +3043,7 @@ async function maybeRecoverLongAssistantResponse({
   answerMarkdown: string;
   logger: BrowserLogger;
   allowMarkdownUpdate: boolean;
+  expectedConversationId?: string;
 }): Promise<{ answerText: string; answerMarkdown: string }> {
   // Learned: long streaming responses can still be rendering after initial capture.
   // Add a brief delay and re-poll to catch any additional content (#71).
@@ -2943,9 +3056,11 @@ async function maybeRecoverLongAssistantResponse({
   let bestLength = capturedLength;
   let bestText = answerText;
   for (let i = 0; i < 5; i++) {
-    const laterSnapshot = await readAssistantSnapshot(runtime, baselineTurns ?? undefined).catch(
-      () => null,
-    );
+    const laterSnapshot = await readAssistantSnapshot(
+      runtime,
+      baselineTurns ?? undefined,
+      expectedConversationId,
+    ).catch(() => null);
     const laterText = typeof laterSnapshot?.text === "string" ? laterSnapshot.text.trim() : "";
     if (laterText.length > bestLength) {
       bestLength = laterText.length;
@@ -3045,6 +3160,15 @@ async function runRemoteBrowserMode(
   let attachedExistingTab = false;
   let ownsTarget = true;
   let conversationUrlMonitor: ConversationUrlMonitor | null = null;
+  let committedPromptIdentity: CommittedPromptIdentity | null = null;
+  const authoritativeConversationUrl = (): string | undefined =>
+    conversationUrlMonitor?.boundConversationUrl() ??
+    (isConversationUrl(config.resumeConversationUrl ?? "")
+      ? (config.resumeConversationUrl ?? undefined)
+      : lastUrl);
+  const authoritativeConversationId = () =>
+    conversationUrlMonitor?.boundConversationId() ??
+    extractConversationIdFromUrl(authoritativeConversationUrl() ?? "");
   const runtimeHintCb = options.runtimeHintCb;
   const emitRuntimeHint = async () => {
     if (!runtimeHintCb) return;
@@ -3057,8 +3181,8 @@ async function runRemoteBrowserMode(
           chromeBrowserWSEndpoint: browserWSEndpoint,
           chromeProfileRoot,
           chromeTargetId: remoteTargetId ?? undefined,
-          tabUrl: lastUrl,
-          conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+          tabUrl: authoritativeConversationUrl(),
+          conversationId: authoritativeConversationId(),
           promptSubmitted,
           controllerPid: process.pid,
           ...proTimingRuntime,
@@ -3069,7 +3193,7 @@ async function runRemoteBrowserMode(
         chromeHost: host,
         chromePort: port,
         chromeTargetId: remoteTargetId ?? undefined,
-        tabUrl: lastUrl,
+        tabUrl: authoritativeConversationUrl(),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -3085,16 +3209,25 @@ async function runRemoteBrowserMode(
   const markPromptCommitted = async (
     _committedTurns: number | null,
     committedUserTurnIndex: number | null,
+    committedPrompt: string,
   ): Promise<void> => {
     if (proTimingRequired) {
       proTimingRuntime = markProPromptCommitted(proTimingRuntime, committedUserTurnIndex);
     }
     const firstPrompt = !promptSubmitted;
+    if (
+      firstPrompt &&
+      typeof committedUserTurnIndex === "number" &&
+      Number.isSafeInteger(committedUserTurnIndex) &&
+      committedUserTurnIndex >= 0
+    ) {
+      committedPromptIdentity = {
+        committedUserTurnIndex,
+        promptSha256: hashProPromptIdentity(committedPrompt),
+      };
+    }
     promptSubmitted = true;
     await emitRuntimeHint();
-    if (firstPrompt) {
-      void conversationUrlMonitor?.schedule("post-submit", config.timeoutMs ?? 120_000);
-    }
   };
   const startedAt = Date.now();
   let answerText = "";
@@ -3118,8 +3251,8 @@ async function runRemoteBrowserMode(
         chromeBrowserWSEndpoint: browserWSEndpoint,
         chromeProfileRoot,
         chromeTargetId: remoteTargetId ?? undefined,
-        tabUrl: lastUrl,
-        conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+        tabUrl: authoritativeConversationUrl(),
+        conversationId: authoritativeConversationId(),
         promptSubmitted,
         controllerPid: process.pid,
         ...proTimingRuntime,
@@ -3211,8 +3344,37 @@ async function runRemoteBrowserMode(
         await emitRuntimeHint();
       },
       logger,
+      initialConversationUrl:
+        config.resumeConversationUrl && isConversationUrl(config.resumeConversationUrl)
+          ? config.resumeConversationUrl
+          : lastUrl && isConversationUrl(lastUrl)
+            ? lastUrl
+            : undefined,
+      validateCandidate: async () =>
+        committedPromptIdentity
+          ? readCommittedPromptIdentityStatus(Runtime, committedPromptIdentity)
+          : "pending",
+      watchAfterBind: true,
     });
     conversationUrlMonitor = activeConversationUrlMonitor;
+    const requireConversationIdentity = async (
+      label: string,
+      timeoutMs = 15_000,
+    ): Promise<string> => {
+      const verified = await activeConversationUrlMonitor.update(label, timeoutMs);
+      const conversationId = activeConversationUrlMonitor.boundConversationId();
+      if (!verified || !conversationId) {
+        throw new BrowserAutomationError(
+          "Oracle could not verify which ChatGPT conversation owns the submitted review. The review was sent; recover this session instead of submitting it again.",
+          {
+            stage: "conversation-identity",
+            code: "conversation-id-unbound",
+            promptSubmitted,
+          },
+        );
+      }
+      return conversationId;
+    };
 
     // Skip cookie sync for remote Chrome - it already has cookies
     logger("Skipping cookie sync for remote Chrome (using existing session)");
@@ -3268,20 +3430,18 @@ async function runRemoteBrowserMode(
 
     const modelStrategy = config.modelStrategy ?? DEFAULT_MODEL_STRATEGY;
     if (config.desiredModel && modelStrategy !== "ignore" && !config.resumeConversationUrl) {
-      modelSelectionEvidence = await withRetries(
-        () => ensureModelSelection(Runtime, config.desiredModel as string, logger, modelStrategy),
-        {
-          retries: 2,
-          delayMs: 300,
-          onRetry: (attempt, error) => {
-            if (options.verbose) {
-              logger(
-                `[retry] Model picker attempt ${attempt + 1}: ${error instanceof Error ? error.message : error}`,
-              );
-            }
-          },
+      modelSelectionEvidence = await ensureModelSelectionWithTargetRepair({
+        select: () =>
+          ensureModelSelection(Runtime, config.desiredModel as string, logger, modelStrategy),
+        repair: async () => {
+          await navigateToChatGPT(Page, Runtime, config.url, logger);
+          await ensureNotBlocked(Runtime, config.headless, logger);
+          await ensureLoggedIn(Runtime, logger, { remoteSession: true });
+          await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
         },
-      );
+        canRepair: !attachedExistingTab,
+        logger,
+      });
       await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
       logger(
         `Prompt textarea ready (after model switch, ${promptText.length.toLocaleString()} chars queued)`,
@@ -3389,7 +3549,8 @@ async function runRemoteBrowserMode(
         baselineTurns: baselineTurns ?? undefined,
         attachmentNames: attachmentExpectations,
         onPromptDispatched: markPromptDispatched,
-        onPromptCommitted: markPromptCommitted,
+        onPromptCommitted: (committedTurns: number | null, committedUserTurnIndex: number | null) =>
+          markPromptCommitted(committedTurns, committedUserTurnIndex, prompt),
         onPromptCommitPending: () =>
           throwChatGptUiWarningIfPresent({
             Runtime,
@@ -3401,7 +3562,7 @@ async function runRemoteBrowserMode(
               chromeBrowserWSEndpoint: browserWSEndpoint,
               chromeProfileRoot,
               chromeTargetId: remoteTargetId ?? undefined,
-              tabUrl: lastUrl,
+              tabUrl: authoritativeConversationUrl(),
               conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
               promptSubmitted,
               controllerPid: process.pid,
@@ -3485,22 +3646,25 @@ async function runRemoteBrowserMode(
     deepResearchTargetBaselineCaptured = submission.deepResearchTargetBaselineCaptured ?? false;
     const imageArtifactMinTurnIndex = baselineTurns;
     if (deepResearch) {
+      await requireConversationIdentity("deep-research-wait");
       await waitForResearchPlanAutoConfirm(Runtime, logger);
-      const researchResult = await waitForDeepResearchCompletion(
-        Runtime,
-        logger,
-        config.timeoutMs,
-        baselineTurns,
-        Page,
-        client,
-        {
-          ignoredTargetKeys: deepResearchTargetKeys,
-          targetBaselineCaptured: deepResearchTargetBaselineCaptured,
-        },
+      const researchResult = await activeConversationUrlMonitor.guard(() =>
+        waitForDeepResearchCompletion(
+          Runtime,
+          logger,
+          config.timeoutMs,
+          baselineTurns,
+          Page,
+          client!,
+          {
+            ignoredTargetKeys: deepResearchTargetKeys,
+            targetBaselineCaptured: deepResearchTargetBaselineCaptured,
+          },
+        ),
       );
       recordResponseTiming(researchResult.text);
       await emitRuntimeHint();
-      await activeConversationUrlMonitor.update("post-deep-research", 15_000).catch(() => false);
+      await requireConversationIdentity("post-deep-research");
       const durationMs = Date.now() - startedAt;
       const tokens = estimateTokenCount(researchResult.text);
       const reportArtifact = await saveOptionalArtifact(
@@ -3508,7 +3672,7 @@ async function runRemoteBrowserMode(
           saveDeepResearchReportArtifact({
             sessionId: options.sessionId,
             reportMarkdown: researchResult.text,
-            conversationUrl: lastUrl,
+            conversationUrl: authoritativeConversationUrl(),
             logger,
           }),
         logger,
@@ -3519,7 +3683,7 @@ async function runRemoteBrowserMode(
             sessionId: options.sessionId,
             prompt: promptText,
             answerMarkdown: researchResult.text,
-            conversationUrl: lastUrl,
+            conversationUrl: authoritativeConversationUrl(),
             artifacts: appendArtifacts(undefined, [reportArtifact]),
             logger,
           }),
@@ -3540,8 +3704,8 @@ async function runRemoteBrowserMode(
         chromePort: port,
         chromeHost: host,
         chromeTargetId: remoteTargetId ?? undefined,
-        tabUrl: lastUrl,
-        conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+        tabUrl: authoritativeConversationUrl(),
+        conversationId: authoritativeConversationId(),
         promptSubmitted,
         controllerPid: process.pid,
         ...proTimingRuntime,
@@ -3550,8 +3714,7 @@ async function runRemoteBrowserMode(
     // Helper to normalize text for echo detection (collapse whitespace, lowercase)
     const normalizeForComparison = (text: string): string =>
       text.toLowerCase().replace(/\s+/g, " ").trim();
-    const expectedConversationId = () =>
-      lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined;
+    const expectedConversationId = authoritativeConversationId;
     const waitForFreshAssistantResponse = async (baselineNormalized: string, timeoutMs: number) => {
       const baselinePrefix =
         baselineNormalized.length >= 80
@@ -3589,6 +3752,7 @@ async function runRemoteBrowserMode(
       stopThinkingMonitor?.();
       stopThinkingMonitor = startThinkingStatusMonitor(Runtime, logger, {
         intervalMs: options.heartbeatIntervalMs,
+        expectedConversationId: expectedConversationId(),
       });
       try {
         return await operation();
@@ -3605,11 +3769,11 @@ async function runRemoteBrowserMode(
         `[browser] Assistant response timed out; waiting ${formatElapsed(recheckDelayMs)} before rechecking conversation.`,
       );
       await delay(recheckDelayMs);
-      const conversationUrl = await readConversationUrl(Runtime);
+      await requireConversationIdentity("assistant-recheck");
+      const conversationUrl = activeConversationUrlMonitor.boundConversationUrl();
       if (conversationUrl && isConversationUrl(conversationUrl)) {
-        lastUrl = conversationUrl;
         logger(`[browser] Rechecking assistant response at ${conversationUrl}`);
-        await Page.navigate({ url: conversationUrl });
+        await navigateToChatGPT(Page, Runtime, conversationUrl, logger);
         await waitForResumedConversationHydration(Runtime, recheckTimeoutMs || 30_000, logger, {
           requirePriorTurns: true,
           requirePromptReady: false,
@@ -3640,8 +3804,8 @@ async function runRemoteBrowserMode(
               chromeBrowserWSEndpoint: browserWSEndpoint,
               chromeProfileRoot,
               chromeTargetId: remoteTargetId ?? undefined,
-              tabUrl: lastUrl,
-              conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+              tabUrl: conversationUrl ?? lastUrl,
+              conversationId: authoritativeConversationId(),
               promptSubmitted,
               controllerPid: process.pid,
               ...proTimingRuntime,
@@ -3684,25 +3848,27 @@ async function runRemoteBrowserMode(
     ): Promise<BrowserConversationTurn & { answerHtml: string }> => {
       let turnAnswer: AssistantAnswer;
       try {
-        await activeConversationUrlMonitor.update("assistant-wait", 15_000).catch(() => false);
-        turnAnswer = await waitWithThinkingMonitor(() =>
-          waitForAssistantOrGeneratedImageResponse({
-            Runtime,
-            waitForText: () =>
-              waitForAssistantResponseWithReload(
-                Runtime,
-                Page,
-                config.timeoutMs,
-                logger,
-                baselineTurns ?? undefined,
-                expectedConversationId(),
-              ),
-            timeoutMs: config.timeoutMs,
-            logger,
-            minTurnIndex: baselineTurns ?? undefined,
-            expectedConversationId: expectedConversationId(),
-            imageOutputRequested,
-          }),
+        await requireConversationIdentity("assistant-wait");
+        turnAnswer = await activeConversationUrlMonitor.guard(() =>
+          waitWithThinkingMonitor(() =>
+            waitForAssistantOrGeneratedImageResponse({
+              Runtime,
+              waitForText: () =>
+                waitForAssistantResponseWithReload(
+                  Runtime,
+                  Page,
+                  config.timeoutMs,
+                  logger,
+                  baselineTurns ?? undefined,
+                  expectedConversationId(),
+                ),
+              timeoutMs: config.timeoutMs,
+              logger,
+              minTurnIndex: baselineTurns ?? undefined,
+              expectedConversationId: expectedConversationId(),
+              imageOutputRequested,
+            }),
+          ),
         );
       } catch (error) {
         if (isAssistantResponseTimeoutError(error)) {
@@ -3710,9 +3876,7 @@ async function runRemoteBrowserMode(
           if (rechecked) {
             turnAnswer = rechecked;
           } else {
-            await activeConversationUrlMonitor
-              .update("assistant-timeout", 15_000)
-              .catch(() => false);
+            await requireConversationIdentity("assistant-timeout");
             const diagnostics = await captureBrowserDiagnostics(
               Runtime,
               logger,
@@ -3729,8 +3893,8 @@ async function runRemoteBrowserMode(
               chromeBrowserWSEndpoint: browserWSEndpoint,
               chromeProfileRoot,
               chromeTargetId: remoteTargetId ?? undefined,
-              tabUrl: lastUrl,
-              conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+              tabUrl: authoritativeConversationUrl(),
+              conversationId: authoritativeConversationId(),
               promptSubmitted,
               controllerPid: process.pid,
               ...proTimingRuntime,
@@ -3747,7 +3911,7 @@ async function runRemoteBrowserMode(
           throw error;
         }
       }
-      await activeConversationUrlMonitor.update("post-response", 15_000).catch(() => false);
+      await requireConversationIdentity("post-response");
       const baselineNormalized = baselineAssistantText
         ? normalizeForComparison(baselineAssistantText)
         : "";
@@ -3773,7 +3937,12 @@ async function runRemoteBrowserMode(
 
       const copiedMarkdown = await withRetries(
         async () => {
-          const attempt = await captureAssistantMarkdown(Runtime, turnAnswer.meta, logger);
+          const attempt = await captureAssistantMarkdown(
+            Runtime,
+            turnAnswer.meta,
+            logger,
+            expectedConversationId(),
+          );
           if (!attempt) {
             throw new Error("copy-missing");
           }
@@ -3790,7 +3959,15 @@ async function runRemoteBrowserMode(
             }
           },
         },
-      ).catch(() => null);
+      ).catch((error) => {
+        if (
+          error instanceof BrowserAutomationError &&
+          (error.details as { stage?: string } | undefined)?.stage === "conversation-identity"
+        ) {
+          throw error;
+        }
+        return null;
+      });
 
       let turnAnswerMarkdown = copiedMarkdown ?? turnAnswerText;
       ({ answerText: turnAnswerText, answerMarkdown: turnAnswerMarkdown } =
@@ -3801,6 +3978,7 @@ async function runRemoteBrowserMode(
           answerMarkdown: turnAnswerMarkdown,
           logger,
           allowMarkdownUpdate: !copiedMarkdown,
+          expectedConversationId: expectedConversationId(),
         }));
 
       // Final sanity check: ensure we didn't accidentally capture the user prompt instead of the assistant turn.
@@ -3889,6 +4067,7 @@ async function runRemoteBrowserMode(
     for (let index = 0; index < followUpPrompts.length; index += 1) {
       const followUpPrompt = followUpPrompts[index];
       logger(`[browser] Sending follow-up ${index + 1}/${followUpPrompts.length}`);
+      await requireConversationIdentity(`follow-up-${index + 1}-owner`);
       await clearPromptComposer(Runtime, logger);
       await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
       const submission = await runSubmissionWithRecovery({
@@ -3920,55 +4099,60 @@ async function runRemoteBrowserMode(
       answerHtml = "";
     }
     const canSaveBrowserDownloadsLocally = isLocalChromeHost(host);
-    const imageArtifacts = await collectGeneratedImageArtifacts({
-      Browser: canSaveBrowserDownloadsLocally ? client.Browser : undefined,
-      Client: canSaveBrowserDownloadsLocally ? client : undefined,
-      Page: canSaveBrowserDownloadsLocally ? Page : undefined,
-      Runtime,
-      Network,
-      logger,
-      minTurnIndex: imageArtifactMinTurnIndex,
-      sessionId: options.sessionId,
-      generateImagePath: options.generateImagePath,
-      outputPath: options.outputPath,
-      answerText,
-      waitTimeoutMs: options.config?.timeoutMs,
-      checkBlockingUiWarning: () =>
-        throwChatGptUiWarningIfPresent({
-          Runtime,
-          logger,
-          stage: "image-artifact-wait",
-          waitTarget: "generated image artifacts",
-          runtime: {
-            browserTransport: "cdp",
-            chromePort: port,
-            chromeHost: host,
-            chromeBrowserWSEndpoint: browserWSEndpoint,
-            chromeProfileRoot,
-            chromeTargetId: remoteTargetId ?? undefined,
-            tabUrl: lastUrl,
-            conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
-            promptSubmitted,
-            controllerPid: process.pid,
-            ...proTimingRuntime,
-          },
-        }),
-    });
+    await requireConversationIdentity("artifact-capture");
+    const imageArtifacts = await activeConversationUrlMonitor.guard(() =>
+      collectGeneratedImageArtifacts({
+        Browser: canSaveBrowserDownloadsLocally ? client!.Browser : undefined,
+        Client: canSaveBrowserDownloadsLocally ? client! : undefined,
+        Page: canSaveBrowserDownloadsLocally ? Page : undefined,
+        Runtime,
+        Network,
+        logger,
+        minTurnIndex: imageArtifactMinTurnIndex,
+        sessionId: options.sessionId,
+        generateImagePath: options.generateImagePath,
+        outputPath: options.outputPath,
+        answerText,
+        waitTimeoutMs: options.config?.timeoutMs,
+        checkBlockingUiWarning: () =>
+          throwChatGptUiWarningIfPresent({
+            Runtime,
+            logger,
+            stage: "image-artifact-wait",
+            waitTarget: "generated image artifacts",
+            runtime: {
+              browserTransport: "cdp",
+              chromePort: port,
+              chromeHost: host,
+              chromeBrowserWSEndpoint: browserWSEndpoint,
+              chromeProfileRoot,
+              chromeTargetId: remoteTargetId ?? undefined,
+              tabUrl: authoritativeConversationUrl(),
+              conversationId: authoritativeConversationId(),
+              promptSubmitted,
+              controllerPid: process.pid,
+              ...proTimingRuntime,
+            },
+          }),
+      }),
+    );
     answerText = imageArtifacts.answerText || answerText;
     if (imageArtifacts.markdownSuffix) {
       answerMarkdown += imageArtifacts.markdownSuffix;
     }
-    const fileArtifacts = await collectChatGptFileArtifacts({
-      Browser: client.Browser,
-      Client: client,
-      Page,
-      Runtime,
-      Network,
-      answerText: [answerText, answerMarkdown, answerHtml].filter(Boolean).join("\n"),
-      logger,
-      minTurnIndex: imageArtifactMinTurnIndex,
-      sessionId: options.sessionId,
-    });
+    const fileArtifacts = await activeConversationUrlMonitor.guard(() =>
+      collectChatGptFileArtifacts({
+        Browser: client!.Browser,
+        Client: client!,
+        Page,
+        Runtime,
+        Network,
+        answerText: [answerText, answerMarkdown, answerHtml].filter(Boolean).join("\n"),
+        logger,
+        minTurnIndex: imageArtifactMinTurnIndex,
+        sessionId: options.sessionId,
+      }),
+    );
     const savedImageArtifacts = appendArtifacts(undefined, imageArtifacts.savedImages);
     const savedBrowserArtifacts = appendArtifacts(savedImageArtifacts, fileArtifacts.savedFiles);
     const transcriptArtifact = await saveOptionalArtifact(
@@ -3977,7 +4161,7 @@ async function runRemoteBrowserMode(
           sessionId: options.sessionId,
           prompt: promptText,
           answerMarkdown,
-          conversationUrl: lastUrl,
+          conversationUrl: authoritativeConversationUrl(),
           artifacts: savedBrowserArtifacts,
           logger,
         }),
@@ -4004,8 +4188,8 @@ async function runRemoteBrowserMode(
       chromeProfileRoot,
       userDataDir: undefined,
       chromeTargetId: remoteTargetId ?? undefined,
-      tabUrl: lastUrl,
-      conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+      tabUrl: authoritativeConversationUrl(),
+      conversationId: authoritativeConversationId(),
       promptSubmitted,
       ...proTimingRuntime,
       artifacts: savedArtifacts,
@@ -4047,11 +4231,10 @@ async function runRemoteBrowserMode(
         chromeBrowserWSEndpoint: browserWSEndpoint,
         chromeProfileRoot,
         chromeTargetId: remoteTargetId ?? undefined,
-        tabUrl: liveness.matchedUrl ?? lastUrl,
+        tabUrl: authoritativeConversationUrl() ?? liveness.matchedUrl,
         conversationId:
-          (liveness.matchedUrl ?? lastUrl)
-            ? extractConversationIdFromUrl(liveness.matchedUrl ?? lastUrl ?? "")
-            : undefined,
+          authoritativeConversationId() ??
+          (liveness.matchedUrl ? extractConversationIdFromUrl(liveness.matchedUrl) : undefined),
         promptSubmitted,
         controllerPid: process.pid,
         ...proTimingRuntime,
@@ -4127,6 +4310,8 @@ export const __test__ = {
   isImageOnlyUiChromeText,
   listIgnoredRemoteChromeFlags,
   normalizeAuthenticatedModelSelectionError,
+  ensureModelSelectionWithTargetRepair,
+  resolveAssistantReloadConversationUrl,
   resolveManualLoginWaitMs,
   shouldCloseOwnedRunTargetAfterRun,
   shouldKeepLocalBrowserOpen,
@@ -4194,12 +4379,16 @@ async function waitForAssistantResponseWithReload(
     if (!shouldReloadAfterAssistantError(error)) {
       throw error;
     }
-    const conversationUrl = await readConversationUrl(Runtime);
-    if (!conversationUrl || !isConversationUrl(conversationUrl)) {
+    const observedConversationUrl = await readConversationUrl(Runtime);
+    const conversationUrl = resolveAssistantReloadConversationUrl(
+      observedConversationUrl,
+      expectedConversationId,
+    );
+    if (!conversationUrl) {
       throw error;
     }
     logger("Assistant response stalled; reloading conversation and retrying once");
-    await Page.navigate({ url: conversationUrl });
+    await navigateToChatGPT(Page, Runtime, conversationUrl, logger);
     await waitForResumedConversationHydration(Runtime, timeoutMs, logger, {
       requirePriorTurns: true,
       requirePromptReady: false,
@@ -4213,6 +4402,32 @@ async function waitForAssistantResponseWithReload(
       expectedConversationId,
     );
   }
+}
+
+function resolveAssistantReloadConversationUrl(
+  observedConversationUrl: string | null,
+  expectedConversationId?: string,
+): string | null {
+  const observedConversationId = extractConversationIdFromUrl(observedConversationUrl ?? "");
+  if (!expectedConversationId) {
+    return observedConversationId && observedConversationUrl ? observedConversationUrl : null;
+  }
+  if (observedConversationId && observedConversationId !== expectedConversationId) {
+    throw new BrowserAutomationError(
+      "Oracle refused to reload a different ChatGPT conversation while capturing the submitted review.",
+      {
+        stage: "conversation-identity",
+        code: "assistant-reload-conversation-mismatch",
+        expectedConversationId,
+        actualConversationId: observedConversationId,
+        promptSubmitted: true,
+      },
+    );
+  }
+  if (observedConversationId === expectedConversationId && observedConversationUrl) {
+    return observedConversationUrl;
+  }
+  return new URL(`/c/${encodeURIComponent(expectedConversationId)}`, CHATGPT_URL).toString();
 }
 
 function shouldReloadAfterAssistantError(error: unknown): boolean {

@@ -84,7 +84,7 @@ oracle --followup <session-id> \
   -p "Challenge the previous recommendation and return the final decision."
 ```
 
-Oracle records the committed turn identity and timing evidence. Recovery must return to the original conversation. A new attempt is allowed only on explicit resume after a durable receipt proves that the prompt was unsubmitted, uncommitted, and `retrySafe:true`.
+Oracle records the committed turn identity and timing evidence and freezes the durable conversation ID as capture authority; if the same tab later navigates elsewhere, Oracle does not copy or accept that other conversation's answer. Recovery must return to the original conversation. A new attempt is allowed only on explicit resume after a durable receipt proves that the prompt was unsubmitted, uncommitted, and `retrySafe:true`.
 
 <!-- readme-sync:batch -->
 

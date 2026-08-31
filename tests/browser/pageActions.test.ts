@@ -84,9 +84,15 @@ describe("ensureModelSelection", () => {
     // buttonWaitMs: 0 skips the composer-pill wait so this exercises the give-up path directly.
     await expect(
       ensureModelSelection(runtime, "Instant", logger, "select", { buttonWaitMs: 0 }),
-    ).rejects.toThrow(
-      /Unable to locate the ChatGPT model selector button.*--browser-model-strategy current.*--browser-model-strategy ignore/s,
-    );
+    ).rejects.toMatchObject({
+      name: "BrowserAutomationError",
+      message: expect.stringMatching(/Unable to locate the ChatGPT model selector button/),
+      details: {
+        stage: "model-selection",
+        code: "model-selector-button-missing",
+        promptSubmitted: false,
+      },
+    });
   });
 });
 
@@ -96,8 +102,21 @@ describe("navigateToChatGPT", () => {
     const runtime = {
       evaluate: vi
         .fn()
-        .mockResolvedValueOnce({ result: { value: "loading" } })
-        .mockResolvedValueOnce({ result: { value: "complete" } }),
+        .mockResolvedValueOnce({
+          result: {
+            value: { readyState: "complete", href: "about:blank", timeOrigin: 1 },
+          },
+        })
+        .mockResolvedValueOnce({
+          result: {
+            value: { readyState: "loading", href: "https://chat.openai.com/", timeOrigin: 2 },
+          },
+        })
+        .mockResolvedValueOnce({
+          result: {
+            value: { readyState: "complete", href: "https://chat.openai.com/", timeOrigin: 2 },
+          },
+        }),
     } as unknown as ChromeClient["Runtime"];
     await navigateToChatGPT(
       { navigate } as unknown as ChromeClient["Page"],
@@ -106,7 +125,63 @@ describe("navigateToChatGPT", () => {
       logger,
     );
     expect(navigate).toHaveBeenCalledWith({ url: "https://chat.openai.com" });
-    expect(runtime.evaluate).toHaveBeenCalledTimes(2);
+    expect(runtime.evaluate).toHaveBeenCalledTimes(3);
+  });
+
+  test("does not accept the already-ready about:blank document as the navigation result", async () => {
+    const navigate = vi.fn().mockResolvedValue(undefined);
+    const runtime = {
+      evaluate: vi
+        .fn()
+        .mockResolvedValueOnce({
+          result: {
+            value: { readyState: "complete", href: "about:blank", timeOrigin: 1 },
+          },
+        })
+        .mockResolvedValueOnce({
+          result: {
+            value: { readyState: "complete", href: "about:blank", timeOrigin: 1 },
+          },
+        })
+        .mockResolvedValueOnce({
+          result: {
+            value: { readyState: "complete", href: "https://chatgpt.com/", timeOrigin: 2 },
+          },
+        }),
+    } as unknown as ChromeClient["Runtime"];
+
+    await navigateToChatGPT(
+      { navigate } as unknown as ChromeClient["Page"],
+      runtime,
+      "https://chatgpt.com/",
+      logger,
+    );
+
+    expect(runtime.evaluate).toHaveBeenCalledTimes(3);
+  });
+
+  test("surfaces CDP navigation failures before probing the old document", async () => {
+    const navigate = vi.fn().mockResolvedValue({ errorText: "net::ERR_FAILED" });
+    const runtime = {
+      evaluate: vi.fn().mockResolvedValue({
+        result: {
+          value: { readyState: "complete", href: "about:blank", timeOrigin: 1 },
+        },
+      }),
+    } as unknown as ChromeClient["Runtime"];
+
+    await expect(
+      navigateToChatGPT(
+        { navigate } as unknown as ChromeClient["Page"],
+        runtime,
+        "https://chatgpt.com/",
+        logger,
+      ),
+    ).rejects.toMatchObject({
+      name: "BrowserAutomationError",
+      details: { stage: "chatgpt-navigation", code: "navigation-failed" },
+    });
+    expect(runtime.evaluate).toHaveBeenCalledTimes(1);
   });
 });
 
