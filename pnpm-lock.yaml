@@ -136,7 +136,11 @@ importers:
 
   packages/oracle-client: {}
 
-  packages/oracle-kernel: {}
+  packages/oracle-kernel:
+    dependencies:
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
 
   packages/oracle-store: {}
 

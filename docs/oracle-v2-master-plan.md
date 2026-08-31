@@ -165,9 +165,9 @@ and cannot complete without attachment evidence on the committed user turn.
 
 | Slice    | Outcome                                                                                                  | Dependencies | Required evidence                                                         | Status      |
 | -------- | -------------------------------------------------------------------------------------------------------- | ------------ | ------------------------------------------------------------------------- | ----------- |
-| R0       | freeze boundary, public architecture authority, progress ledger, workspace skeleton, boundary checker    | baseline     | unchanged legacy tests; boundary check                                    | in-progress |
-| R1       | typed JobSpec/events/states/receipts, pure reducer, retry and owner policy, schema upcasting             | R0           | illegal-transition and completion-invariant tests                         | planned     |
-| R2       | SQLite store, migrations, transactional append, explicit idempotency, CAS, projections, integrity/backup | R1           | crash consistency, duplicate admission, projection rebuild                | planned     |
+| R0       | freeze boundary, public architecture authority, progress ledger, workspace skeleton, boundary checker    | baseline     | unchanged legacy tests; boundary check                                    | verified    |
+| R1       | typed JobSpec/events/states/receipts, pure reducer, retry and owner policy, schema upcasting             | R0           | illegal-transition and completion-invariant tests                         | verified    |
+| R2       | SQLite store, migrations, transactional append, explicit idempotency, CAS, projections, integrity/backup | R1           | crash consistency, duplicate admission, projection rebuild                | in-progress |
 | R3       | Unix-socket worker, singleton, scheduler, event stream, fake provider, client, restart recovery          | R1-R2        | client/worker kill recovery; bounded 1,000 fake jobs                      | planned     |
 | R4       | provider fixture, Playwright adapter, capability probe, UI fingerprint, test faults                      | R3           | 500 fixture jobs; all fault points; Send count at most one                | planned     |
 | R5 / G1  | compare runtime candidates; owner login and runtime selection                                            | R4           | persistent login, cold restart, model/effort/upload/click stability       | owner-gated |
@@ -190,12 +190,12 @@ separate facts.
 | --- | -------------------------------------------------------------- | ------------ | ------------------------------ | ----------- |
 | D01 | client exit does not stop an admitted job                      | R3           | worker integration             | planned     |
 | D02 | duplicate idempotency key returns one job                      | R2-R3        | store/API integration          | planned     |
-| D03 | each turn attempt sends at most once                           | R1-R4        | reducer + fixture send counter | planned     |
+| D03 | each turn attempt sends at most once                           | R1-R4        | reducer + fixture send counter | in-progress |
 | D04 | hard exit after click cannot cause resend                      | R3-R4        | process fault injection        | planned     |
-| D05 | committed job stays bound to its conversation                  | R1, R4, R7   | fixture and canary receipts    | planned     |
+| D05 | committed job stays bound to its conversation                  | R1, R4, R7   | fixture and canary receipts    | in-progress |
 | D06 | wrong-conversation navigation is rejected                      | R4           | fixture scenario               | planned     |
-| D07 | bundle completion requires committed-turn attachment evidence  | R1, R4, R7   | reducer, fixture, canary       | planned     |
-| D08 | model and Pro effort have independent receipts                 | R1, R4, R7   | schema + fixture + canary      | planned     |
+| D07 | bundle completion requires committed-turn attachment evidence  | R1, R4, R7   | reducer, fixture, canary       | in-progress |
+| D08 | model and Pro effort have independent receipts                 | R1, R4, R7   | schema + fixture + canary      | in-progress |
 | D09 | incompatible provider UI blocks before Send globally           | R3-R4        | compatibility incident test    | planned     |
 | D10 | worker owns browser runtime without normal PID/port operations | R5-R7        | runtime and canary evidence    | owner-gated |
 | D11 | CLI, MCP, and Batch use only the client protocol               | R8-R9        | boundary check + integration   | planned     |

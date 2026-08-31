@@ -10,6 +10,13 @@
     "removeComments": false,
     "allowImportingTsExtensions": false
   },
-  "include": ["bin/**/*.ts", "scripts/**/*.ts", "src/**/*.ts", "types/**/*.d.ts"],
+  "include": [
+    "apps/**/*.ts",
+    "bin/**/*.ts",
+    "packages/**/*.ts",
+    "scripts/**/*.ts",
+    "src/**/*.ts",
+    "types/**/*.d.ts"
+  ],
   "exclude": ["tests", "dist", "node_modules", ".bun-check"]
 }
