@@ -59,7 +59,9 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   CDP, identity-revalidated signal escalation, and endpoint confirmation, while
   active/recoverable or unverified owners remain untouched. Add concise
   `oracle browser status` and plan-first `oracle browser heal`, and keep normal
-  review output at preparing/sent/waiting/complete phases.
+  review output at preparing/sent/waiting/complete phases. The two-cold-start
+  smoke now removes its exact dead PID receipt after confirmed shutdown, so an
+  idle profile does not remain classified as `stale-metadata`.
 - Remote service: advertise only the bound loopback address when `oracle serve`
   listens on loopback instead of also printing unrelated LAN or tailnet
   addresses.

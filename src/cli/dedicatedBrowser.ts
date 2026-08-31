@@ -23,6 +23,7 @@ import {
 } from "../browser/pageActions.js";
 import {
   acquireProfileRunLock,
+  clearDeadChromePidReceipt,
   cleanupStaleProfileState,
   findRunningChromeForProfile,
   isProcessAlive,
@@ -169,6 +170,7 @@ async function closeLaunchedChrome(
   }
   await waitForDevToolsToStop(chrome.port);
   await cleanupStaleProfileState(profileDir, logger, { lockRemovalMode: "never" });
+  await clearDeadChromePidReceipt(profileDir, logger);
 }
 
 async function assertSmokePortAvailable(profileDir: string, port: number): Promise<void> {

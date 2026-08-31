@@ -66,6 +66,24 @@ describe("profileState", () => {
     }
   });
 
+  test("clears only a dead pid receipt for an idle profile", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "oracle-profile-"));
+    try {
+      const child = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
+      await once(child, "exit");
+      await profileState.writeChromePid(dir, child.pid ?? 0);
+
+      await expect(profileState.clearDeadChromePidReceipt(dir)).resolves.toBe(true);
+      await expect(profileState.readChromePid(dir)).resolves.toBeNull();
+
+      await profileState.writeChromePid(dir, process.pid);
+      await expect(profileState.clearDeadChromePidReceipt(dir)).resolves.toBe(false);
+      await expect(profileState.readChromePid(dir)).resolves.toBe(process.pid);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("skips manual-login cleanup when DevTools port is still reachable", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "oracle-profile-"));
     try {

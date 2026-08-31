@@ -78,11 +78,14 @@ describe("local browser target producer ownership", () => {
     const dedicatedBrowser = await source("src/cli/dedicatedBrowser.ts");
     const setupStart = dedicatedBrowser.indexOf("export async function runDedicatedBrowserSetup");
     const smokeStart = dedicatedBrowser.indexOf("export async function runDedicatedBrowserSmoke");
+    const closeStart = dedicatedBrowser.indexOf("async function closeLaunchedChrome");
+    const portCheckStart = dedicatedBrowser.indexOf("async function assertSmokePortAvailable");
     const reconcileStart = dedicatedBrowser.indexOf(
       "export async function runDedicatedBrowserReconcile",
     );
     const setupBody = dedicatedBrowser.slice(setupStart, smokeStart);
     const smokeBody = dedicatedBrowser.slice(smokeStart, reconcileStart);
+    const closeBody = dedicatedBrowser.slice(closeStart, portCheckStart);
 
     expect(setupBody).not.toContain("--remote-debugging-port");
     expect(setupBody).not.toContain("connectWithNewTab(");
@@ -92,5 +95,6 @@ describe("local browser target producer ownership", () => {
     expect(smokeBody).toContain("closeTab(chrome.port, targetId");
     expect(smokeBody).toContain("could not confirm closure of owned target");
     expect(smokeBody).toContain("closeLaunchedChrome(");
+    expect(closeBody).toContain("clearDeadChromePidReceipt(profileDir");
   });
 });

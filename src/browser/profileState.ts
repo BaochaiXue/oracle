@@ -75,6 +75,29 @@ export async function writeChromePid(userDataDir: string, pid: number): Promise<
   }
 }
 
+export async function clearDeadChromePidReceipt(
+  userDataDir: string,
+  logger?: ProfileStateLogger,
+): Promise<boolean> {
+  const pid = await readChromePid(userDataDir);
+  if (!pid) return false;
+  if (isProcessAlive(pid)) {
+    logger?.(`Chrome pid ${pid} is still alive; preserving pid receipt`);
+    return false;
+  }
+  if (await isChromeUsingUserDataDir(userDataDir)) {
+    logger?.("Detected running Chrome using this profile; preserving pid receipt");
+    return false;
+  }
+  if ((await readChromePid(userDataDir)) !== pid) {
+    logger?.("Chrome pid receipt changed during cleanup; preserving the newer receipt");
+    return false;
+  }
+  await rm(path.join(userDataDir, CHROME_PID_FILENAME), { force: true });
+  logger?.(`Removed dead Chrome pid receipt: ${pid}`);
+  return true;
+}
+
 export interface RunningChromeDebugTarget {
   pid: number;
   port: number;

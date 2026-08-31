@@ -179,6 +179,7 @@ assert profile is not already in use
   → close and confirm the exact smoke-owned target
   → close the CDP client and owned Chrome
   → wait until DevTools endpoint is gone
+  → clear the exact dead PID receipt for the now-idle profile
   → repeat from a cold process
 ```
 
@@ -189,6 +190,8 @@ refuses to run when the profile is already active or the requested port already
 serves another DevTools endpoint; it never kills an unresolved browser process
 to make the test pass. It also fails if exact target closure cannot be confirmed,
 preventing smoke pages from returning through Chrome session restore.
+After the second confirmed shutdown, `oracle browser status --json` reports the
+profile process state as `absent`, not `stale-metadata`.
 
 Use `--visible` to observe both validation cycles. On macOS the default smoke
 keeps Chrome headful but off-screen so the page remains fully rendered.
