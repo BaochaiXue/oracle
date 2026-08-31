@@ -81,8 +81,10 @@ and unrelated custom IDs remain pass-through values.
 
 The GPT-5.6 browser support depends on the unified Intelligence picker. It
 recognizes the current English and Chinese effort labels, avoids matching
-`高` inside `极高`, and re-queries the composer pill after React replaces it so
-selection verification cannot rely on a detached stale node.
+`高` inside `极高`, drives the current five-step Power slider through its ARIA
+position and keyboard-owning row when Pro is not a static menu option, and
+re-queries the composer pill after React replaces it so selection verification
+cannot rely on a detached stale node.
 
 ## Golden path
 

@@ -34,6 +34,11 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
 
 ### Fixed
 
+- Browser picker: select GPT-5.6 Pro from ChatGPT's current five-step Power
+  slider even when no static `Pro` option exists in the menu. Oracle reads the
+  slider's ARIA position, sends bounded ArrowRight input to its keyboard-owning
+  row, and requires both the maximum position and visible `Pro` label before
+  Send; an unchanged or unverified slider still fails closed.
 - Dedicated Chrome lifecycle: supervise current and older installed Chrome for
   Testing generations through one startup/final-release/`browser heal` path.
   Healthy old generations finish current work and roll over when idle; stale

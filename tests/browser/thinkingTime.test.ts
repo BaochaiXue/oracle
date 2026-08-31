@@ -2718,7 +2718,7 @@ describe("browser thinking-time selection expression", () => {
   });
 });
 
-describe("unified Intelligence picker with Advanced -> Effort submenu", () => {
+describe("unified Intelligence picker slider and Advanced effort controls", () => {
   // Mirrors the ChatGPT layout observed 2026-08-07: a "power" slider in the simple
   // view, with the effort tiers reachable only through Advanced -> Effort.
   class FakeEventTarget {
@@ -2731,6 +2731,8 @@ describe("unified Intelligence picker with Advanced -> Effort submenu", () => {
     public readonly children: Node[];
     private readonly attrs: Record<string, string>;
     public clicks = 0;
+    public keydowns: string[] = [];
+    public onKeyDown: ((self: Node, key: string) => void) | null = null;
 
     constructor(
       public textContent: string,
@@ -2764,9 +2766,15 @@ describe("unified Intelligence picker with Advanced -> Effort submenu", () => {
       if (selector.includes("composer-model-picker-slider-advanced-view")) {
         return testid === "composer-model-picker-slider-advanced-view";
       }
+      if (selector.includes("composer-model-picker-slider-simple-view")) {
+        return testid === "composer-model-picker-slider-simple-view";
+      }
       if (selector.includes("composer-intelligence-picker-content")) {
         return testid === "composer-intelligence-picker-content";
       }
+      if (selector.includes('[role="slider"]')) return role === "slider";
+      if (selector.includes("[aria-valuenow]")) return this.attrs["aria-valuenow"] !== undefined;
+      if (selector.includes('[aria-label="Power"]')) return this.attrs["aria-label"] === "Power";
       if (selector.includes('role="menuitemradio"') && role === "menuitemradio") return true;
       if (selector.includes('role="menuitem"'))
         return role === "menuitem" || role === "menuitemradio";
@@ -2806,9 +2814,19 @@ describe("unified Intelligence picker with Advanced -> Effort submenu", () => {
     }
 
     override dispatchEvent(event: unknown): boolean {
-      if (String((event as { type?: string }).type) === "click") {
+      const type = String((event as { type?: string }).type);
+      if (type === "click") {
         this.clicks += 1;
         this.onClick?.(this);
+      }
+      if (type === "keydown") {
+        const key = String(
+          (event as { key?: string; init?: { key?: string } }).key ??
+            (event as { init?: { key?: string } }).init?.key ??
+            "",
+        );
+        this.keydowns.push(key);
+        this.onKeyDown?.(this, key);
       }
       return super.dispatchEvent(event);
     }
@@ -2819,6 +2837,10 @@ describe("unified Intelligence picker with Advanced -> Effort submenu", () => {
       public readonly type: string,
       public readonly init?: unknown,
     ) {}
+
+    get key(): string {
+      return String((this.init as { key?: string } | undefined)?.key ?? "");
+    }
   }
 
   function buildDom(currentTier: string) {
@@ -2942,7 +2964,12 @@ describe("unified Intelligence picker with Advanced -> Effort submenu", () => {
       documentStub,
       performanceStub,
       (callback: () => void) => callback(),
-      { PointerEvent: FakeMouseEvent, MouseEvent: FakeMouseEvent, Event: FakeMouseEvent },
+      {
+        PointerEvent: FakeMouseEvent,
+        MouseEvent: FakeMouseEvent,
+        KeyboardEvent: FakeMouseEvent,
+        Event: FakeMouseEvent,
+      },
       FakeEventTarget,
       FakeMouseEvent,
       FakeMouseEvent,
@@ -2957,6 +2984,81 @@ describe("unified Intelligence picker with Advanced -> Effort submenu", () => {
       label: "Pro",
     });
     expect(dom.getSelectedTier()).toBe("Pro");
+  });
+
+  it("selects Pro from the current slider-only 4-of-5 picker", async () => {
+    let selectedIndex = 4;
+    const pill = new Node("Extra High", {
+      class: "__composer-pill",
+      "aria-expanded": "true",
+      "aria-haspopup": "menu",
+    });
+    const slider = new Node("", {
+      role: "slider",
+      "aria-valuenow": "3",
+      "aria-valuemin": "0",
+      "aria-valuemax": "4",
+      tabindex: "-1",
+    });
+    const power = new Node("", { role: "menuitem", "aria-label": "Power" }, [slider]);
+    const simpleView = new Node(
+      "Extra High, 4 of 5.Use Left and Right arrow keys to adjust power.",
+      { "data-testid": "composer-model-picker-slider-simple-view" },
+      [power],
+    );
+    power.onKeyDown = (_self, key) => {
+      if (key !== "ArrowRight" || selectedIndex >= 5) return;
+      selectedIndex += 1;
+      slider.setAttribute("aria-valuenow", "4");
+      simpleView.textContent = "Pro, 5 of 5.Use Left and Right arrow keys to adjust power.";
+      pill.textContent = "Pro";
+    };
+    const selectModel = new Node("Extra High", {
+      role: "menuitem",
+      "aria-label": "Select model",
+      "aria-expanded": "false",
+    });
+    const modelView = new Node(
+      "GPT-5.6 SolGPT-5.5",
+      { "data-testid": "composer-model-picker-slider-advanced-view" },
+      [
+        new Node("GPT-5.6 Sol", { role: "menuitemradio", "aria-checked": "true" }),
+        new Node("GPT-5.5", { role: "menuitemradio", "aria-checked": "false" }),
+      ],
+    );
+    const pickerContent = new Node(
+      "Extra HighExtra High, 4 of 5.GPT-5",
+      { "data-testid": "composer-intelligence-picker-content", role: "group" },
+      [selectModel, simpleView, modelView],
+    );
+    const topMenu = new Node("Extra HighGPT-5.6 SolGPT-5.5", { role: "menu" }, [pickerContent]);
+    const documentStub = {
+      body: new Node(""),
+      getElementById: () => null,
+      querySelector: (selector: string) => {
+        if (selector.includes("composer-intelligence-pro-thinking-effort-trigger")) return null;
+        if (selector.includes("composer-intelligence-picker-content")) return pickerContent;
+        if (selector.includes("__composer-pill")) return pill;
+        return null;
+      },
+      querySelectorAll: (selector: string) => {
+        if (selector.includes("__composer-pill")) return [pill];
+        if (selector.includes('role="menu"') || selector.includes("data-radix")) {
+          return [topMenu];
+        }
+        if (selector.includes('role="menuitem"')) return [selectModel, power];
+        return [];
+      },
+      dispatchEvent: () => true,
+    };
+
+    await expect(run(documentStub, "pro")).resolves.toEqual({
+      status: "switched",
+      label: "Pro",
+    });
+    expect(power.keydowns).toEqual(["ArrowRight"]);
+    expect(selectedIndex).toBe(5);
+    expect(pill.textContent).toBe("Pro");
   });
 
   it("selects Pro through Japanese Advanced and Effort labels", async () => {

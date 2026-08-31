@@ -214,6 +214,8 @@ export function buildThinkingTimeExpression(
     const TARGET_MODEL_KIND = ${targetModelKindLiteral};
     const TARGET_IS_GPT56_MODEL = ${targetIsGpt56ModelLiteral};
 
+    let powerSliderTrace = { attempted: false };
+
     // Multilingual matchers: English level token + observed German/Japanese/Chinese variants.
     const LEVEL_TOKENS = {
       light: ['light', 'instant', 'sofort', 'leicht', '最速', '轻', '极速'],
@@ -416,6 +418,8 @@ export function buildThinkingTimeExpression(
         return {
           targetModelKind: TARGET_MODEL_KIND,
           targetLevel: TARGET_LEVEL,
+          targetIsGpt56Model: TARGET_IS_GPT56_MODEL,
+          powerSliderTrace,
           modelButton: describeNode(modelBtn),
           composerButtons: composerButtons.slice(0, 12).map(describeNode),
           trailingCount: trailings.length,
@@ -747,6 +751,146 @@ export function buildThinkingTimeExpression(
       return null;
     };
 
+    // ---------- Unified Intelligence picker: five-step power slider ----------
+    // ChatGPT can expose the effort tiers only as an accessible slider. The current
+    // UI reports states such as "Extra High, 4 of 5" and expects ArrowLeft/
+    // ArrowRight on its Power row; no static Pro option exists in the menu DOM.
+    // Move only an explicit GPT-5.6 Pro request, verify every observed step, and
+    // fail closed after any unverified key dispatch.
+    const SIMPLE_VIEW_SELECTOR = '[data-testid="composer-model-picker-slider-simple-view"]';
+    const readPowerSliderState = (parentMenu) => {
+      const simpleView =
+        Array.from(document.querySelectorAll(SIMPLE_VIEW_SELECTOR)).find(isVisible) ||
+        parentMenu?.querySelector?.(SIMPLE_VIEW_SELECTOR);
+      if (!isVisible(simpleView)) return null;
+      const valueNode =
+        simpleView.querySelector?.('[role="slider"]') ||
+        simpleView.querySelector?.('[aria-valuenow]');
+      const menuItems = Array.from(simpleView.querySelectorAll?.('[role="menuitem"]') || []);
+      const powerRow =
+        simpleView.querySelector?.('[aria-label="Power"]') ||
+        (menuItems.length === 1 ? menuItems[0] : null);
+      const control = [powerRow, valueNode].find((node) => node && isVisible(node)) || null;
+      if (!control) return null;
+      const text = String(
+        simpleView.textContent ||
+          control.getAttribute?.('aria-valuetext') ||
+          control.getAttribute?.('aria-label') ||
+          '',
+      ).replace(/\\s+/g, ' ').trim();
+      const ariaCurrent = Number.parseInt(valueNode?.getAttribute?.('aria-valuenow') ?? '', 10);
+      const ariaMinimum = Number.parseInt(valueNode?.getAttribute?.('aria-valuemin') ?? '', 10);
+      const ariaMaximum = Number.parseInt(valueNode?.getAttribute?.('aria-valuemax') ?? '', 10);
+      if (
+        !Number.isSafeInteger(ariaCurrent) ||
+        !Number.isSafeInteger(ariaMinimum) ||
+        !Number.isSafeInteger(ariaMaximum)
+      ) return null;
+      // The observed component has five positions. Refuse a differently shaped
+      // control instead of assuming its maximum still means GPT-5.6 Pro.
+      if (
+        ariaCurrent < ariaMinimum ||
+        ariaCurrent > ariaMaximum ||
+        ariaMaximum - ariaMinimum !== 4
+      ) {
+        return null;
+      }
+      const label = text.split(',')[0]?.trim() || null;
+      return {
+        control,
+        current: ariaCurrent,
+        minimum: ariaMinimum,
+        maximum: ariaMaximum,
+        label,
+        text,
+      };
+    };
+    const dispatchPowerArrowRight = (control) => {
+      if (!control || !(control instanceof EventTarget)) return false;
+      const KeyboardCtor = window.KeyboardEvent || window.Event;
+      if (typeof KeyboardCtor !== 'function') return false;
+      try {
+        control.focus?.({ preventScroll: true });
+      } catch {
+        try { control.focus?.(); } catch {}
+      }
+      for (const type of ['keydown', 'keyup']) {
+        control.dispatchEvent(
+          new KeyboardCtor(type, {
+            key: 'ArrowRight',
+            code: 'ArrowRight',
+            keyCode: 39,
+            which: 39,
+            bubbles: true,
+            cancelable: true,
+            view: window,
+          }),
+        );
+      }
+      return true;
+    };
+    const selectProFromPowerSlider = async (parentMenu, modelKindOverride = null) => {
+      powerSliderTrace = {
+        attempted: true,
+        eligible: TARGET_IS_GPT56_MODEL && TARGET_LEVEL === 'pro',
+      };
+      if (!TARGET_IS_GPT56_MODEL || TARGET_LEVEL !== 'pro') return null;
+      let state = readPowerSliderState(parentMenu);
+      powerSliderTrace = {
+        ...powerSliderTrace,
+        state: state
+          ? {
+              current: state.current,
+              maximum: state.maximum,
+              label: redactDiagnosticText(state.label),
+            }
+          : null,
+      };
+      if (!state) return null;
+      const confirmsPro = () => {
+        const current = readPowerSliderState(parentMenu);
+        if (!current || current.current !== current.maximum) return false;
+        const pill = freshComposerTrigger(modelBtn) || findComposerEffortPill() || findModelButton();
+        const pillText = normalize(
+          (pill?.textContent ?? '') + ' ' + (pill?.getAttribute?.('aria-label') ?? ''),
+        );
+        return hasPhrase(current.label ?? current.text, 'pro') || hasPhrase(pillText, 'pro');
+      };
+      if (state.current === state.maximum) {
+        if (!confirmsPro()) return null;
+        closeOpenMenus();
+        return { status: 'already-selected', label: state.label || 'Pro' };
+      }
+
+      for (let step = 0; step < state.maximum && state.current < state.maximum; step += 1) {
+        const previousPosition = state.current;
+        if (!dispatchPowerArrowRight(state.control)) {
+          const result = failure('selection-unverified', { modelKind: modelKindOverride });
+          closeOpenMenus();
+          return result;
+        }
+        await sleep(STEP_WAIT_MS);
+        state = readPowerSliderState(parentMenu);
+        if (!state || state.current <= previousPosition) {
+          const result = failure('selection-unverified', { modelKind: modelKindOverride });
+          closeOpenMenus();
+          return result;
+        }
+      }
+
+      if (!confirmsPro()) {
+        const result = failure('selection-unverified', { modelKind: modelKindOverride });
+        closeOpenMenus();
+        return result;
+      }
+      const finalState = readPowerSliderState(parentMenu);
+      closeOpenMenus();
+      return {
+        status: 'switched',
+        label: finalState?.label || 'Pro',
+      };
+    };
+
     // ---------- Unified Intelligence picker: Advanced -> Effort submenu ----------
     // A newer ChatGPT layout replaces the flat effort rows with a "power" slider
     // (simple view) plus an "Advanced" view holding two submenu openers: Model and
@@ -1005,8 +1149,12 @@ export function buildThinkingTimeExpression(
             return proEffortResult;
           }
           // Flat rows win when present; only descend into Advanced -> Effort when
-          // this menu has no matching tier of its own (the slider layout).
+          // this menu has no matching tier of its own (the slider layouts).
           if (!findOptionInMenu(menu, composerModelKind)) {
+            const sliderResult = await selectProFromPowerSlider(menu, composerModelKind);
+            if (sliderResult) {
+              return sliderResult;
+            }
             const advancedResult = await selectEffortFromAdvancedSubmenu(menu, composerModelKind);
             if (advancedResult) {
               return advancedResult;
