@@ -21,8 +21,13 @@ usable `fork-main` checkout remains unchanged. R8 adds an explicit opt-in
 v2 session projection readback. R9 maps new Batch lane and synthesis attempts
 to Batch-owned durable v2 jobs while preserving the v1 parent manifest,
 sealing, blind-lane, barrier, answer-integrity, and owner-closure contracts.
-Legacy `browser` remains the shipped/default ordinary engine until G3. The v2
-candidate is not installed, activated, or selected as the default engine.
+
+On 2026-09-01, an owner-authorized bounded dogfood exercised the repo-local R9
+candidate through one ordinary broker review and one two-lane-plus-synthesis
+Batch. The candidate was invoked by its exact repo-local build, then stopped;
+it was not linked or installed over the global CLI. Legacy `browser` remains
+the shipped/default ordinary engine until G3. No v2 worker, Chrome for Testing
+process, page, socket, or listener remained after orderly shutdown.
 
 G2 remains certified from three bounded live canaries: canonical text, sealed
 bundle, and an injected committed-capture interruption followed by
@@ -313,6 +318,38 @@ Fresh R9 source and fixture evidence:
   submitted for R9; all Batch Send/recovery evidence uses the sanitized fixture
   or `FakeProvider`.
 
+## Bounded opt-in dogfood after R9
+
+- the exact R9 repo-local build started one detached, explicitly owned v2
+  worker against the certified profile. Worker doctor reached `ready` with a
+  compatible provider and an empty queue. The global installed Oracle path,
+  version, config, and legacy default were not changed;
+- one ordinary broker review with a sealed documentation bundle completed with
+  exactly one `submission-committed` and one `capture-completed` event. Its
+  answer artifact and durable job projection agreed, and its page count returned
+  to zero after completion;
+- Batch `v2-bounded-dogfood-20260901T102353Z-a2ba` sealed two distinct blind
+  lanes with an effective client admission cap of two and a total child cap of
+  three. First-stage page count peaked at two, fell as lanes completed, and both
+  verified answers were accepted before the durable barrier closed;
+- the barrier admitted one synthesis job only after both lanes completed. That
+  job recorded one committed Send. Its first 30-minute capture window ended
+  recoverable; parent-only `batch resume` restarted capture on the same `jobId`
+  without another Send or attempt. A second bounded capture window also ended
+  recoverable;
+- after the owner explicitly accepted the unavailable synthesis, the worker
+  recorded `job-abandoned`, preserved the conversation and both verified lane
+  answers, and terminalized the Batch as honest `partial`. The synthesis never
+  produced a second `submission-committed` event;
+- orderly worker shutdown removed the final retained page, exact v2 Chrome for
+  Testing process family, Unix socket, and loopback endpoint. The earlier idle
+  legacy Chrome for Testing runtime was independently reconciled and drained;
+  final readback found neither Oracle runtime active;
+- both independent lane reviews support continued bounded opt-in dogfood while
+  legacy remains default. They do not establish the D19 stable-window resource
+  plateau required for G3, and the synthesis timeout is retained as negative
+  operational evidence rather than converted into a success claim.
+
 ## Tranche ledger
 
 | Tranche                        | State       | Evidence / blocker                                                                               |
@@ -327,7 +364,7 @@ Fresh R9 source and fixture evidence:
 | R7 / G2 live canary            | verified    | text, sealed-bundle, and committed-capture-recovery receipts all certified                       |
 | R8 CLI/MCP cutover candidate   | verified    | repeated real reviews, killed-client reconnect, MCP timeout retrieval; legacy default kept       |
 | R9 Batch cutover               | verified    | durable lane/synthesis jobs; restart, retry, owner closure, barrier, receipts, no duplicate Send |
-| R10 / G3 default switch        | owner-gated | not reached                                                                                      |
+| R10 / G3 default switch        | owner-gated | bounded opt-in dogfood completed; D19 stable-window and default owner decision remain            |
 | R11 remote job bridge          | planned     | not reached                                                                                      |
 | R12 / G4 legacy retirement     | owner-gated | not reached                                                                                      |
 
@@ -343,8 +380,12 @@ Fresh R9 source and fixture evidence:
 
 ## Next safe action
 
-Preserve every historical canary and R8 review attempt; do not resend or create
-a duplicate. The programme is intentionally stopped at G3. R10 may begin only
-after an explicit owner decision to make v2 the default ordinary browser
-engine. Until then, do not install or activate this candidate, change the
-default engine, remove legacy execution, start R11, or make a release claim.
+Preserve every historical canary, R8 review, and bounded-dogfood job; do not
+resend or create a duplicate. Continued dogfood may use the exact repo-local
+candidate only under a fresh owner-authorized scope, stable idempotency
+identity, separately owned worker, and the three-page worker ceiling. Collect
+measured D19 stable-window evidence, including process/page/RSS/socket/profile
+settling and orderly shutdown. R10/G3 still requires a separate explicit owner
+decision to make v2 the default ordinary browser engine. Until then, do not
+replace the global install, change the default engine, remove legacy execution,
+start R11, or make a release claim.
