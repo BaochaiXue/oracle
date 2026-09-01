@@ -11,6 +11,7 @@ import type {
 
 export interface ProviderRuntimeBindings {
   readObject(ref: ObjectRef): Uint8Array;
+  listBrowserRecoveryTargets(): Array<{ jobId: string; turnAttemptId: string }>;
 }
 
 export interface ProviderJobContext {

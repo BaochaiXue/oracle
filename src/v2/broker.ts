@@ -13,16 +13,20 @@ import {
   type ClientJobResult,
   type OracleJobAdmission,
 } from "../../packages/oracle-client/src/index.js";
-import type { JobStateKind } from "../../packages/oracle-kernel/src/index.js";
+import {
+  assertOracleV2ObjectBodySize,
+  type JobStateKind,
+} from "../../packages/oracle-kernel/src/index.js";
 import { getOracleHomeDir } from "../oracleHome.js";
 import { readFiles } from "../oracle/files.js";
 
-const TERMINAL_JOB_STATES = new Set<JobStateKind>([
+const SETTLED_BROKER_JOB_STATES = new Set<JobStateKind>([
   "completed",
   "failed-unsent",
   "canceled-unsent",
   "abandoned",
   "ambiguous",
+  "recoverable",
 ]);
 
 export interface BrokerPaths {
@@ -103,6 +107,7 @@ export async function prepareBrokerReview(input: {
   });
   const bundle =
     selected.length > 0 ? createSealedSourceBundle(createBundleInputs(selected, cwd)) : undefined;
+  if (bundle) assertOracleV2ObjectBodySize(bundle.bytes, "Oracle v2 sealed source bundle");
   const promptSections = [input.system?.trim(), userPrompt].filter((section): section is string =>
     Boolean(section),
   );
@@ -174,7 +179,7 @@ export async function waitForBrokerJob(
       await options.onEvent?.(event);
     }
     const job = await client.getJob(jobId);
-    if (TERMINAL_JOB_STATES.has(job.state.kind)) {
+    if (SETTLED_BROKER_JOB_STATES.has(job.state.kind)) {
       const finalEvents = await client.listEvents(jobId, { after: lastEventSeq });
       for (const event of finalEvents) {
         lastEventSeq = Math.max(lastEventSeq, event.seq);

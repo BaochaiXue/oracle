@@ -47,6 +47,19 @@ describe("Oracle v2 broker bridge", () => {
     );
   });
 
+  test("rejects an aggregate sealed bundle above the worker body limit", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "oracle-v2-broker-bundle-limit-"));
+    roots.push(root);
+    const oneMiB = Buffer.alloc(1024 * 1024, 0x61);
+    for (let index = 0; index < 17; index += 1) {
+      writeFileSync(path.join(root, `source-${index}.txt`), oneMiB);
+    }
+
+    await expect(
+      prepareBrokerReview({ cwd: root, prompt: "Review all sources.", files: ["*.txt"] }),
+    ).rejects.toThrow(/sealed source bundle.*exceeding.*16777216 bytes/u);
+  });
+
   workerTest(reconnectTestName, async () => {
     const root = mkdtempSync(path.join(tmpdir(), "oracle-v2-broker-review-"));
     roots.push(root);

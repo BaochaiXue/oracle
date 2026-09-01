@@ -236,8 +236,7 @@ async function inspectPicker(page: Page): Promise<PickerObservation> {
       const selected = await isSelected(item);
       if (label === "GPT-5.6 Sol") {
         result.modelFound = true;
-        result.modelSelected =
-          result.modelSelected || selected || (await item.getAttribute("aria-haspopup")) === "menu";
+        result.modelSelected = result.modelSelected || selected;
       } else if (label === "Pro") {
         result.effortFound = true;
         result.effortSelected = result.effortSelected || selected;

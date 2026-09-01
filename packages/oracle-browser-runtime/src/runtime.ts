@@ -18,6 +18,7 @@ const LAUNCH_RECEIPT = "browser-runtime-launch.json";
 export async function launchOracleBrowserRuntime(options: {
   runtimeRoot: string;
   headless?: boolean;
+  preserveWindowNames?: readonly string[];
   inspection?: RuntimeInspectionOptions;
   launchManagedBrowser?: LaunchManagedBrowser;
 }): Promise<OracleBrowserRuntime> {
@@ -43,6 +44,9 @@ export async function launchOracleBrowserRuntime(options: {
     executablePath: inspection.executablePath,
     profileDir,
     headless: options.headless ?? false,
+    ...(options.preserveWindowNames?.length
+      ? { preserveWindowNames: [...options.preserveWindowNames] }
+      : {}),
   });
   const receipt: RuntimeLaunchReceipt = {
     schemaVersion: "oracle.browser-runtime-launch.v2",

@@ -219,6 +219,7 @@ function createPreflightAdapter(
       if (!bytes) throw new Error(`Missing R7 preflight object ${ref.sha256}`);
       return bytes;
     },
+    listBrowserRecoveryTargets: () => [],
   });
   return adapter;
 }

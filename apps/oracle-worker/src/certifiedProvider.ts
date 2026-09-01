@@ -1,4 +1,7 @@
-import { ChatGptAdapter } from "../../../packages/chatgpt-adapter/src/index.js";
+import {
+  ChatGptAdapter,
+  oracleV2RecoveryWindowName,
+} from "../../../packages/chatgpt-adapter/src/index.js";
 import {
   launchOracleBrowserRuntime,
   readRuntimeCertification,
@@ -95,6 +98,10 @@ export class CertifiedChatGptProvider implements ProviderAdapter {
     const runtime = await launchOracleBrowserRuntime({
       runtimeRoot: this.options.runtimeRoot,
       headless: false,
+      preserveWindowNames:
+        this.bindings
+          ?.listBrowserRecoveryTargets()
+          .map((target) => oracleV2RecoveryWindowName(target.jobId, target.turnAttemptId)) ?? [],
     });
     if (runtime.receipt.browserRuntimeId !== certification.browserRuntimeId) {
       await runtime.close();

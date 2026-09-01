@@ -75,6 +75,31 @@ describe("Oracle v2 MCP broker", () => {
     await worker.stop();
   });
 
+  test("returns recovery-required immediately when committed capture needs an explicit resume", async () => {
+    const paths = workerPaths();
+    const provider = new FakeProvider({ captureFailures: 1 });
+    const worker = new OracleWorker({ ...paths, provider });
+    await worker.start();
+
+    const result = await runBrokerMcpConsult({
+      prompt: "Surface capture recovery without waiting for the host timeout.",
+      idempotencyKey: "mcp-recovery-required",
+      waitTimeoutMs: 30_000,
+      paths,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      jobId: expect.stringMatching(/^job_/u),
+      status: "recovery-required",
+      state: "recoverable",
+      output: expect.stringContaining("job resume tool"),
+    });
+    expect(result.structuredContent).not.toHaveProperty("timedOut");
+    expect(provider.sendCount(result.structuredContent.jobId!)).toBe(1);
+    await worker.stop();
+  });
+
   test("retains the admitted job handle when MCP observation fails", async () => {
     const paths = workerPaths();
     const provider = new FakeProvider();

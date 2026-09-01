@@ -98,6 +98,11 @@ job，而不是重复 Send。当前 canonical v2 worker 仅支持 macOS GUI sess
 native Windows 与其他 non-macOS browser worker 仍 deferred，Windows 普通使用
 继续走 legacy `browser` engine。
 
+每个 v2 prompt object 与 sealed source bundle object 都必须不超过 16 MiB；CLI、
+MCP 与 Batch 会在写入 durable client intent 或 admission 以前完成检查，超限输入
+不会留下一个假装可恢复的 job。进入 `recoverable` 的 broker job 会立即返回
+durable job handle 与明确的 resume/inspect 动作，而不是耗完整个 host wait timeout。
+
 ```bash
 oracle worker run
 oracle --engine broker \

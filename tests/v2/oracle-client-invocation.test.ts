@@ -1,9 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test as vitestTest } from "vitest";
 import { FakeProvider, OracleWorker } from "../../apps/oracle-worker/src/index.js";
 import { admitOracleJob, OracleClient } from "../../packages/oracle-client/src/index.js";
+import { ORACLE_V2_MAX_REQUEST_BODY_BYTES } from "../../packages/oracle-kernel/src/index.js";
 
 const roots: string[] = [];
 const test = process.platform === "win32" ? vitestTest.skip : vitestTest;
@@ -13,6 +14,32 @@ afterEach(() => {
 });
 
 describe("Oracle v2 client invocation", () => {
+  vitestTest("rejects an oversized object before writing a durable intent", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "oracle-v2-client-object-limit-"));
+    roots.push(root);
+    const intentDirectory = path.join(root, "intents");
+    const unexpectedTransport = {
+      putObject: async () => {
+        throw new Error("unexpected object upload");
+      },
+      admitJob: async () => {
+        throw new Error("unexpected admission");
+      },
+    };
+
+    await expect(
+      admitOracleJob(unexpectedTransport, {
+        requestId: "oversized-client-object",
+        idempotency: { scope: "cli", key: "oversized-client-object" },
+        owner: { kind: "ordinary", sessionSlug: "oversized-client-object" },
+        promptBytes: Buffer.from("Reject before intent.\n"),
+        bundleBytes: Buffer.alloc(ORACLE_V2_MAX_REQUEST_BODY_BYTES + 1),
+        intentDirectory,
+      }),
+    ).rejects.toThrow(/Oracle v2 bundle.*exceeding.*16777216 bytes/u);
+    expect(existsSync(intentDirectory)).toBe(false);
+  });
+
   test("persists intent before admission and reuses one job for the same logical request", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "oracle-v2-client-invocation-"));
     roots.push(root);

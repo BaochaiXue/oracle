@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import type { Browser, BrowserContext, Page } from "playwright-core";
+import type { BrowserContext, Page } from "playwright-core";
 import { OracleProviderFixture } from "../../apps/oracle-provider-fixture/src/index.js";
 import {
   ORACLE_BROWSER_RUNTIME_ID,
@@ -32,36 +32,60 @@ function temporaryRoot(): string {
 
 describe("Oracle v2 certified browser runtime", () => {
   test("waits for delayed restored targets and closes them before exposing the runtime", async () => {
-    const openTargetIds = new Set(Array.from({ length: 23 }, (_, index) => `restored-${index}`));
+    const restoredPages = Array.from({ length: 23 }, () => {
+      let closed = false;
+      return {
+        __oracleRecoveryWindowName: "",
+        isClosed: () => closed,
+        close: async () => {
+          closed = true;
+        },
+      } as unknown as Page;
+    });
     let observations = 0;
-    const browser = {
-      async newBrowserCDPSession() {
-        return {
-          async send(method: string, parameters?: { targetId?: string }) {
-            if (method === "Target.getTargets") {
-              observations += 1;
-              return {
-                targetInfos:
-                  observations < 3
-                    ? []
-                    : [...openTargetIds].map((targetId) => ({ targetId, type: "page" })),
-              };
-            }
-            if (method === "Target.closeTarget" && parameters?.targetId) {
-              openTargetIds.delete(parameters.targetId);
-              return { success: true };
-            }
-            throw new Error(`Unexpected CDP method ${method}`);
-          },
-          async detach() {},
-        };
+    const context = {
+      pages() {
+        observations += 1;
+        return observations < 3 ? [] : restoredPages;
       },
-    } as unknown as Pick<Browser, "newBrowserCDPSession">;
+      newCDPSession: fakeRecoveryMarkerSession,
+    } as unknown as Pick<BrowserContext, "newCDPSession" | "pages">;
 
     await expect(
-      closeRestoredBrowserPages(browser, { quietMs: 10, timeoutMs: 500, pollMs: 1 }),
+      closeRestoredBrowserPages(context, { quietMs: 10, timeoutMs: 500, pollMs: 1 }),
     ).resolves.toBe(23);
-    expect(openTargetIds.size).toBe(0);
+    expect(restoredPages.every((page) => page.isClosed())).toBe(true);
+  });
+
+  test("preserves only the exact durable at-risk recovery target during startup", async () => {
+    const marker = `oracle-v2-at-risk:${"a".repeat(64)}`;
+    const makePage = (windowName: string) => {
+      let closed = false;
+      return {
+        __oracleRecoveryWindowName: windowName,
+        isClosed: () => closed,
+        close: async () => {
+          closed = true;
+        },
+      } as unknown as Page;
+    };
+    const recoveryPage = makePage(marker);
+    const stalePages = Array.from({ length: 23 }, () => makePage(""));
+    const context = {
+      pages: () => [recoveryPage, ...stalePages],
+      newCDPSession: fakeRecoveryMarkerSession,
+    } as unknown as Pick<BrowserContext, "newCDPSession" | "pages">;
+
+    await expect(
+      closeRestoredBrowserPages(context, {
+        quietMs: 10,
+        timeoutMs: 500,
+        pollMs: 1,
+        preserveWindowNames: [marker],
+      }),
+    ).resolves.toBe(23);
+    expect(recoveryPage.isClosed()).toBe(false);
+    expect(stalePages.every((page) => page.isClosed())).toBe(true);
   });
 
   test("exposes one managed Chrome for Testing direct-CDP runtime", () => {
@@ -105,6 +129,7 @@ describe("Oracle v2 certified browser runtime", () => {
     const runtime = await launchOracleBrowserRuntime({
       runtimeRoot,
       headless: false,
+      preserveWindowNames: ["oracle-v2-at-risk:fixture"],
       inspection: {
         chromeForTestingExecutablePath: "/runtime/chrome-for-testing",
         executableExists: () => true,
@@ -118,6 +143,7 @@ describe("Oracle v2 certified browser runtime", () => {
         executablePath: "/runtime/chrome-for-testing",
         profileDir: path.join(runtimeRoot, "browser-profile"),
         headless: false,
+        preserveWindowNames: ["oracle-v2-at-risk:fixture"],
       },
     ]);
     expect(runtime.receipt).toMatchObject({
@@ -329,6 +355,15 @@ function fakeLaunch(launches: Parameters<LaunchManagedBrowser>[0][] = []): Launc
       openPage: async () => ({}) as Page,
       close: async () => undefined,
     };
+  };
+}
+
+async function fakeRecoveryMarkerSession(page: Page) {
+  const windowName = (page as unknown as { __oracleRecoveryWindowName?: string })
+    .__oracleRecoveryWindowName;
+  return {
+    send: async () => ({ result: { type: "string", value: windowName ?? "" } }),
+    detach: async () => undefined,
   };
 }
 

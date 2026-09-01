@@ -24,6 +24,7 @@ export interface ManagedBrowserLaunchInput {
   executablePath: string;
   profileDir: string;
   headless: boolean;
+  preserveWindowNames?: readonly string[];
 }
 
 export interface LaunchedManagedBrowser {

@@ -52,6 +52,13 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   attempt or duplicate Send. Cross-drive Windows inputs are also mapped into
   the sealed bundle's portable external-file namespace instead of leaking a
   drive-qualified host path into the artifact.
+- Oracle v2 review hardening: preserve only exact durable at-risk recovery
+  targets while closing stale restored pages, require explicit selected-state
+  evidence for GPT-5.6 Sol instead of accepting a submenu affordance, return a
+  `recoverable` broker job immediately as action-required, and reject an
+  oversized prompt or sealed source bundle before writing durable client
+  intent or attempting admission. Each worker object body remains capped at 16
+  MiB.
 - Browser attachments: stop treating disabled Send as proof of an unfinished
   upload while Oracle has intentionally left the composer prompt empty. Stable
   complete attachment evidence can now advance to prompt composition after a

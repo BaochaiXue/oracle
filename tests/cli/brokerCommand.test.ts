@@ -78,6 +78,37 @@ describe("broker CLI command", () => {
     await worker.stop();
   });
 
+  test("returns promptly with explicit recovery guidance after capture fails", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "oracle-v2-broker-recovery-"));
+    roots.push(root);
+    const paths = {
+      rootDir: path.join(root, "store"),
+      sessionsDir: path.join(root, "sessions"),
+      socketPath: path.join(root, "run", "oracle.sock"),
+      intentDirectory: path.join(root, "intents"),
+    };
+    const provider = new FakeProvider({ captureFailures: 1 });
+    const worker = new OracleWorker({ ...paths, provider });
+    await worker.start();
+
+    const error = await runBrokerCliCommand({
+      prompt: "Surface the capture recovery action.",
+      idempotencyKey: "broker-cli-recovery-required",
+      wait: true,
+      timeoutMs: 30_000,
+      paths,
+      log: () => undefined,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(BrokerCliJobError);
+    expect(error).toMatchObject({
+      jobId: expect.stringMatching(/^job_/u),
+      message: expect.stringMatching(/requires explicit capture recovery.*oracle resume/u),
+    });
+    expect(provider.sendCount((error as BrokerCliJobError).jobId)).toBe(1);
+    await worker.stop();
+  });
+
   test("retains the admitted job handle when client observation fails", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "o2-cli-err-"));
     roots.push(root);

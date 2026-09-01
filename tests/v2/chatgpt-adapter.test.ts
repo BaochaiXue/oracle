@@ -256,13 +256,16 @@ describe.skipIf(!executablePath)("Oracle v2 ChatGPT adapter against the provider
     const { adapter, client } = await harness("missing-attachment");
     for (let index = 0; index < 4; index += 1) {
       const admission = await admit(client, `preparation-failure-${index}`, { bundle: true });
-      const result = await client.waitForTerminal(admission.job.id, { timeoutMs: 8_000 });
+      // The injected missing attachment intentionally consumes the adapter's
+      // full 5 s action budget before terminal cleanup. Leave a separate bound
+      // for page creation, durable state publication, and lease release.
+      const result = await waitForTerminal(client, admission.job.id, 12_000);
       expect(result.state).toMatchObject({ kind: "failed-unsent", retrySafe: true });
     }
     await waitForIdle(client, 5_000);
     expect(adapter.openPageCount()).toBe(0);
     expect(fixture.totalSendCount()).toBe(before);
-  }, 30_000);
+  }, 60_000);
 
   test("marks a dropped click ambiguous and never performs a second Send", async () => {
     const { client, worker } = await harness("click-dropped");
@@ -559,6 +562,37 @@ describe.skipIf(!executablePath)("Oracle v2 ChatGPT adapter against the provider
     });
     expect(fixture.totalSendCount()).toBe(before);
     expect(await page.locator("#prompt-textarea").textContent()).toBe("");
+    await page.close();
+  });
+
+  test("rejects an unselected GPT-5.6 Sol submenu affordance as model evidence", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <style>.hidden { display: none; }</style>
+      <form>
+        <button type="button" data-testid="model-switcher-dropdown-button"
+          aria-label="Model and intelligence" aria-haspopup="menu">GPT-5.5</button>
+        <div role="menu" data-testid="composer-intelligence-picker-content" class="hidden">
+          <button type="button" role="menuitemradio" aria-checked="true">GPT-5.5</button>
+          <button type="button" role="menuitem" aria-haspopup="menu">GPT-5.6 Sol</button>
+          <button type="button" role="menuitemradio" aria-checked="true">Pro</button>
+        </div>
+      </form>
+      <script>
+        const button = document.querySelector('[data-testid="model-switcher-dropdown-button"]');
+        const menu = document.querySelector('[role="menu"]');
+        button.addEventListener('click', () => menu.classList.toggle('hidden'));
+      </script>
+    `);
+
+    const result = await probeModelAndEffortControls(page, { timeoutMs: 5_000 });
+    expect(result).toMatchObject({
+      modelLabel: "missing",
+      effortLabel: "Pro",
+      modelVerified: false,
+      effortVerified: true,
+      promptSubmitted: false,
+    });
     await page.close();
   });
 

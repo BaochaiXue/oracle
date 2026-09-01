@@ -107,6 +107,11 @@ export async function runBrokerCliCommand(input: BrokerCliCommandInput): Promise
       );
       return { jobId, state: settled.job.state.kind, timedOut: true };
     }
+    if (settled.job.state.kind === "recoverable") {
+      throw new Error(
+        `Oracle v2 job ${jobId} requires explicit capture recovery; run oracle resume ${jobId} or inspect it with oracle job ${jobId}`,
+      );
+    }
     if (!settled.result?.ready) {
       throw new Error(`Oracle v2 job ${jobId} stopped in state ${settled.job.state.kind}`);
     }

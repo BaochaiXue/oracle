@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   jobOwnerSchema,
   objectRefSchema,
+  ORACLE_V2_MAX_REQUEST_BODY_BYTES,
   parseJobSpec,
   type ProviderAdapter,
 } from "../../../packages/oracle-kernel/src/index.js";
@@ -11,7 +12,6 @@ import { OracleStore } from "../../../packages/oracle-store/src/index.js";
 import { EnvironmentHardExitFaultInjector, type WorkerFaultInjector } from "./faults.js";
 import { JobOperationConflictError, JobRunner } from "./runner.js";
 
-const MAX_BODY_BYTES = 16 * 1024 * 1024;
 const DEBUG_TTL_MS = 14 * 24 * 60 * 60 * 1_000;
 const DEBUG_MAX_BYTES = 512 * 1024 * 1024;
 
@@ -94,7 +94,22 @@ export class OracleWorker {
         sessionsDir: this.options.sessionsDir,
       });
       store.pruneDebugObjects({ ttlMs: DEBUG_TTL_MS, maxBytes: DEBUG_MAX_BYTES, keepLatest: 0 });
-      this.options.provider.bindRuntime?.({ readObject: (ref) => store!.readObject(ref) });
+      this.options.provider.bindRuntime?.({
+        readObject: (ref) => store!.readObject(ref),
+        listBrowserRecoveryTargets: () =>
+          store!.listJobs().flatMap((job) => {
+            const state = job.state;
+            if (
+              state.kind !== "dispatch-at-risk" &&
+              state.kind !== "committed" &&
+              state.kind !== "capturing" &&
+              !(state.kind === "recoverable" && state.basis === "committed-capture")
+            ) {
+              return [];
+            }
+            return [{ jobId: job.id, turnAttemptId: state.intent.turnAttemptId }];
+          }),
+      });
       const compatibility = await this.options.provider.probe();
       const providerStatus = store.setProviderStatus("chatgpt-web", compatibility);
       const runner = new JobRunner({
@@ -409,7 +424,7 @@ async function readBody(request: IncomingMessage): Promise<Buffer> {
   for await (const chunk of request) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += bytes.byteLength;
-    if (size > MAX_BODY_BYTES) throw new Error("request_too_large");
+    if (size > ORACLE_V2_MAX_REQUEST_BODY_BYTES) throw new Error("request_too_large");
     chunks.push(bytes);
   }
   return Buffer.concat(chunks);

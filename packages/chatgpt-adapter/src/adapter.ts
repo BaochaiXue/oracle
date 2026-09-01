@@ -381,7 +381,7 @@ export class ChatGptAdapter implements ProviderAdapter {
   }
 
   private async recoverAtRiskPage(jobId: string, turnAttemptId: string): Promise<Page | undefined> {
-    const marker = recoveryWindowName(jobId, turnAttemptId);
+    const marker = oracleV2RecoveryWindowName(jobId, turnAttemptId);
     const restoredMatches: Page[] = [];
     for (const page of this.context.pages()) {
       if (page.isClosed()) continue;
@@ -453,7 +453,7 @@ function recoveryStorageKey(jobId: string): string {
   return `oracle-v2:at-risk:${digest(Buffer.from(jobId, "utf8")).slice(0, 32)}`;
 }
 
-function recoveryWindowName(jobId: string, turnAttemptId: string): string {
+export function oracleV2RecoveryWindowName(jobId: string, turnAttemptId: string): string {
   return `oracle-v2-at-risk:${digest(Buffer.from(`${jobId}\0${turnAttemptId}`, "utf8"))}`;
 }
 
@@ -463,7 +463,7 @@ async function installRecoveryLocator(
   turnAttemptId: string,
 ): Promise<void> {
   const key = recoveryStorageKey(jobId);
-  const marker = recoveryWindowName(jobId, turnAttemptId);
+  const marker = oracleV2RecoveryWindowName(jobId, turnAttemptId);
   const script = `(() => {
     const storageKey = ${JSON.stringify(key)};
     const expectedTurnAttemptId = ${JSON.stringify(turnAttemptId)};

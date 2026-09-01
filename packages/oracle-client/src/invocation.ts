@@ -12,7 +12,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { JOB_SCHEMA_VERSION, type JobSpec, type ObjectRef } from "../../oracle-kernel/src/index.js";
+import {
+  assertOracleV2ObjectBodySize,
+  JOB_SCHEMA_VERSION,
+  type JobSpec,
+  type ObjectRef,
+} from "../../oracle-kernel/src/index.js";
 import type { OracleClient } from "./client.js";
 import type { ClientAdmission } from "./types.js";
 
@@ -62,6 +67,10 @@ export async function admitOracleJob(
   client: InvocationTransport,
   invocation: OracleJobInvocation,
 ): Promise<OracleJobAdmission> {
+  assertOracleV2ObjectBodySize(invocation.promptBytes, "Oracle v2 prompt");
+  if (invocation.bundleBytes) {
+    assertOracleV2ObjectBodySize(invocation.bundleBytes, "Oracle v2 bundle");
+  }
   const promptSha256 = digest(invocation.promptBytes);
   const bundleSha256 = invocation.bundleBytes ? digest(invocation.bundleBytes) : undefined;
   const bundleMediaType = invocation.bundleBytes

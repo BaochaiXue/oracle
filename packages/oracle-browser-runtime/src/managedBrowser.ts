@@ -3,7 +3,7 @@ import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
 import { launch, Launcher, type LaunchedChrome } from "chrome-launcher";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import type { LaunchedManagedBrowser, ManagedBrowserLaunchInput } from "./types.js";
-import { closeRestoredBrowserPages } from "./reconcile.js";
+import { closeRestoredBrowserPages, readRecoveryWindowName } from "./reconcile.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const BACKGROUND_STARTING_URL = "--no-startup-window";
@@ -24,11 +24,16 @@ export async function launchManagedChromeForTesting(
     if (!context) {
       throw new Error("Managed Chrome for Testing did not expose its persistent context");
     }
-    const restoredPageCount = await closeRestoredBrowserPages(browser);
+    const preserveWindowNames = new Set(input.preserveWindowNames ?? []);
     const ownedPages = new Set<Page>();
     const pendingMarkers = new Set<string>();
     let closed = false;
     let closeAttempt: Promise<void> | undefined;
+    const ownPage = (page: Page) => {
+      if (ownedPages.has(page)) return;
+      ownedPages.add(page);
+      page.once("close", () => ownedPages.delete(page));
+    };
     const closeLateUnownedPage = (page: Page) => {
       void delay(50).then(async () => {
         if (
@@ -40,10 +45,34 @@ export async function launchManagedChromeForTesting(
         ) {
           return;
         }
+        let recoveryWindowName: string;
+        try {
+          recoveryWindowName = await readRecoveryWindowName(context, page);
+        } catch {
+          // A late-restored page can still be an exact recovery target. Leave it
+          // open when its marker cannot yet be inspected rather than risk losing
+          // durable at-risk work.
+          return;
+        }
+        if (preserveWindowNames.has(recoveryWindowName)) {
+          ownPage(page);
+          return;
+        }
         await page.close({ runBeforeUnload: false }).catch(() => undefined);
       });
     };
     context.on("page", closeLateUnownedPage);
+    const restoredPageCount = await closeRestoredBrowserPages(context, {
+      preserveWindowNames: [...preserveWindowNames],
+    });
+    for (const page of context.pages()) {
+      if (
+        !page.isClosed() &&
+        preserveWindowNames.has(await readRecoveryWindowName(context, page))
+      ) {
+        ownPage(page);
+      }
+    }
     return {
       context,
       browserVersion: browser.version(),
@@ -65,11 +94,16 @@ export async function launchManagedChromeForTesting(
           });
           targetId = created.targetId;
           const page = await waitForExactPage(context, marker, 15_000);
-          ownedPages.add(page);
-          page.once("close", () => ownedPages.delete(page));
+          ownPage(page);
           pendingMarkers.delete(marker);
           await page.goto(url, { waitUntil: "commit", timeout: 15_000 });
-          await closeCurrentlyUnownedPages(context, ownedPages, pendingMarkers);
+          await closeCurrentlyUnownedPages(
+            context,
+            ownedPages,
+            pendingMarkers,
+            preserveWindowNames,
+            ownPage,
+          );
           return page;
         } catch (error) {
           if (targetId) {
@@ -124,11 +158,26 @@ async function closeCurrentlyUnownedPages(
   context: BrowserContext,
   ownedPages: ReadonlySet<Page>,
   pendingMarkers: ReadonlySet<string>,
+  preserveWindowNames: ReadonlySet<string>,
+  ownPage: (page: Page) => void,
 ): Promise<void> {
   const unowned = context
     .pages()
     .filter((page) => !page.isClosed() && !ownedPages.has(page) && !pendingMarkers.has(page.url()));
   for (const page of unowned) {
+    let recoveryWindowName: string;
+    try {
+      recoveryWindowName = await readRecoveryWindowName(context, page);
+    } catch (error) {
+      if (page.isClosed()) {
+        continue;
+      }
+      throw error;
+    }
+    if (preserveWindowNames.has(recoveryWindowName)) {
+      ownPage(page);
+      continue;
+    }
     await page.close({ runBeforeUnload: false }).catch(() => undefined);
   }
 }

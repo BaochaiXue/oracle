@@ -100,6 +100,19 @@ export async function runBrokerMcpConsult(input: BrokerMcpConsultInput): Promise
         },
       };
     }
+    if (settled.job.state.kind === "recoverable") {
+      const output = `Oracle v2 job ${jobId} requires explicit capture recovery. Resume it with the job resume tool or inspect its status and events.`;
+      return {
+        isError: true,
+        content: textContent(output),
+        structuredContent: {
+          jobId,
+          status: "recovery-required",
+          state: "recoverable",
+          output,
+        },
+      };
+    }
     if (!settled.result?.ready) {
       const output = `Oracle v2 job ${jobId} stopped in state ${settled.job.state.kind}.`;
       return {

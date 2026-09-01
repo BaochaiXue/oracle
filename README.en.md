@@ -99,6 +99,13 @@ same job instead of repeating Send. The canonical v2 worker currently supports
 only macOS GUI sessions; native Windows and other non-macOS browser workers
 remain deferred, so ordinary Windows use stays on the legacy `browser` engine.
 
+Each v2 prompt object and sealed source bundle object must be no larger than 16
+MiB. CLI, MCP, and Batch check that boundary before writing durable client
+intent or attempting admission, so an oversized input does not leave a falsely
+recoverable job. A broker job that reaches `recoverable` returns its durable job
+handle and explicit resume/inspect action immediately instead of consuming the
+full host wait timeout.
+
 ```bash
 oracle worker run
 oracle --engine broker \

@@ -69,6 +69,12 @@ rejected on API/browser requests rather than ignored. The canonical v2 worker
 currently supports macOS GUI sessions only; native Windows and other non-macOS
 browser workers remain deferred.
 
+Each prompt object and sealed source bundle object is limited to 16 MiB, checked
+before durable client intent or admission. A job that reaches `recoverable`
+returns immediately with `isError:true`, `status:"recovery-required"`, its
+durable `jobId`, and explicit `job_resume` / inspection guidance; this is an
+action-required result, not a host timeout.
+
 ```json
 {
   "engine": "broker",

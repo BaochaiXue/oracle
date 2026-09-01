@@ -79,6 +79,12 @@ The canonical worker currently supports only macOS GUI sessions. Native
 Windows fails closed before socket acquisition and continues to use the legacy
 `browser` engine; non-macOS browser workers remain deferred.
 
+Each prompt object and sealed source bundle object is limited to 16 MiB. Oracle
+checks that limit before durable client intent or admission. If a waiting job
+becomes `recoverable`, the CLI returns the durable job handle immediately with
+`oracle resume <job-id>` / `oracle job <job-id>` guidance instead of waiting for
+the remaining timeout.
+
 ```bash
 oracle worker run
 oracle --engine broker \

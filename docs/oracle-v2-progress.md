@@ -16,14 +16,15 @@ Legacy safety baseline: `fork/main@e6f170ff`
 
 ## Current state
 
-R0 through R9 are source-complete and carried by PR #5 as an opt-in source
-candidate for `fork/main`; GitHub's merge state and the exact `fork/main` head,
-not this dated note, prove completion. The usable legacy execution path and
-ordinary default remain unchanged. R8 adds an explicit opt-in `broker` engine
-for CLI and MCP, durable job inspection/recovery commands, and v2 session
-projection readback. R9 maps new Batch lane and synthesis attempts to
-Batch-owned durable v2 jobs while preserving the v1 parent manifest, sealing,
-blind-lane, barrier, answer-integrity, and owner-closure contracts.
+R0 through R9 are source-complete on the PR #5 integration line. GitHub's merge
+state and the exact `fork/main` head, not this dated note, determine whether
+that line is still a candidate or integrated source. The usable legacy
+execution path and ordinary default remain unchanged. R8 adds an explicit
+opt-in `broker` engine for CLI and MCP, durable job inspection/recovery
+commands, and v2 session projection readback. R9 maps new Batch lane and
+synthesis attempts to Batch-owned durable v2 jobs while preserving the v1
+parent manifest, sealing, blind-lane, barrier, answer-integrity, and
+owner-closure contracts.
 
 The canonical R0-R9 worker remains a macOS GUI-session runtime over an
 owner-only Unix socket. Native Windows fails closed before socket acquisition,
@@ -326,6 +327,21 @@ Fresh R9 source and fixture evidence:
   and 2,047 tests with 15 files and 34 tests skipped. No real ChatGPT prompt was
   submitted for R9; all Batch Send/recovery evidence uses the sanitized fixture
   or `FakeProvider`.
+
+Fresh PR #5 integration-review evidence:
+
+- exact restart recovery now preserves only durable at-risk restored targets
+  while stale restored pages still close; strict model readiness requires an
+  explicit selected state, and repeated preparation failures release every tab
+  lease;
+- broker callers return `recoverable` immediately as action-required, and a
+  prompt or sealed source bundle over the worker's 16 MiB object-body limit is
+  rejected before durable client intent or admission;
+- the final local integration suite passed 181 files and 2,058 tests with 15
+  files and 34 tests skipped. Format, typecheck, lint, v2 boundaries, production
+  build, docs/help, public-safety, packed-CLI smoke, and `git diff --check`
+  passed. The PR merge/read-back and exact hosted checks remain GitHub-owned
+  integration evidence.
 
 ## Bounded opt-in dogfood after R9
 
