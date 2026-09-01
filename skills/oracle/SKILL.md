@@ -26,12 +26,14 @@ Recommended defaults:
 
 - Engine: browser (`--engine browser`)
 - Browser transport: direct CDP (`--browser-transport cdp`)
-- Window: visible while needed and never activated for submission; the isolated
-  profile persists, while Chrome drains after the last ordinary run unless
-  active/recoverable work or an unowned meaningful page remains. macOS cold
-  starts use LaunchServices background-open semantics plus
-  `--no-startup-window`, new tabs use `focus:false`, and page-side focus
-  emulation supports trusted input without changing the frontmost app
+- Window: visible while needed and never activated for submission. Invoke the
+  canonical browser lane with `--browser-keep-browser` so the dedicated Chrome
+  process remains available across users and sessions. A terminal run closes
+  only its exact Oracle-owned tab; incomplete, foreign, and unowned meaningful
+  tabs remain open. macOS cold starts use LaunchServices background-open
+  semantics plus `--no-startup-window`, new tabs use `focus:false`, and
+  page-side focus emulation supports trusted input without changing the
+  frontmost app
 - Base Sol: `--model gpt-5.6-sol`
 - Base Sol maximum reasoning: `--browser-thinking-time extra-high` (Extra High)
 - Explicit Pro effort on GPT-5.6 Sol: `--browser-thinking-time pro` (fails closed if Pro cannot be confirmed)
@@ -59,7 +61,7 @@ For the canonical GPT-5.6 Pro browser lane, use:
 
 ```bash
 oracle --engine browser --browser-transport cdp --model gpt-5-pro \
-  --browser-thinking-time pro \
+  --browser-thinking-time pro --browser-keep-browser \
   -p "<task>" --file "src/**"
 ```
 
@@ -148,18 +150,19 @@ dedicated profile retain ChatGPT cookies with Chromium's weaker basic password
 store. Keep that profile owner-only and never reuse an everyday browser profile.
 
 The human performs only ChatGPT sign-in and real account challenges. The agent
-owns browser setup, exact-process closure, status, smoke, recovery, and normal
-lifecycle. Changing password-store mode requires moving the old dedicated
+owns browser setup, exact-tab closure, status, smoke, recovery, and normal
+lifecycle. Process-level termination is not normal cleanup. Changing
+password-store mode requires moving the old dedicated
 profile to a recoverable backup and creating a fresh owner-only profile before
 sign-in; restored tabs from an old profile are not login-persistence evidence.
 After the human confirms sign-in, verify that the setup PID belongs to Oracle's
 Chrome for Testing executable, names the dedicated `--user-data-dir`, and
-carries the expected password-store flag. Identify the exact window owned by
-that PID and send `WM_DELETE_WINDOW`, then wait for the setup command's
-successful completion receipt so Chrome flushes its profile normally. Never ask
-the human to close the window, never use a broad `pkill`, and never signal an
-unverified browser process. Run the account-safe two-cold-start smoke after
-first setup or a concrete browser-contract change; it submits no prompt.
+carries the expected password-store flag. Keep that Chrome process running and
+close only the exact setup tab through its verified CDP target when it is no
+longer needed. Never send `WM_DELETE_WINDOW`, use a broad `pkill`, or signal the
+Chrome process merely to clean up a consultation. Run the account-safe
+two-cold-start smoke after first setup or a concrete browser-contract change;
+it submits no prompt.
 
 ## Commands
 
@@ -174,7 +177,7 @@ first setup or a concrete browser-contract change; it submits no prompt.
   - `oracle --dry-run summary --files-report -p "<task>" --file "src/**"`
 
 - Browser run:
-  - `oracle --engine browser --browser-transport cdp --model gpt-5-pro --browser-thinking-time pro -p "<task>" --file "src/**"`
+  - `oracle --engine browser --browser-transport cdp --model gpt-5-pro --browser-thinking-time pro --browser-keep-browser -p "<task>" --file "src/**"`
 
 - Manual paste fallback:
   - `oracle --render-markdown --copy-markdown -p "<task>" --file "src/**"`
@@ -329,22 +332,22 @@ derives the HTTP timeout unless `--http-timeout` is supplied.
 - Use `--slug "<3-5 words>"` for readable session IDs.
 - If a run times out, reattach; do not re-run it. Use `--force` only when a
   genuinely new identical run is intended.
-- Direct CDP defaults to `browserLifetime:"while-needed"`. The creation-time
-  CDP target ID is immutable ownership evidence. Browser-terminal owned tabs
-  close even when later evidence admission rejects the captured result;
-  recoverable incomplete tabs receive bounded holds; unknown
-  meaningful pages are preserved. Startup/final-release reconciliation closes
-  terminal owned targets, coalesces blank sentinels, and reports a durable
-  `complete`, `partial`, or `failed` receipt without holding the lease registry
-  during CDP work. `persistent` is an explicit always-on mode.
-- Oracle owns the dedicated Chrome process lifecycle after one-time setup. A
-  healthy older managed generation may finish current work with rollover
-  pending; the final idle release drains it. Startup repairs stale PID/port/
-  lock metadata and a verified unusable managed process once before Send.
-  Check `oracle browser status`; use `oracle browser heal --plan` and then
-  `oracle browser heal` only for explicit no-prompt maintenance. Both preserve
-  active/recoverable work and refuse foreign, everyday, attach-running, remote,
-  or ambiguous owners.
+- This skill explicitly selects `browserLifetime:"persistent"` through
+  `--browser-keep-browser`, even though the CLI baseline is `while-needed`.
+  The creation-time CDP target ID is immutable ownership evidence.
+  Browser-terminal owned tabs close even when later evidence admission rejects
+  the captured result; recoverable incomplete tabs receive bounded holds;
+  unknown meaningful pages are preserved. Startup/final-release reconciliation
+  closes terminal owned targets, coalesces blank sentinels, and reports a durable
+  `complete`, `partial`, or `failed` receipt without terminating the shared
+  Chrome process.
+- Keep the dedicated Chrome process running after consultations. Prefer
+  `oracle browser reconcile-tabs --plan` and bounded exact-target cleanup over
+  process shutdown. Process repair, restart, or termination is allowed only as
+  explicit browser maintenance after `oracle browser status` reports zero
+  active and zero recoverable consultations and exact-profile inspection proves
+  that no foreign or unowned meaningful page would be lost. If any of those
+  conditions is unknown, leave Chrome running.
 - A missing model-selector button is not permission to retry a Pro request with
   `--browser-model-strategy current` or `ignore`. The canonical lane reloads
   the same Oracle-owned target once before Send and re-runs strict model/effort
