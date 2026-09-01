@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { launch, Launcher, type LaunchedChrome } from "chrome-launcher";
-import { chromium, type Browser } from "playwright-core";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import type { LaunchedManagedBrowser, ManagedBrowserLaunchInput } from "./types.js";
+import { closeRestoredBrowserPages } from "./reconcile.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const BACKGROUND_STARTING_URL = "--no-startup-window";
@@ -20,28 +22,58 @@ export async function launchManagedChromeForTesting(
     if (!context) {
       throw new Error("Managed Chrome for Testing did not expose its persistent context");
     }
+    const restoredPageCount = await closeRestoredBrowserPages(browser);
+    const ownedPages = new Set<Page>();
+    const pendingMarkers = new Set<string>();
     let closed = false;
+    const closeLateUnownedPage = (page: Page) => {
+      void delay(50).then(async () => {
+        if (closed || page.isClosed() || ownedPages.has(page) || pendingMarkers.has(page.url())) {
+          return;
+        }
+        await page.close({ runBeforeUnload: false }).catch(() => undefined);
+      });
+    };
+    context.on("page", closeLateUnownedPage);
     return {
       context,
       browserVersion: browser.version(),
       executablePath: input.executablePath,
+      restoredPageCount,
       async openPage(url) {
-        const pagePromise = context.waitForEvent("page", { timeout: 15_000 });
+        if (closed) throw new Error("Managed Chrome for Testing runtime is closed");
+        const marker = `about:blank#oracle-v2-target-${randomUUID()}`;
+        pendingMarkers.add(marker);
         const session = await browser!.newBrowserCDPSession();
+        let targetId: string | undefined;
         try {
-          await session.send("Target.createTarget", {
-            url,
+          const created = await session.send("Target.createTarget", {
+            url: marker,
             background: false,
             focus: false,
           });
-          return await pagePromise;
+          targetId = created.targetId;
+          const page = await waitForExactPage(context, marker, 15_000);
+          ownedPages.add(page);
+          page.once("close", () => ownedPages.delete(page));
+          pendingMarkers.delete(marker);
+          await page.goto(url, { waitUntil: "commit", timeout: 15_000 });
+          await closeCurrentlyUnownedPages(context, ownedPages, pendingMarkers);
+          return page;
+        } catch (error) {
+          if (targetId) {
+            await session.send("Target.closeTarget", { targetId }).catch(() => undefined);
+          }
+          throw error;
         } finally {
+          pendingMarkers.delete(marker);
           await session.detach().catch(() => undefined);
         }
       },
       async close() {
         if (closed) return;
         closed = true;
+        context.off("page", closeLateUnownedPage);
         await closeOwnedBrowser(browser!, launcher, endpoint);
       },
     };
@@ -49,6 +81,35 @@ export async function launchManagedChromeForTesting(
     await browser?.close().catch(() => undefined);
     launcher.kill();
     throw error;
+  }
+}
+
+async function waitForExactPage(
+  context: BrowserContext,
+  marker: string,
+  timeoutMs: number,
+): Promise<Page> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const page = context
+      .pages()
+      .find((candidate) => !candidate.isClosed() && candidate.url() === marker);
+    if (page) return page;
+    await delay(25);
+  }
+  throw new Error("Managed Chrome for Testing did not expose the exact created target");
+}
+
+async function closeCurrentlyUnownedPages(
+  context: BrowserContext,
+  ownedPages: ReadonlySet<Page>,
+  pendingMarkers: ReadonlySet<string>,
+): Promise<void> {
+  const unowned = context
+    .pages()
+    .filter((page) => !page.isClosed() && !ownedPages.has(page) && !pendingMarkers.has(page.url()));
+  for (const page of unowned) {
+    await page.close({ runBeforeUnload: false }).catch(() => undefined);
   }
 }
 

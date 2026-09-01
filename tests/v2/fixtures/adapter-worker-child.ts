@@ -6,10 +6,10 @@ const rootDir = required("ORACLE_V2_CHILD_ROOT");
 const sessionsDir = required("ORACLE_V2_CHILD_SESSIONS");
 const socketPath = required("ORACLE_V2_CHILD_SOCKET");
 const fixtureOrigin = required("ORACLE_V2_FIXTURE_ORIGIN");
-const executablePath = required("ORACLE_V2_FIXTURE_BROWSER_EXECUTABLE");
+const browserEndpoint = required("ORACLE_V2_FIXTURE_BROWSER_ENDPOINT");
 
-const browser = await chromium.launch({ executablePath, headless: true });
-const context = await browser.newContext();
+const browser = await chromium.connect(browserEndpoint);
+const context = browser.contexts()[0] ?? (await browser.newContext());
 const adapter = new ChatGptAdapter({
   context,
   browserRuntimeId: "fixture-cft-child",

@@ -14,6 +14,7 @@ import {
   probeAttachmentWithoutSend,
   probeLiveCompatibilityWithoutSend,
   probeModelAndEffortControls,
+  readComposerText,
 } from "../../packages/chatgpt-adapter/src/index.js";
 import { OracleClient } from "../../packages/oracle-client/src/index.js";
 import {
@@ -21,7 +22,7 @@ import {
   type JobSpec,
   type ObjectRef,
 } from "../../packages/oracle-kernel/src/index.js";
-import { OracleWorker } from "../../apps/oracle-worker/src/index.js";
+import { OracleWorker, type WorkerFaultPoint } from "../../apps/oracle-worker/src/index.js";
 import { OracleStore } from "../../packages/oracle-store/src/index.js";
 import { findFixtureBrowserExecutable } from "./browser-runtime.js";
 
@@ -158,7 +159,7 @@ describe.skipIf(!executablePath)("Oracle v2 ChatGPT adapter against the provider
         model: { requested: "gpt-5.6-sol", verified: true },
         effort: { requested: "pro", verified: true },
       },
-      capture: { markdownQuality: "native-copy" },
+      capture: { markdownQuality: "plain-text" },
     });
     if (textResult.state.kind !== "completed") throw new Error("Expected completed text job");
     expect(fixture.sendCount(textResult.state.submission.turnAttemptId)).toBe(1);
@@ -188,7 +189,7 @@ describe.skipIf(!executablePath)("Oracle v2 ChatGPT adapter against the provider
     expect(representations).toEqual([
       { role: "answer", object_class: "answer" },
       { role: "response-html", object_class: "html" },
-      { role: "response-plain", object_class: "text" },
+      { role: "response-plain", object_class: "answer" },
     ]);
     store.close();
   }, 20_000);
@@ -196,24 +197,26 @@ describe.skipIf(!executablePath)("Oracle v2 ChatGPT adapter against the provider
   test.each([
     "delayed-composer",
     "attachment-chip-delay",
+    "aria-file-tile-attachment",
     "commit-delay",
     "late-conversation-url",
     "wrong-conversation-navigation",
     "streaming-assistant",
     "copy-control-missing",
+    "conversation-history-rate-limit-modal",
   ] as const)(
     "completes the %s scenario without duplicate Send",
     async (scenario) => {
       const { client, worker } = await harness(scenario);
       const admission = await admit(client, `scenario-${scenario}`, {
-        bundle: scenario === "attachment-chip-delay",
+        bundle: scenario === "attachment-chip-delay" || scenario === "aria-file-tile-attachment",
       });
       const result = await client.waitForTerminal(admission.job.id, { timeoutMs: 8_000 });
       expect(result.state.kind).toBe("completed");
       if (result.state.kind !== "completed") throw new Error(`Expected ${scenario} completion`);
       expect(fixture.sendCount(result.state.submission.turnAttemptId)).toBe(1);
       if (scenario === "copy-control-missing") {
-        expect(result.state.capture.markdownQuality).toBe("html-projection");
+        expect(result.state.capture.markdownQuality).toBe("plain-text");
       }
       client.close();
       await worker.stop();
@@ -243,7 +246,7 @@ describe.skipIf(!executablePath)("Oracle v2 ChatGPT adapter against the provider
   test("marks a dropped click ambiguous and never performs a second Send", async () => {
     const { client, worker } = await harness("click-dropped");
     const admission = await admit(client, "click-dropped");
-    const result = await client.waitForTerminal(admission.job.id, { timeoutMs: 8_000 });
+    const result = await client.waitForState(admission.job.id, "ambiguous", { timeoutMs: 8_000 });
     expect(result.state.kind).toBe("ambiguous");
     if (result.state.kind !== "ambiguous") throw new Error("Expected ambiguous result");
     expect(fixture.sendCount(result.state.intent.turnAttemptId)).toBe(1);
@@ -252,6 +255,86 @@ describe.skipIf(!executablePath)("Oracle v2 ChatGPT adapter against the provider
     clients.splice(clients.indexOf(client), 1);
     workers.splice(workers.indexOf(worker), 1);
   }, 15_000);
+
+  test("recovers committed capture through a fresh worker and page without another Send", async () => {
+    const paths = workerPaths();
+    const firstContext = await browser.newContext();
+    contexts.push(firstContext);
+    const firstAdapter = new ChatGptAdapter({
+      context: firstContext,
+      browserRuntimeId: "fixture-cft",
+      urlForJob: (jobId) => fixture.urlFor(jobId, "default"),
+      actionTimeoutMs: 5_000,
+      commitTimeoutMs: 2_000,
+    });
+    let interrupted = false;
+    const firstWorker = new OracleWorker({
+      ...paths,
+      provider: firstAdapter,
+      faultInjector: {
+        hit(point: WorkerFaultPoint) {
+          if (point === "during-capture" && !interrupted) {
+            interrupted = true;
+            throw new Error("Injected committed-capture interruption");
+          }
+        },
+      },
+    });
+    await firstWorker.start();
+    workers.push(firstWorker);
+    const firstClient = new OracleClient({ socketPath: paths.socketPath });
+    clients.push(firstClient);
+    const admission = await admit(firstClient, "committed-capture-recovery");
+    const recoverable = await firstClient.waitForState(admission.job.id, "recoverable", {
+      timeoutMs: 8_000,
+    });
+    expect(recoverable.state).toMatchObject({
+      kind: "recoverable",
+      basis: "committed-capture",
+      failure: { retryPolicy: "capture-only", externalEffectRisk: "committed" },
+    });
+    if (recoverable.state.kind !== "recoverable") throw new Error("Expected recoverable job");
+    expect(fixture.sendCount(recoverable.state.intent.turnAttemptId)).toBe(1);
+
+    firstClient.close();
+    clients.splice(clients.indexOf(firstClient), 1);
+    await firstWorker.stop();
+    workers.splice(workers.indexOf(firstWorker), 1);
+
+    const secondContext = await browser.newContext();
+    contexts.push(secondContext);
+    const secondAdapter = new ChatGptAdapter({
+      context: secondContext,
+      browserRuntimeId: "fixture-cft",
+      urlForJob: (jobId) => fixture.urlFor(jobId, "default"),
+      actionTimeoutMs: 5_000,
+      commitTimeoutMs: 2_000,
+    });
+    const secondWorker = new OracleWorker({ ...paths, provider: secondAdapter });
+    await secondWorker.start();
+    workers.push(secondWorker);
+    const secondClient = new OracleClient({ socketPath: paths.socketPath });
+    clients.push(secondClient);
+    const completed = await secondClient.waitForTerminal(admission.job.id, { timeoutMs: 8_000 });
+    expect(completed.state).toMatchObject({
+      kind: "completed",
+      capture: {
+        completionEvidence: expect.arrayContaining(["stable-content"]),
+      },
+    });
+    if (completed.state.kind !== "completed") throw new Error("Expected recovered completion");
+    expect(fixture.sendCount(completed.state.submission.turnAttemptId)).toBe(1);
+    const events = await secondClient.listEvents(admission.job.id);
+    expect(
+      events.filter(
+        (item) =>
+          item.event &&
+          typeof item.event === "object" &&
+          "type" in item.event &&
+          item.event.type === "dispatch-marked-at-risk",
+      ),
+    ).toHaveLength(1);
+  }, 20_000);
 
   test.each(["auth-required", "rate-limit", "unknown-ui-fingerprint"] as const)(
     "records one incompatible provider status for %s and queues new jobs without Send",
@@ -280,11 +363,57 @@ describe.skipIf(!executablePath)("Oracle v2 ChatGPT adapter against the provider
     15_000,
   );
 
+  test("does not commit a transient user turn that rolls back to the new-chat page", async () => {
+    const before = fixture.totalSendCount();
+    const { client } = await harness("conversation-rollback-after-commit");
+    const admission = await admit(client, "conversation-rollback-after-commit");
+    const result = await client.waitForTerminal(admission.job.id, { timeoutMs: 8_000 });
+    expect(result.state.kind).toBe("ambiguous");
+    expect(fixture.totalSendCount() - before).toBe(1);
+    const events = await client.listEvents(admission.job.id);
+    const eventTypes = events.map((item) => item.type);
+    expect(eventTypes.filter((type) => type === "submission-committed")).toHaveLength(0);
+    expect(eventTypes.filter((type) => type === "dispatch-ambiguous")).toHaveLength(1);
+  }, 15_000);
+
+  test("waits for a canonical conversation URL instead of committing a provisional WEB route", async () => {
+    const before = fixture.totalSendCount();
+    const { client } = await harness("provisional-conversation-url");
+    const admission = await admit(client, "provisional-conversation-url");
+    const result = await client.waitForTerminal(admission.job.id, { timeoutMs: 8_000 });
+    expect(result.state.kind).toBe("completed");
+    if (result.state.kind !== "completed") throw new Error("Expected canonical URL completion");
+    expect(result.state.submission.conversationId).not.toContain("WEB:");
+    expect(fixture.totalSendCount() - before).toBe(1);
+  }, 15_000);
+
   test("keeps Send disabled for an empty composer", async () => {
     const page = await browser.newPage();
     await page.goto(fixture.urlFor("empty-composer", "default"));
     const send = page.locator('[data-testid="send-button"]');
     expect(await send.isDisabled()).toBe(true);
+    await page.close();
+  });
+
+  test("projects current ProseMirror paragraph markup back to the exact prompt newlines", async () => {
+    const page = await browser.newPage();
+    await page.goto(fixture.urlFor("composer-projection", "default"));
+    const composer = page.locator("#prompt-textarea");
+    await composer.evaluate((element) => {
+      element.innerHTML =
+        '<p dir="auto">First line.</p><p dir="auto" data-empty-paragraph="true"><br class="ProseMirror-trailingBreak"></p><p dir="auto">Receipt line.</p>';
+    });
+    expect(await readComposerText(composer)).toBe("First line.\n\nReceipt line.");
+    await page.close();
+  });
+
+  test("uses current-style turn and attachment markup without fixture-only receipt attributes", async () => {
+    const page = await browser.newPage();
+    await page.goto(fixture.urlFor("current-style-contract", "default"));
+    const html = await page.locator("main").innerHTML();
+    expect(html).not.toContain("data-artifact-sha256");
+    expect(html).not.toContain("data-message-content");
+    expect(html).not.toContain("data-conversation-id");
     await page.close();
   });
 

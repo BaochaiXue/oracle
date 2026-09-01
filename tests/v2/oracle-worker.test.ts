@@ -187,6 +187,84 @@ describe("Oracle v2 local worker protocol", () => {
     await secondWorker.stop();
   });
 
+  test("scopes a capture fault to the intended job while older recoverable jobs resume", async () => {
+    const paths = workerPaths();
+    const provider = new FakeProvider();
+    const firstWorker = new OracleWorker({
+      ...paths,
+      provider,
+      faultInjector: {
+        hit(point) {
+          if (point === "during-capture") throw new Error("Seed recoverable capture");
+        },
+      },
+    });
+    await firstWorker.start();
+    const firstClient = new OracleClient({ socketPath: paths.socketPath });
+    const older = await admit(firstClient, "older-recoverable");
+    const olderRecoverable = await firstClient.waitForState(older.job.id, "recoverable", {
+      timeoutMs: 5_000,
+    });
+    expect(olderRecoverable.state).toMatchObject({
+      kind: "recoverable",
+      basis: "committed-capture",
+    });
+    firstClient.close();
+    await firstWorker.stop();
+
+    const targetRequestId = "request-targeted-recovery";
+    const secondWorker = new OracleWorker({
+      ...paths,
+      provider,
+      faultInjector: {
+        hit(point, context) {
+          if (point === "during-capture" && context?.requestId === targetRequestId) {
+            throw new Error("Targeted recoverable capture");
+          }
+        },
+      },
+    });
+    await secondWorker.start();
+    const secondClient = new OracleClient({ socketPath: paths.socketPath });
+    const target = await admit(secondClient, "targeted-recovery");
+    const [olderCompleted, targetRecoverable] = await Promise.all([
+      secondClient.waitForTerminal(older.job.id, { timeoutMs: 5_000 }),
+      secondClient.waitForState(target.job.id, "recoverable", { timeoutMs: 5_000 }),
+    ]);
+    expect(olderCompleted.state.kind).toBe("completed");
+    expect(targetRecoverable.state).toMatchObject({
+      kind: "recoverable",
+      basis: "committed-capture",
+    });
+    expect(provider.sendCount(older.job.id)).toBe(1);
+    expect(provider.sendCount(target.job.id)).toBe(1);
+    secondClient.close();
+    await secondWorker.stop();
+
+    const thirdWorker = new OracleWorker({ ...paths, provider });
+    await thirdWorker.start();
+    const thirdClient = new OracleClient({ socketPath: paths.socketPath });
+    const targetCompleted = await thirdClient.waitForTerminal(target.job.id, {
+      timeoutMs: 5_000,
+    });
+    expect(targetCompleted.state.kind).toBe("completed");
+    expect(provider.sendCount(target.job.id)).toBe(1);
+    expect((await thirdClient.listEvents(target.job.id)).map((event) => event.type)).toEqual([
+      "job-admitted",
+      "preparation-started",
+      "preparation-completed",
+      "dispatch-reserved",
+      "dispatch-marked-at-risk",
+      "submission-committed",
+      "capture-started",
+      "capture-failed",
+      "capture-started",
+      "capture-completed",
+    ]);
+    thirdClient.close();
+    await thirdWorker.stop();
+  }, 30_000);
+
   test("records an explicit restart event before resuming a preparing job", async () => {
     const paths = workerPaths();
     const seedStore = new OracleStore(paths);

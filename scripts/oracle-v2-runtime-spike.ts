@@ -149,12 +149,12 @@ async function probeRuntime(): Promise<void> {
   const runtime = await launchOracleBrowserRuntime({ runtimeRoot, headless: false });
   try {
     const page = await runtime.openPage(CHATGPT_URL);
+    const controlSurface = await waitForComposerControlSurface(page, 30_000);
     const compatibility = await probeCompatibility(page, {
       adapterVersion: "oracle-v2-r5-probe",
       browserRuntimeId: runtime.receipt.browserRuntimeId,
       timeoutMs: 30_000,
     });
-    const controlSurface = await observeComposerControlSurface(page);
     print({
       schemaVersion: "oracle.browser-runtime-probe.v2",
       runtimeId: runtime.receipt.runtimeId,
@@ -169,6 +169,19 @@ async function probeRuntime(): Promise<void> {
   } finally {
     await runtime.close();
   }
+}
+
+async function waitForComposerControlSurface(
+  page: Parameters<typeof observeComposerControlSurface>[0],
+  timeoutMs: number,
+) {
+  const deadline = Date.now() + timeoutMs;
+  let observation = await observeComposerControlSurface(page);
+  while (!observation.composer.present && Date.now() < deadline) {
+    await page.waitForTimeout(250);
+    observation = await observeComposerControlSurface(page);
+  }
+  return observation;
 }
 
 async function openRuntime(args: string[]): Promise<void> {

@@ -76,14 +76,19 @@ export async function observeComposerControlSurface(
     const composerButtons = form
       ? Array.from(form.querySelectorAll("button")).slice(0, 16).map(describe)
       : [];
-    const modelCandidates = form
-      ? Array.from(form.querySelectorAll(
-          'button[aria-haspopup="menu"]:not(#composer-plus-btn):not([data-testid="composer-plus-btn"]), [data-testid*="model-switcher"], [data-testid*="intelligence"]'
-        )).slice(0, 12).map(describe)
-      : [];
+    const modelControlSelector = [
+      '[data-testid*="model-switcher"]',
+      '[data-testid*="model-picker"]',
+      '[data-testid*="intelligence"]',
+      'button.__composer-pill[aria-haspopup="menu"]',
+      'button[aria-label="Choose model" i]',
+      'button[aria-label*="model" i]',
+      'button[aria-label*="intelligence" i]',
+    ].join(', ');
+    const modelControlNodes = Array.from(document.querySelectorAll(modelControlSelector)).slice(0, 12);
+    const modelCandidates = modelControlNodes.map(describe);
     const allowedModelLabel = /^(?:ChatGPT|Auto|GPT(?:[- ]?[0-9][A-Za-z0-9. +·-]*)?|Instant|Thinking|Pro(?: (?:Standard|Extended))?)$/iu;
-    const modelSignals = form
-      ? Array.from(form.querySelectorAll('button[aria-haspopup="menu"]'))
+    const modelSignals = modelControlNodes
           .map((node) => {
             const ariaLabel = String(node.getAttribute("aria-label") ?? "").trim();
             const textLabel = String(node.textContent ?? "").replace(/\s+/gu, " ").trim();
@@ -95,8 +100,7 @@ export async function observeComposerControlSurface(
             return observedLabel ? { ...describe(node), observedLabel } : null;
           })
           .filter(Boolean)
-          .slice(0, 6)
-      : [];
+          .slice(0, 6);
     const syntheticFilename = "oracle-v2-no-send-probe.md";
     const syntheticProbeAttachmentPresent = form
       ? Array.from(form.querySelectorAll("*")).some((node) =>

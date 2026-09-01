@@ -30,6 +30,7 @@ export interface LaunchedManagedBrowser {
   context: BrowserContext;
   browserVersion: string;
   executablePath: string;
+  restoredPageCount: number;
   openPage(url: string): Promise<Page>;
   close(): Promise<void>;
 }
@@ -47,6 +48,7 @@ export interface RuntimeLaunchReceipt {
   profileDir: string;
   executablePath: string;
   browserVersion: string;
+  restoredPageCount: number;
   restartOrdinal: number;
   automaticFallback: false;
   launchedAt: string;

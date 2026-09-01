@@ -67,21 +67,21 @@ export function validateJobState(authority: JobAuthority, state: JobState): JobS
       break;
     case "dispatch-reserved":
       validatePreparation(spec, state.preparation);
-      validateIntent(jobId, spec, state.intent, false);
+      validateIntent(jobId, spec, state.preparation, state.intent, false);
       break;
     case "dispatch-at-risk":
       validatePreparation(spec, state.preparation);
-      validateIntent(jobId, spec, state.intent, true);
+      validateIntent(jobId, spec, state.preparation, state.intent, true);
       break;
     case "committed":
     case "capturing":
       validatePreparation(spec, state.preparation);
-      validateIntent(jobId, spec, state.intent, true);
+      validateIntent(jobId, spec, state.preparation, state.intent, true);
       validateSubmission(jobId, spec, state.preparation, state.intent, state.submission);
       break;
     case "recoverable":
       validatePreparation(spec, state.preparation);
-      validateIntent(jobId, spec, state.intent, true);
+      validateIntent(jobId, spec, state.preparation, state.intent, true);
       if (state.basis === "committed-capture") {
         if (!state.submission) {
           throw new Error("committed-capture recovery requires a submission receipt");
@@ -97,12 +97,12 @@ export function validateJobState(authority: JobAuthority, state: JobState): JobS
       break;
     case "ambiguous":
       validatePreparation(spec, state.preparation);
-      validateIntent(jobId, spec, state.intent, true);
+      validateIntent(jobId, spec, state.preparation, state.intent, true);
       validateFailure(state.failure, "possible", "owner-required");
       break;
     case "completed":
       validatePreparation(spec, state.preparation);
-      validateIntent(jobId, spec, state.intent, true);
+      validateIntent(jobId, spec, state.preparation, state.intent, true);
       validateSubmission(jobId, spec, state.preparation, state.intent, state.submission);
       validateCapture(state.submission, state.capture, state.answer.sha256);
       break;
@@ -134,7 +134,7 @@ function applyEvent(authority: JobAuthority, state: JobState, event: JobEvent): 
       return { kind: "failed-unsent", retrySafe: true, failure: event.failure };
     case "dispatch-reserved": {
       const preparation = requirePreparationState(state);
-      validateIntent(authority.jobId, authority.spec, event.intent, false);
+      validateIntent(authority.jobId, authority.spec, preparation, event.intent, false);
       return { kind: "dispatch-reserved", preparation, intent: event.intent };
     }
     case "dispatch-marked-at-risk": {
@@ -245,12 +245,23 @@ function validatePreparation(spec: JobSpec, receipt: PreparationReceipt): void {
 function validateIntent(
   jobId: string,
   spec: JobSpec,
+  preparation: PreparationReceipt,
   intent: DispatchIntent,
   requireAtRisk: boolean,
 ): void {
   assertEqual(intent.jobId, jobId, "dispatch jobId");
   assertEqual(intent.promptSha256, spec.input.promptSha256, "dispatch promptSha256");
   assertEqual(intent.bundleSha256, spec.input.bundleSha256, "dispatch bundleSha256");
+  assertEqual(
+    intent.baselineConversationDigest,
+    preparation.baselineConversationDigest,
+    "dispatch baselineConversationDigest",
+  );
+  assertEqual(
+    intent.baselineTurnCount,
+    preparation.baselineTurnCount,
+    "dispatch baselineTurnCount",
+  );
   const expectedFooter = `[Oracle receipt: job=${jobId}; turn=${intent.turnAttemptId}; prompt=${spec.input.promptSha256.slice(0, 12)}; bundle=${spec.input.bundleSha256?.slice(0, 12) ?? "none"}]`;
   assertEqual(intent.receiptFooter, expectedFooter, "dispatch receiptFooter");
   if (requireAtRisk !== (intent.atRiskAt !== undefined)) {

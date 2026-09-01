@@ -53,6 +53,7 @@ export async function launchOracleBrowserRuntime(options: {
     profileDir,
     executablePath: launched.executablePath,
     browserVersion: launched.browserVersion,
+    restoredPageCount: launched.restoredPageCount,
     restartOrdinal,
     automaticFallback: false,
     launchedAt: new Date().toISOString(),

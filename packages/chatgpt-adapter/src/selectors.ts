@@ -14,6 +14,39 @@ export const CHATGPT_COMPOSER_SELECTOR = CHATGPT_COMPOSER_CANDIDATES.map(
   (candidate) => `${candidate}:visible`,
 ).join(", ");
 
+export const CHATGPT_TURN_CONTAINER_SELECTOR = [
+  'article[data-testid^="conversation-turn"]',
+  'div[data-testid^="conversation-turn"]',
+  'section[data-testid^="conversation-turn"]',
+].join(", ");
+
+export const CHATGPT_TURN_FALLBACK_SELECTOR = [
+  '[data-message-author-role="user"]',
+  '[data-message-author-role="assistant"]',
+  '[data-turn="user"]',
+  '[data-turn="assistant"]',
+].join(", ");
+
+export const CHATGPT_ASSISTANT_CONTENT_SELECTOR = [
+  ".markdown",
+  "[data-message-content]",
+  ".prose",
+  ".whitespace-pre-wrap",
+].join(", ");
+
+export const CHATGPT_FINISHED_ACTION_SELECTOR = [
+  'button[data-testid="copy-turn-action-button"]',
+  'button[data-testid="good-response-turn-action-button"]',
+  'button[data-testid="bad-response-turn-action-button"]',
+  'button[aria-label="Share"]',
+].join(", ");
+
+export const CHATGPT_STOP_SELECTOR = [
+  'button[data-testid="stop-button"]',
+  'button[data-testid="composer-stop-button"]',
+  'form button[aria-label*="stop" i]:not([aria-label*="dictat" i]):not([aria-label*="voice" i]):not([aria-label*="read" i])',
+].join(", ");
+
 export function chatGptLocators(page: Page) {
   const modelButton = page
     .locator(
@@ -60,7 +93,9 @@ export function chatGptLocators(page: Page) {
       .first(),
     uploadInput: page.locator('input[type="file"]').first(),
     uploadStatus: page.getByRole("status"),
-    attachmentChips: page.locator("[data-attachment-chip]"),
+    attachmentChips: page.locator(
+      '[data-testid*="attachment"], [data-testid*="upload"], [data-testid*="file"]',
+    ),
     composer,
     send: page
       .locator(
@@ -73,7 +108,12 @@ export function chatGptLocators(page: Page) {
       )
       .first(),
     conversation: page.locator('[data-testid="conversation-root"], main').first(),
-    userTurns: page.locator('[data-message-author-role="user"]'),
-    assistantTurns: page.locator('[data-message-author-role="assistant"]'),
+    turns: page.locator(CHATGPT_TURN_CONTAINER_SELECTOR),
+    userTurns: page.locator(
+      `${CHATGPT_TURN_CONTAINER_SELECTOR}[data-message-author-role="user"], ${CHATGPT_TURN_CONTAINER_SELECTOR}[data-turn="user"], [data-message-author-role="user"]`,
+    ),
+    assistantTurns: page.locator(
+      `${CHATGPT_TURN_CONTAINER_SELECTOR}[data-message-author-role="assistant"], ${CHATGPT_TURN_CONTAINER_SELECTOR}[data-turn="assistant"], [data-message-author-role="assistant"]`,
+    ),
   };
 }

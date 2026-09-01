@@ -68,6 +68,8 @@ export class FakeProvider implements ProviderAdapter {
         browserRuntimeId: "fake-runtime-v1",
         promptSha256: context.spec.input.promptSha256,
         ...(bundleSha256 ? { bundleSha256 } : {}),
+        baselineConversationDigest: `fake-baseline-${context.jobId}`,
+        baselineTurnCount: 0,
         model: { requested: "gpt-5.6-sol", observedLabel: "GPT-5.6 Sol", verified: true },
         effort: { requested: "pro", observedLabel: "Pro", controlKind: "slider", verified: true },
         ...(bundleSha256

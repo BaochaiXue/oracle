@@ -13,8 +13,13 @@ export const WORKER_FAULT_POINTS = [
 
 export type WorkerFaultPoint = (typeof WORKER_FAULT_POINTS)[number];
 
+export interface WorkerFaultContext {
+  jobId: string;
+  requestId: string;
+}
+
 export interface WorkerFaultInjector {
-  hit(point: WorkerFaultPoint): void;
+  hit(point: WorkerFaultPoint, context?: Readonly<WorkerFaultContext>): void;
 }
 
 export class EnvironmentHardExitFaultInjector implements WorkerFaultInjector {
@@ -29,7 +34,7 @@ export class EnvironmentHardExitFaultInjector implements WorkerFaultInjector {
         : undefined;
   }
 
-  hit(point: WorkerFaultPoint): void {
+  hit(point: WorkerFaultPoint, _context?: Readonly<WorkerFaultContext>): void {
     if (point === this.configured) process.exit(86);
   }
 }

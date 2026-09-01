@@ -8,7 +8,7 @@ import {
 } from "../../../packages/oracle-kernel/src/index.js";
 import { createHash } from "node:crypto";
 import { OracleStore, type StoredJob } from "../../../packages/oracle-store/src/index.js";
-import type { WorkerFaultInjector } from "./faults.js";
+import type { WorkerFaultContext, WorkerFaultInjector } from "./faults.js";
 import { Mutex, Semaphore } from "./synchronization.js";
 
 export interface JobRunnerOptions {
@@ -149,7 +149,7 @@ export class JobRunner {
           try {
             const receipt = await this.provider.prepare(context(job));
             this.append(job, { type: "preparation-completed", receipt });
-            this.faultInjector.hit("after-preparation");
+            this.faultInjector.hit("after-preparation", faultContext(job));
           } catch (error) {
             this.append(job, {
               type: "preparation-failed",
@@ -167,7 +167,7 @@ export class JobRunner {
         case "ready-to-dispatch": {
           const intent = createIntent(job);
           this.append(job, { type: "dispatch-reserved", intent });
-          this.faultInjector.hit("after-dispatch-reserved");
+          this.faultInjector.hit("after-dispatch-reserved", faultContext(job));
           break;
         }
         case "dispatch-reserved": {
@@ -178,7 +178,7 @@ export class JobRunner {
               type: "dispatch-marked-at-risk",
               atRiskAt: new Date().toISOString(),
             });
-            this.faultInjector.hit("after-dispatch-at-risk");
+            this.faultInjector.hit("after-dispatch-at-risk", faultContext(job));
           } catch (error) {
             this.append(job, {
               type: "preparation-failed",
@@ -199,7 +199,7 @@ export class JobRunner {
           } catch (error) {
             dispatchError = error;
           }
-          this.faultInjector.hit("immediately-after-click");
+          this.faultInjector.hit("immediately-after-click", faultContext(job));
           await this.commitObserved(atRisk, dispatchError);
           break;
         }
@@ -228,9 +228,9 @@ export class JobRunner {
         intent: job.state.intent,
       });
       if (receipt) {
-        this.faultInjector.hit("after-commit-observed");
+        this.faultInjector.hit("after-commit-observed", faultContext(job));
         this.append(job, { type: "submission-committed", receipt });
-        this.faultInjector.hit("after-submission-receipt");
+        this.faultInjector.hit("after-submission-receipt", faultContext(job));
         return;
       }
       this.append(job, {
@@ -267,7 +267,7 @@ export class JobRunner {
     }
     if (job.state.kind !== "capturing") return;
     try {
-      this.faultInjector.hit("during-capture");
+      this.faultInjector.hit("during-capture", faultContext(job));
       const result = await this.provider.capture({
         ...context(job),
         submission: job.state.submission,
@@ -299,8 +299,8 @@ export class JobRunner {
       });
       this.store.linkJobObject(job.id, "response-plain", plainText, "authority");
       this.store.linkJobObject(job.id, "response-html", html, "authority");
-      this.faultInjector.hit("after-answer-object-write");
-      this.faultInjector.hit("before-completed-event");
+      this.faultInjector.hit("after-answer-object-write", faultContext(job));
+      this.faultInjector.hit("before-completed-event", faultContext(job));
       this.append(job, { type: "capture-completed", receipt: result.receipt, answer });
     } catch (error) {
       this.append(job, {
@@ -340,7 +340,14 @@ function context(job: StoredJob) {
   return { jobId: job.id, spec: job.spec, state: job.state, stateVersion: job.stateVersion };
 }
 
+function faultContext(job: StoredJob): WorkerFaultContext {
+  return { jobId: job.id, requestId: job.spec.requestId };
+}
+
 function createIntent(job: StoredJob): DispatchIntent {
+  if (job.state.kind !== "ready-to-dispatch") {
+    throw new Error(`Dispatch intent requires ready-to-dispatch state, received ${job.state.kind}`);
+  }
   const turnAttemptId = `${job.id}-turn-${job.stateVersion + 1}`;
   const bundle = job.spec.input.bundleSha256;
   return {
@@ -348,7 +355,8 @@ function createIntent(job: StoredJob): DispatchIntent {
     turnAttemptId,
     promptSha256: job.spec.input.promptSha256,
     ...(bundle ? { bundleSha256: bundle } : {}),
-    baselineConversationDigest: `baseline-${job.id}-${job.stateVersion}`,
+    baselineConversationDigest: job.state.preparation.baselineConversationDigest,
+    baselineTurnCount: job.state.preparation.baselineTurnCount,
     receiptFooter: `[Oracle receipt: job=${job.id}; turn=${turnAttemptId}; prompt=${job.spec.input.promptSha256.slice(0, 12)}; bundle=${bundle?.slice(0, 12) ?? "none"}]`,
     reservedAt: new Date().toISOString(),
   };

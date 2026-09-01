@@ -170,7 +170,10 @@ export class OracleWorker {
           spec,
           this.providerStatus === "incompatible" ? { blockedBy: "provider" } : {},
         );
-        this.faultInjector.hit("after-job-admission");
+        this.faultInjector.hit("after-job-admission", {
+          jobId: admission.job.id,
+          requestId: admission.job.spec.requestId,
+        });
         if (!admission.specMatches) {
           sendJson(response, 409, {
             error: "idempotency_spec_conflict",
@@ -192,7 +195,10 @@ export class OracleWorker {
           spec,
           this.providerStatus === "incompatible" ? { blockedBy: "provider" } : {},
         );
-        this.faultInjector.hit("after-job-admission");
+        this.faultInjector.hit("after-job-admission", {
+          jobId: admission.job.id,
+          requestId: admission.job.spec.requestId,
+        });
         if (!admission.specMatches) {
           sendJson(response, 409, {
             error: "idempotency_spec_conflict",

@@ -48,25 +48,31 @@ export function fixturePage(bootstrap: FixturePageBootstrap): string {
       if (!conversation) return;
       conversation.innerHTML = '';
       const attachment = turn.bundleSha256
-        ? '<span data-committed-attachment data-artifact-sha256="' + escapeHtml(turn.bundleSha256) + '">' + escapeHtml(turn.bundleFilename) + '</span>'
+        ? (scenario === 'aria-file-tile-attachment'
+          ? '<button type="button" aria-label="' + escapeHtml(turn.bundleFilename) + '">' + escapeHtml(turn.bundleFilename) + '</button>'
+          : '<span data-testid="conversation-turn-attachment" aria-label="Attached file ' + escapeHtml(turn.bundleFilename) + '">' + escapeHtml(turn.bundleFilename) + '</span>')
         : '';
       conversation.insertAdjacentHTML('beforeend',
-        '<article data-testid="conversation-turn-user" data-message-author-role="user" data-conversation-id="' + escapeHtml(turn.conversationId) + '">' +
-        '<div data-message-content>' + escapeHtml(turn.prompt) + '</div>' + attachment + '</article>');
+        '<article data-testid="conversation-turn-user" data-message-author-role="user">' +
+        '<div class="whitespace-pre-wrap">' + escapeHtml(turn.prompt) + '</div>' + attachment + '</article>');
       const assistant = document.createElement('article');
       assistant.dataset.testid = 'conversation-turn-assistant';
       assistant.dataset.messageAuthorRole = 'assistant';
-      assistant.dataset.conversationId = turn.conversationId;
       const content = document.createElement('div');
-      content.dataset.messageContent = '';
+      content.className = 'markdown';
       assistant.append(content);
       if (scenario !== 'copy-control-missing') {
         const copy = document.createElement('button');
-        copy.setAttribute('aria-label', 'Copy response');
+        copy.dataset.testid = 'copy-turn-action-button';
+        copy.setAttribute('aria-label', 'Copy');
         copy.textContent = 'Copy';
         copy.addEventListener('click', () => { window.__ORACLE_COPIED_MARKDOWN__ = turn.assistantMarkdown; });
         assistant.append(copy);
       }
+      const good = document.createElement('button');
+      good.dataset.testid = 'good-response-turn-action-button';
+      good.setAttribute('aria-label', 'Good response');
+      assistant.append(good);
       conversation.append(assistant);
       if (scenario === 'streaming-assistant') {
         assistant.dataset.streaming = 'true';
@@ -119,6 +125,24 @@ export function fixturePage(bootstrap: FixturePageBootstrap): string {
 
       const modelButton = document.querySelector('button[aria-haspopup="menu"]');
       const menu = document.querySelector('[role="menu"]');
+      if (scenario === 'conversation-history-rate-limit-modal') {
+        modelButton.classList.add('hidden');
+        setTimeout(() => {
+          const modal = document.createElement('div');
+          modal.dataset.testid = 'modal-conversation-history-rate-limit';
+          modal.style.position = 'fixed';
+          modal.style.inset = '0';
+          modal.style.zIndex = '1000';
+          modal.style.background = 'white';
+          const dismiss = document.createElement('button');
+          dismiss.type = 'button';
+          dismiss.textContent = 'Got it';
+          dismiss.addEventListener('click', () => modal.remove());
+          modal.append(dismiss);
+          document.body.append(modal);
+          modelButton.classList.remove('hidden');
+        }, 75);
+      }
       modelButton.addEventListener('click', () => menu.classList.toggle('hidden'));
       menu.querySelector('[data-testid^="model-switcher-"]').addEventListener('click', () => {
         modelButton.textContent = 'GPT-5.6 Sol';
@@ -135,7 +159,7 @@ export function fixturePage(bootstrap: FixturePageBootstrap): string {
         .replace(/\\n{2,}/g, (run) => '\\n'.repeat(Math.ceil(run.length / 2)))
         .trim();
       const updateSend = () => {
-        const bundleReady = !input.files.length || attachments.querySelectorAll('[data-attachment-chip]').length === 1;
+        const bundleReady = !input.files.length || attachments.querySelectorAll('[data-testid="composer-attachment"], [data-fixture-file-tile]').length === 1;
         send.disabled = composerText().length === 0 || !bundleReady || scenario === 'rate-limit';
       };
       composer.addEventListener('input', updateSend);
@@ -147,19 +171,28 @@ export function fixturePage(bootstrap: FixturePageBootstrap): string {
         const file = input.files[0];
         if (!file) return;
         const digest = await sha256(await file.arrayBuffer());
+        input.__oracleFixtureSha256 = digest;
         if (scenario === 'attachment-chip-delay') await delay(80);
         status.textContent = '';
         if (scenario !== 'missing-attachment') {
           const count = scenario === 'duplicate-filename' ? 2 : 1;
+          const displayedFilename = scenario === 'aria-file-tile-attachment'
+            ? file.name.replace(/([.][^.]+)$/, '(2)$1')
+            : file.name;
           for (let index = 0; index < count; index += 1) {
-            attachments.insertAdjacentHTML('beforeend', '<span data-attachment-chip data-artifact-sha256="' + digest + '">' +
-              '<span data-attachment-name>' + escapeHtml(file.name) + '</span>' +
-              '<button type="button" data-remove-attachment aria-label="Remove attachment"></button></span>');
+            attachments.insertAdjacentHTML('beforeend', scenario === 'aria-file-tile-attachment'
+              ? '<span data-fixture-file-tile aria-label="' + escapeHtml(displayedFilename) + '">' +
+                '<button type="button" aria-label="' + escapeHtml(displayedFilename) + '"></button>' +
+                '<span data-attachment-name>' + escapeHtml(displayedFilename) + '</span></span>'
+              : '<span data-testid="composer-attachment">' +
+                '<span data-attachment-name>' + escapeHtml(file.name) + '</span>' +
+                '<button type="button" data-remove-attachment aria-label="Remove attachment"></button></span>');
           }
           for (const remove of attachments.querySelectorAll('[data-remove-attachment]')) {
             remove.addEventListener('click', () => {
-              remove.closest('[data-attachment-chip]')?.remove();
+              remove.closest('[data-testid="composer-attachment"], [data-fixture-file-tile]')?.remove();
               input.value = '';
+              input.__oracleFixtureSha256 = undefined;
               updateSend();
             });
           }
@@ -171,14 +204,14 @@ export function fixturePage(bootstrap: FixturePageBootstrap): string {
         send.disabled = true;
         const prompt = composerText();
         const receipt = prompt.match(/\\[Oracle receipt: job=([^;]+); turn=([^;]+);/);
-        const chip = attachments.querySelector('[data-attachment-chip]');
+        const chip = attachments.querySelector('[data-testid="composer-attachment"], [data-fixture-file-tile]');
         const response = await fetch('/api/send', {
           method: 'POST', headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             jobId: boot.jobId,
             turnAttemptId: receipt ? receipt[2] : 'missing',
             prompt,
-            bundleSha256: chip?.dataset.artifactSha256,
+            bundleSha256: chip ? input.__oracleFixtureSha256 : undefined,
             bundleFilename: chip?.textContent,
             scenario,
           }),
@@ -187,7 +220,20 @@ export function fixturePage(bootstrap: FixturePageBootstrap): string {
         if (!turn.committed) return;
         renderTurn(turn);
         const bind = () => history.replaceState({}, '', turn.conversationUrl);
-        if (scenario === 'late-conversation-url') setTimeout(bind, 80); else bind();
+        if (scenario === 'late-conversation-url') {
+          setTimeout(bind, 80);
+        } else if (scenario === 'provisional-conversation-url') {
+          history.replaceState({}, '', '/c/WEB:fixture-request-id');
+          setTimeout(bind, 1000);
+        } else {
+          bind();
+        }
+        if (scenario === 'conversation-rollback-after-commit') {
+          setTimeout(() => {
+            history.replaceState({}, '', '/');
+            document.querySelector('[data-testid="conversation-root"]')?.replaceChildren();
+          }, 150);
+        }
         if (scenario === 'wrong-conversation-navigation') {
           setTimeout(() => history.replaceState({}, '', '/c/wrong-conversation'), 35);
         }

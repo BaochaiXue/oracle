@@ -61,7 +61,7 @@ export class OracleProviderFixture {
         const sendCount = (this.sends.get(turnAttemptId) ?? 0) + 1;
         this.sends.set(turnAttemptId, sendCount);
         if (scenario === "commit-delay") await delay(80);
-        const conversationId = `fixture-${jobId}`;
+        const conversationId = `fixture-${jobId.replaceAll("_", "-")}`;
         const turn: FixtureTurn = {
           jobId,
           turnAttemptId,

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
+import { chromium, type BrowserServer } from "playwright-core";
 import { OracleProviderFixture } from "../../apps/oracle-provider-fixture/src/index.js";
 import { OracleClient } from "../../packages/oracle-client/src/index.js";
 import {
@@ -17,6 +18,7 @@ const executablePath = findFixtureBrowserExecutable();
 const fixture = new OracleProviderFixture();
 const roots: string[] = [];
 const children = new Set<ChildProcess>();
+const browserServers = new Set<BrowserServer>();
 
 beforeAll(async () => {
   if (executablePath) await fixture.start();
@@ -25,6 +27,8 @@ beforeAll(async () => {
 afterEach(async () => {
   await Promise.allSettled([...children].map((child) => stopChild(child)));
   children.clear();
+  await Promise.allSettled([...browserServers].map((server) => server.close()));
+  browserServers.clear();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -62,6 +66,7 @@ function specFor(
 
 async function startChild(
   paths: ReturnType<typeof pathsForFault>,
+  browserEndpoint: string,
   fault?: WorkerFaultPoint,
 ): Promise<ChildProcess> {
   const child = spawn(
@@ -75,7 +80,7 @@ async function startChild(
         ORACLE_V2_CHILD_SESSIONS: paths.sessionsDir,
         ORACLE_V2_CHILD_SOCKET: paths.socketPath,
         ORACLE_V2_FIXTURE_ORIGIN: new URL(fixture.urlFor("probe")).origin,
-        ORACLE_V2_FIXTURE_BROWSER_EXECUTABLE: executablePath!,
+        ORACLE_V2_FIXTURE_BROWSER_ENDPOINT: browserEndpoint,
         ...(fault
           ? { ORACLE_V2_TEST_FAULTS: "1", ORACLE_FAULT_AT: fault }
           : { ORACLE_V2_TEST_FAULTS: "0", ORACLE_FAULT_AT: "" }),
@@ -86,6 +91,13 @@ async function startChild(
   children.add(child);
   await waitForReady(child);
   return child;
+}
+
+async function startBrowserServer(): Promise<BrowserServer> {
+  if (!executablePath) throw new Error("Fixture browser executable is unavailable");
+  const server = await chromium.launchServer({ executablePath, headless: true });
+  browserServers.add(server);
+  return server;
 }
 
 function waitForReady(child: ChildProcess): Promise<void> {
@@ -133,40 +145,54 @@ async function stopChild(child: ChildProcess): Promise<void> {
 }
 
 describe.skipIf(!executablePath)("Oracle v2 hard process fault recovery", () => {
-  test.each(WORKER_FAULT_POINTS)(
-    "recovers %s with at most one Send per attempt",
-    async (fault) => {
-      const paths = pathsForFault();
-      const sendsBefore = fixture.totalSendCount();
-      const first = await startChild(paths, fault);
-      const firstClient = new OracleClient({ socketPath: paths.socketPath });
-      const prompt = await firstClient.putObject(Buffer.from(`Hard fault ${fault}.\n`), {
-        mediaType: "text/plain",
-        objectClass: "prompt",
-      });
-      const spec = specFor(prompt, fault);
-      await firstClient.admitJob(spec).catch(() => undefined);
-      firstClient.close();
-      await waitForExit(first, 86);
-      children.delete(first);
+  test(
+    "recovers every fault serially with one harness-owned browser and at most one Send per attempt",
+    async () => {
+      for (const fault of WORKER_FAULT_POINTS) {
+        const server = await startBrowserServer();
+        try {
+          const paths = pathsForFault();
+          const sendsBefore = fixture.totalSendCount();
+          const first = await startChild(paths, server.wsEndpoint(), fault);
+          const firstClient = new OracleClient({ socketPath: paths.socketPath });
+          const prompt = await firstClient.putObject(Buffer.from(`Hard fault ${fault}.\n`), {
+            mediaType: "text/plain",
+            objectClass: "prompt",
+          });
+          const spec = specFor(prompt, fault);
+          await firstClient.admitJob(spec).catch(() => undefined);
+          firstClient.close();
+          await waitForExit(first, 86);
+          children.delete(first);
 
-      const second = await startChild(paths);
-      const secondClient = new OracleClient({ socketPath: paths.socketPath });
-      const admission = await secondClient.admitJob(spec);
-      const terminal = await secondClient.waitForTerminal(admission.job.id, { timeoutMs: 10_000 });
-      const sends = fixture.totalSendCount() - sendsBefore;
-      expect(sends).toBeLessThanOrEqual(1);
-      if (fault === "after-dispatch-at-risk") {
-        expect(terminal.state.kind).toBe("ambiguous");
-        expect(sends).toBe(0);
-      } else {
-        expect(terminal.state.kind).toBe("completed");
-        expect(sends).toBe(1);
+          const second = await startChild(paths, server.wsEndpoint());
+          const secondClient = new OracleClient({ socketPath: paths.socketPath });
+          const admission = await secondClient.admitJob(spec);
+          const terminal = await secondClient.waitForTerminal(admission.job.id, {
+            timeoutMs: 10_000,
+          });
+          const sends = fixture.totalSendCount() - sendsBefore;
+          expect(sends).toBeLessThanOrEqual(1);
+          if (
+            fault === "after-dispatch-at-risk" ||
+            fault === "immediately-after-click" ||
+            fault === "after-commit-observed"
+          ) {
+            expect(terminal.state.kind, JSON.stringify(terminal.state, null, 2)).toBe("ambiguous");
+            expect(sends).toBe(fault === "after-dispatch-at-risk" ? 0 : 1);
+          } else {
+            expect(terminal.state.kind, JSON.stringify(terminal.state, null, 2)).toBe("completed");
+            expect(sends).toBe(1);
+          }
+          secondClient.close();
+          await stopChild(second);
+          children.delete(second);
+        } finally {
+          await server.close().catch(() => undefined);
+          browserServers.delete(server);
+        }
       }
-      secondClient.close();
-      await stopChild(second);
-      children.delete(second);
     },
-    30_000,
+    5 * 60_000,
   );
 });

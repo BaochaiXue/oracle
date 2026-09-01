@@ -75,6 +75,8 @@ function preparation(options: { bundle?: boolean } = {}): PreparationReceipt {
     browserRuntimeId: "runtime-fixture-1",
     promptSha256: PROMPT_SHA,
     ...(options.bundle ? { bundleSha256: BUNDLE_SHA } : {}),
+    baselineConversationDigest: "baseline-digest",
+    baselineTurnCount: 0,
     model: { requested: "gpt-5.6-sol", observedLabel: "GPT-5.6 Sol", verified: true },
     effort: { requested: "pro", observedLabel: "Pro", controlKind: "slider", verified: true },
     ...(options.bundle
@@ -97,6 +99,7 @@ function intent(options: { bundle?: boolean; atRisk?: boolean } = {}): DispatchI
     promptSha256: PROMPT_SHA,
     ...(options.bundle ? { bundleSha256: BUNDLE_SHA } : {}),
     baselineConversationDigest: "baseline-digest",
+    baselineTurnCount: 0,
     receiptFooter: `[Oracle receipt: job=${JOB_ID}; turn=${TURN_ID}; prompt=${PROMPT_SHA.slice(0, 12)}; bundle=${options.bundle ? BUNDLE_SHA.slice(0, 12) : "none"}]`,
     reservedAt: NOW,
     ...(options.atRisk ? { atRiskAt: NOW } : {}),

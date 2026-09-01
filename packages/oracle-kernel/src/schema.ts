@@ -183,6 +183,8 @@ export const preparationReceiptSchema = z
     browserRuntimeId: nonEmpty,
     promptSha256: sha256,
     bundleSha256: sha256.optional(),
+    baselineConversationDigest: nonEmpty,
+    baselineTurnCount: z.number().int().nonnegative(),
     model: z
       .object({
         requested: z.literal("gpt-5.6-sol"),
@@ -212,6 +214,7 @@ export const dispatchIntentSchema = z
     promptSha256: sha256,
     bundleSha256: sha256.optional(),
     baselineConversationDigest: nonEmpty,
+    baselineTurnCount: z.number().int().nonnegative(),
     receiptFooter: nonEmpty,
     reservedAt: timestamp,
     atRiskAt: timestamp.optional(),

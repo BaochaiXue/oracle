@@ -53,7 +53,7 @@ export async function probeModelAndEffortControls(
     intelligencePicker: false,
   };
   try {
-    await modelButton.click({ timeout: options.timeoutMs });
+    await clickModelButtonWithLateModalRecovery(page, modelButton, options.timeoutMs);
     clicked = true;
     await waitForPicker(page, options.timeoutMs);
     observation = await inspectPicker(page);
@@ -66,6 +66,14 @@ export async function probeModelAndEffortControls(
     if (clicked) {
       await page.keyboard.press("Escape").catch(() => undefined);
       await page.keyboard.press("Escape").catch(() => undefined);
+      const picker = page
+        .locator(
+          '[data-testid="composer-intelligence-picker-content"]:visible, [role="menu"]:visible',
+        )
+        .first();
+      if ((await picker.count()) > 0 && (await picker.isVisible())) {
+        await modelButton.click({ timeout: options.timeoutMs }).catch(() => undefined);
+      }
     }
   }
 
@@ -178,6 +186,20 @@ async function dismissConversationHistoryRateLimitModal(
   }
   await modal.first().waitFor({ state: "hidden", timeout: Math.min(timeoutMs, 5_000) });
   return true;
+}
+
+async function clickModelButtonWithLateModalRecovery(
+  page: Page,
+  modelButton: Locator,
+  timeoutMs: number,
+): Promise<void> {
+  try {
+    await modelButton.click({ timeout: Math.min(timeoutMs, 1_500) });
+  } catch (error) {
+    const dismissed = await dismissConversationHistoryRateLimitModal(page, timeoutMs);
+    if (!dismissed) throw error;
+    await modelButton.click({ timeout: timeoutMs });
+  }
 }
 
 async function waitForPicker(page: Page, timeoutMs: number): Promise<void> {

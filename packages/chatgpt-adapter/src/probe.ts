@@ -60,7 +60,12 @@ export function parseConversationId(url: string): string | undefined {
   try {
     const pathname = new URL(url).pathname;
     const match = pathname.match(/^\/c\/([^/?#]+)$/u);
-    return match ? decodeURIComponent(match[1]!) : undefined;
+    if (!match) return undefined;
+    const conversationId = decodeURIComponent(match[1]!);
+    // ChatGPT can optimistically expose `/c/WEB:<request-id>` before a
+    // server-owned conversation exists. That client-created route cannot be
+    // reopened and therefore is not commit or recovery authority.
+    return /^[a-zA-Z0-9-]+$/u.test(conversationId) ? conversationId : undefined;
   } catch {
     return undefined;
   }

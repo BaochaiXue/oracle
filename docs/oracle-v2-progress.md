@@ -7,7 +7,7 @@ read_when:
 
 # Oracle v2 progress
 
-Updated: 2026-08-31
+Updated: 2026-09-01
 
 Branch: `codex/oracle-v2`
 
@@ -15,10 +15,15 @@ Legacy safety baseline: `fork/main@e6f170ff`
 
 ## Current state
 
-R0 through R6 are source-complete and verified in the isolated v2 worktree;
-the clean, usable `fork-main` checkout remains unchanged. R7/G2 is the current
-stop point because it would perform the first real Send and still requires a
-separate owner decision.
+R0 through R7 are source-complete and verified in the isolated v2 worktree;
+the clean, usable `fork-main` checkout remains unchanged. G2 is certified from
+three bounded live canaries: canonical text, sealed bundle, and an injected
+committed-capture interruption followed by capture-only recovery. Every
+certified canary independently verified GPT-5.6 Sol and Pro, preserved exactly
+one durable Send attempt and one committed turn, captured the expected answer,
+used no automatic fallback, and closed the owned Chrome for Testing runtime.
+R8 CLI/MCP cutover work has not begun, and v2 is not installed, activated, or
+the default engine.
 
 G1 certified the single worker-managed exact Chrome for Testing runtime over
 loopback direct CDP. The fixed v2-only profile retained its authenticated
@@ -180,6 +185,49 @@ Fresh R5-R6 evidence:
 - `pnpm check`, production build, docs/help check, packed-CLI smoke, public
   safety scan, and `git diff --check` pass.
 
+Fresh R7 source and G2 evidence:
+
+- the worker/runtime still owns one exact Chrome for Testing process and one
+  fixed profile, while the adapter enforces at most three owned ChatGPT tabs
+  and backpressures a fourth request;
+- runtime startup closes stale restored page targets before adapter work, and
+  each new page is bound through an exact unique target marker rather than an
+  arbitrary next-page event;
+- the hard-fault harness now shares one parent-owned browser across each fault
+  case instead of relaunching a browser from every child; the full fault suite
+  completed with no owned Chrome for Testing process left after closure;
+- current UI regressions cover ProseMirror composer readback, the late
+  conversation-history rate-limit modal, composer-anchored `aria-label` file
+  tiles including provider duplicate-name suffixes, transient
+  conversation-route rollback after apparent commit, and client-created
+  provisional `/c/WEB:...` routes that must canonicalize before commit;
+- the real preflight passed compatibility, exact GPT-5.6 Sol/Pro preparation,
+  text-composer verification, and sealed-bundle attachment verification with
+  `promptSubmitted:false` and no automatic fallback;
+- the two earlier text attempts remain preserved without resubmission. The first
+  exposed a transient route rollback; the second exposed that a client-created
+  `/c/WEB:...` route had been accepted as durable conversation authority. Commit
+  observation now rejects provisional identifiers and requires one stable
+  canonical route plus the exact user-turn candidate;
+- `r7-g2-text-v3` and `r7-g2-bundle-v1` each record one
+  `dispatch-marked-at-risk`, one `submission-committed`, zero `capture-failed`,
+  one `capture-completed`, and the exact expected answer;
+- the first recovery harness attempt completed its new job but was not
+  certified because an older recoverable job consumed the unscoped fault
+  marker during worker startup. Worker fault points now carry job/request
+  identity, and a regression proves that older recoverable jobs cannot consume
+  a target-scoped interruption;
+- `r7-g2-committed-capture-recovery-v2` records one durable Send and commit,
+  exactly one target-bound `capture-failed`, then one `capture-completed` after
+  worker restart with no resend. Its persisted marker and receipt both verify
+  the exact job/request identity;
+- the focused final R7 suite passed 6 files and 60 tests with 2 bounded tests
+  skipped. `pnpm check`, `pnpm build`, `pnpm docs:check`,
+  `pnpm public:check`, `git diff --check`, final canary inspection, and final
+  browser ownership cleanup passed;
+- private manifests, ledgers, answer objects, and certification receipts remain
+  under `~/.oracle/v2/`; none are tracked source or installation evidence.
+
 ## Tranche ledger
 
 | Tranche                        | State       | Evidence / blocker                                                                        |
@@ -191,7 +239,7 @@ Fresh R5-R6 evidence:
 | R4 fixture/adapter/faults      | verified    | 15 scenarios, 10 hard faults, and 500-job / 4,000-event no-page-leak soak                 |
 | R5 / G1 runtime and login      | verified    | eight checks passed; fixed runtime certified after persistent owner login                 |
 | R6 real no-Send probe          | verified    | real compatible receipt; GPT-5.6 Sol/Pro/composer/upload checks; no prompt submitted      |
-| R7 / G2 live canary            | owner-gated | current stop point; no real Send authorized or attempted by R0-R6                         |
+| R7 / G2 live canary            | verified    | text, sealed-bundle, and committed-capture-recovery receipts all certified                |
 | R8 CLI/MCP cutover candidate   | planned     | legacy remains default                                                                    |
 | R9 Batch cutover               | planned     | legacy Batch authority unchanged                                                          |
 | R10 / G3 default switch        | owner-gated | not reached                                                                               |
@@ -204,14 +252,15 @@ Fresh R5-R6 evidence:
 - Any need to weaken exact model/effort, attachment, retry, Batch, or owner
   authority contracts.
 - Any source change that would alter the current browser engine before G3.
-- Any live browser Send before G2.
+- Any additional live browser Send without a new exact owner-authorized gate
+  and a fresh attempt identity.
 - Any material scope or gate change not recorded in the master plan.
 
 ## Next safe action
 
-Stop before R7/G2. The next action that advances the programme is an
-owner-authorized bounded live-canary sequence: text, sealed-bundle, then
-committed-capture recovery, each with exact model/effort/turn/conversation
-receipts and one Send attempt. Until that separate authorization is given, do
-not submit a prompt, activate v2 as the default engine, modify the installed
-legacy runtime, or begin CLI/MCP cutover work.
+Stop after verified R7/G2. Preserve every historical attempt and the three
+certified receipts; do not resend or create another live canary. The next
+source tranche is the R8 CLI/MCP cutover candidate. It must keep legacy as the
+installed/default engine until the separate G3 owner gate proves the candidate
+end to end. No installation, default-engine switch, Batch cutover, legacy
+mutation, or retirement is authorized by the R7 certification.
