@@ -9,18 +9,20 @@ read_when:
 
 Updated: 2026-09-01
 
-Branch: `codex/oracle-v2`
+Source integration: `fork/main` (R0-R9 history preserved from
+`codex/oracle-v2`)
 
 Legacy safety baseline: `fork/main@e6f170ff`
 
 ## Current state
 
-R0 through R9 are source-complete and verified on `codex/oracle-v2`; the clean,
-usable `fork-main` checkout remains unchanged. R8 adds an explicit opt-in
-`broker` engine for CLI and MCP, durable job inspection/recovery commands, and
-v2 session projection readback. R9 maps new Batch lane and synthesis attempts
-to Batch-owned durable v2 jobs while preserving the v1 parent manifest,
-sealing, blind-lane, barrier, answer-integrity, and owner-closure contracts.
+R0 through R9 are source-complete, verified, and integrated into `fork/main` as
+an opt-in source candidate. The usable legacy execution path and ordinary
+default remain unchanged. R8 adds an explicit opt-in `broker` engine for CLI
+and MCP, durable job inspection/recovery commands, and v2 session projection
+readback. R9 maps new Batch lane and synthesis attempts to Batch-owned durable
+v2 jobs while preserving the v1 parent manifest, sealing, blind-lane, barrier,
+answer-integrity, and owner-closure contracts.
 
 On 2026-09-01, an owner-authorized bounded dogfood exercised the repo-local R9
 candidate through one ordinary broker review and one two-lane-plus-synthesis
@@ -166,8 +168,9 @@ not create per-job DOM incidents or Send. All ten test-only hard fault points
 default off and recover from the same DB/socket/fixture state with at most one
 Send per attempt.
 
-R4 implementation commit: `4d30c010` (`add Oracle v2 provider fixture`),
-published only to `fork/codex/oracle-v2`.
+R4 implementation commit: `4d30c010` (`add Oracle v2 provider fixture`), first
+published on `fork/codex/oracle-v2` and retained in the integrated R0-R9
+history.
 
 Fresh R5-R6 evidence:
 

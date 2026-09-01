@@ -23,10 +23,11 @@ or maintainer-only release instructions.
 - Never click or auto-click ChatGPT's `Answer now` control. A quiet Pro run is
   recovered by reattaching its exact stored session, not by resubmitting.
 
-## Oracle v2 development boundary
+## Oracle v2 integration boundary
 
-- `fork/main@e6f170ff` is the legacy direct-CDP safety baseline. On the v2
-  development line, do not add capabilities to or broadly refactor
+- `fork/main@e6f170ff` is the historical legacy direct-CDP safety baseline from
+  which the integrated v2 candidate was built. Until G4, do not add
+  capabilities to or broadly refactor
   `src/browser/**`; only bounded P0/P1 safety, data-loss, duplicate-send, or
   current-user-blocking fixes belong there.
 - The accepted v2 architecture and complete coverage ledger live in

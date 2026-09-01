@@ -11,7 +11,8 @@ Status: accepted architecture and complete implementation coverage ledger
 
 Repository baseline: `fork/main@e6f170ff` (2026-08-31)
 
-Development line: `codex/oracle-v2`
+Integrated source line: `fork/main` (R0-R9 history originated on
+`codex/oracle-v2`)
 
 ## Goal and authority
 

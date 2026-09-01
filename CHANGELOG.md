@@ -4,6 +4,13 @@
 
 ### Added
 
+- Oracle v2 opt-in broker candidate: add a durable job kernel, SQLite/CAS
+  store, owner-only worker socket, worker-managed Chrome for Testing runtime,
+  isolated ChatGPT adapter, sealed bundle path, CLI/MCP job inspection and
+  recovery, and Batch-owned durable lane and synthesis execution. The legacy
+  `browser` engine remains the ordinary default until the separate G3 owner
+  decision; source integration does not install, activate, or retire either
+  runtime.
 - Batch Oracle v1: declare two or more independent GPT-5.6 Pro review lanes in
   a strict JSON5 manifest, atomically snapshot admitted sources before sealing
   the blind first-stage ready set, run within owner/browser concurrency caps,
