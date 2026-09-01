@@ -95,7 +95,9 @@ cutover validation. It is not the default engine, does not replace the
 `--engine browser` path above, and does not move Batch to v2 early. It requires
 an already certified v2 runtime and a separately running worker. Every live
 call must carry a stable idempotency key so a killed caller can return to the
-same job instead of repeating Send.
+same job instead of repeating Send. The canonical v2 worker currently supports
+only macOS GUI sessions; native Windows and other non-macOS browser workers
+remain deferred, so ordinary Windows use stays on the legacy `browser` engine.
 
 ```bash
 oracle worker run

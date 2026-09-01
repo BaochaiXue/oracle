@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test as vitestTest, vi } from "vitest";
 import {
   FakeProvider,
   OracleWorker,
@@ -21,9 +21,12 @@ import {
   renderStoredBatch,
   resumeBatch,
   runBatch,
+  type BatchJobClient,
 } from "../../src/batch/runtime.js";
 import { getBatchPaths, readBatchState } from "../../src/batch/store.js";
 import { setOracleHomeDirOverrideForTest } from "../../src/oracleHome.js";
+
+const test = process.platform === "win32" ? vitestTest.skip : vitestTest;
 
 describe("Batch Oracle v2 runtime", () => {
   let home: string;
@@ -249,6 +252,55 @@ describe("Batch Oracle v2 runtime", () => {
     expect(resumed.state.lanes.find((lane) => lane.id === "two")?.attempts).toHaveLength(1);
   }, 15_000);
 
+  test("re-observes a committed admission with the same idempotency key after its response is lost", async () => {
+    await writeManifest(cwd, twoLaneManifest(false));
+    const provider = new FakeProvider();
+    const harness = await startHarness(home, provider, workers, clients);
+    let loseFirstAdmissionResponse = true;
+    const lossyClient: BatchJobClient = {
+      putObject: harness.client.putObject.bind(harness.client),
+      admitJob: async (spec) => {
+        const admission = await harness.client.admitJob(spec);
+        if (loseFirstAdmissionResponse) {
+          loseFirstAdmissionResponse = false;
+          throw new Error("Injected lost admission response after durable server commit");
+        }
+        return admission;
+      },
+      getJob: harness.client.getJob.bind(harness.client),
+      getResult: harness.client.getResult.bind(harness.client),
+      resumeBatchJob: harness.client.resumeBatchJob.bind(harness.client),
+      abandonBatchJob: harness.client.abandonBatchJob.bind(harness.client),
+    };
+
+    const initial = await runBatch(
+      "batch.json5",
+      { cwd, maxParallel: 2, log: () => undefined },
+      { client: lossyClient },
+    );
+    expect(initial.state.status).toBe("awaiting-recovery");
+    const unobserved = initial.state.lanes.find((lane) => !lane.jobId)!;
+    expect(unobserved).toMatchObject({
+      status: "recoverable",
+      lastError: { code: "batch-job-admission-unobserved", retrySafe: false },
+      attempts: [{ attempt: 1, phase: "created" }],
+    });
+    expect(await harness.client.listJobs()).toHaveLength(2);
+
+    const resumed = await resumeBatch(
+      initial.state.batchId,
+      { log: () => undefined },
+      { client: lossyClient },
+    );
+    expect(resumed.state.status).toBe("completed");
+    expect(await harness.client.listJobs()).toHaveLength(2);
+    for (const lane of resumed.state.lanes) {
+      expect(lane.attempts).toHaveLength(1);
+      expect(lane.jobId).toBeTruthy();
+      expect(provider.sendCount(lane.jobId!)).toBe(1);
+    }
+  }, 20_000);
+
   test("owner accept-missing closes one ambiguous lane and permits explicit partial synthesis", async () => {
     await writeManifest(cwd, twoLaneManifest(true));
     const provider = new OneLaneAmbiguousProvider("two");
@@ -294,7 +346,7 @@ describe("Batch Oracle v2 runtime", () => {
     expect(synthesisPrompt).toContain("Missing or unavailable lanes: two (abandoned)");
   }, 15_000);
 
-  test("sealing failure records zero admitted jobs", async () => {
+  vitestTest("sealing failure records zero admitted jobs", async () => {
     await writeManifest(cwd, twoLaneManifest(false));
     const logs: string[] = [];
     await expect(

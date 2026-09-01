@@ -94,7 +94,9 @@ R8 在源码中提供了显式 opt-in 的 durable `broker` engine，供 CLI/MCP
 cutover 验证。它不是默认引擎，不会替换上面的 `--engine browser`，也不会把
 普通咨询自动切到 v2。使用前必须已有 certified v2 runtime，并单独运行 worker；
 每个 live call 都必须携带稳定 idempotency key，caller 被终止后才能回到同一
-job，而不是重复 Send。
+job，而不是重复 Send。当前 canonical v2 worker 仅支持 macOS GUI session；
+native Windows 与其他 non-macOS browser worker 仍 deferred，Windows 普通使用
+继续走 legacy `browser` engine。
 
 ```bash
 oracle worker run

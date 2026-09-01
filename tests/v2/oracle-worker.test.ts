@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test as vitestTest } from "vitest";
 import {
   JOB_EVENT_SCHEMA_VERSION,
   JOB_SCHEMA_VERSION,
@@ -12,12 +12,14 @@ import {
 import { OracleClient } from "../../packages/oracle-client/src/index.js";
 import { OracleStore } from "../../packages/oracle-store/src/index.js";
 import {
+  assertOracleV2WorkerPlatform,
   FakeProvider,
   OracleWorker,
   WorkerAlreadyRunningError,
 } from "../../apps/oracle-worker/src/index.js";
 
 const roots: string[] = [];
+const test = process.platform === "win32" ? vitestTest.skip : vitestTest;
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -107,6 +109,24 @@ class FailOnceCloseProvider extends FakeProvider {
     if (this.closeAttempts === 1) throw new Error("injected provider close failure");
   }
 }
+
+class IncompatibleFakeProvider extends FakeProvider {
+  override async probe() {
+    const receipt = await super.probe();
+    return {
+      ...receipt,
+      compatible: false,
+      capabilities: { ...receipt.capabilities, loginState: "missing" as const },
+    };
+  }
+}
+
+describe("Oracle v2 worker platform boundary", () => {
+  vitestTest("fails clearly when native Windows cannot provide the owner-only Unix socket", () => {
+    expect(() => assertOracleV2WorkerPlatform("win32")).toThrow(/not available on native Windows/u);
+    expect(() => assertOracleV2WorkerPlatform("darwin")).not.toThrow();
+  });
+});
 
 describe("Oracle v2 local worker protocol", () => {
   test("serves an explicit starting status before store and runner readiness", async () => {
@@ -388,6 +408,40 @@ describe("Oracle v2 local worker protocol", () => {
     await worker.stop();
   });
 
+  test("durably unblocks provider-queued jobs after a compatible restart", async () => {
+    const paths = workerPaths();
+    const incompatible = new IncompatibleFakeProvider();
+    const firstWorker = new OracleWorker({ ...paths, provider: incompatible });
+    await firstWorker.start();
+    const firstClient = new OracleClient({ socketPath: paths.socketPath });
+    const admission = await admit(firstClient, "provider-recovery");
+    expect(admission.job.state).toEqual({ kind: "queued", blockedBy: "provider" });
+    expect(incompatible.sendCount(admission.job.id)).toBe(0);
+    firstClient.close();
+    await firstWorker.stop();
+
+    const compatible = new FakeProvider();
+    const secondWorker = new OracleWorker({ ...paths, provider: compatible });
+    await secondWorker.start();
+    const secondClient = new OracleClient({ socketPath: paths.socketPath });
+    const completed = await secondClient.waitForTerminal(admission.job.id, { timeoutMs: 5_000 });
+    expect(completed.state.kind).toBe("completed");
+    expect(compatible.sendCount(admission.job.id)).toBe(1);
+    expect((await secondClient.listEvents(admission.job.id)).map((item) => item.type)).toEqual([
+      "job-admitted",
+      "provider-unblocked",
+      "preparation-started",
+      "preparation-completed",
+      "dispatch-reserved",
+      "dispatch-marked-at-risk",
+      "submission-committed",
+      "capture-started",
+      "capture-completed",
+    ]);
+    secondClient.close();
+    await secondWorker.stop();
+  });
+
   test("serializes preparation and dispatch while bounding concurrent capture at three", async () => {
     const paths = workerPaths();
     const provider = new FakeProvider({
@@ -514,7 +568,7 @@ describe("Oracle v2 local worker protocol", () => {
     await worker.stop();
   });
 
-  test.skipIf(process.env.ORACLE_V2_SOAK !== "1")(
+  vitestTest.skipIf(process.env.ORACLE_V2_SOAK !== "1" || process.platform === "win32")(
     "keeps a 1,000-job fake-provider run linear and bounded",
     async () => {
       const paths = workerPaths();

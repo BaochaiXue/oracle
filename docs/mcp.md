@@ -65,7 +65,9 @@ unchanged until G3. Start the certified local worker separately, pass a stable
 `idempotencyKey`, and optionally set `waitTimeoutMs` as the MCP host wait budget.
 A host timeout returns `jobId + state`; the worker continues and a repeated call
 with the same key and inputs reattaches to the same job. Broker-only fields are
-rejected on API/browser requests rather than ignored.
+rejected on API/browser requests rather than ignored. The canonical v2 worker
+currently supports macOS GUI sessions only; native Windows and other non-macOS
+browser workers remain deferred.
 
 ```json
 {

@@ -55,6 +55,9 @@ export class JobRunner {
 
   recover(): void {
     for (let job of this.store.listJobs()) {
+      if (this.allowDispatch && job.state.kind === "queued" && job.state.blockedBy === "provider") {
+        job = this.append(job, { type: "provider-unblocked" });
+      }
       if (job.state.kind === "preparing") {
         job = this.append(job, { type: "preparation-deferred" });
       }
@@ -146,17 +149,21 @@ export class JobRunner {
   }
 
   private async run(jobId: string): Promise<void> {
-    let job = this.store.getJob(jobId);
-    if (this.allowDispatch && needsDispatchLane(job)) {
-      await this.dispatchMutex.run(async () => {
-        await this.advanceToCommitted(jobId);
-      });
-      job = this.store.getJob(jobId);
-    }
-    if (needsCaptureLane(job)) {
-      await this.captureSemaphore.run(async () => {
-        await this.capture(jobId);
-      });
+    try {
+      let job = this.store.getJob(jobId);
+      if (this.allowDispatch && needsDispatchLane(job)) {
+        await this.dispatchMutex.run(async () => {
+          await this.advanceToCommitted(jobId);
+        });
+        job = this.store.getJob(jobId);
+      }
+      if (needsCaptureLane(job)) {
+        await this.captureSemaphore.run(async () => {
+          await this.capture(jobId);
+        });
+      }
+    } finally {
+      await this.provider.releaseJob?.(jobId);
     }
   }
 

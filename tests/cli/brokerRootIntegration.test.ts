@@ -3,13 +3,14 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test as vitestTest } from "vitest";
 import { FakeProvider, OracleWorker } from "../../apps/oracle-worker/src/index.js";
 import { OracleClient } from "../../packages/oracle-client/src/index.js";
 
 const execFileAsync = promisify(execFile);
 const roots: string[] = [];
 const cliEntry = path.join(process.cwd(), "bin", "oracle-cli.ts");
+const test = process.platform === "win32" ? vitestTest.skip : vitestTest;
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -134,7 +135,7 @@ describe("root CLI Oracle v2 broker", () => {
     await worker.stop();
   });
 
-  test("renders broker dry-run membership without a running worker", async () => {
+  vitestTest("renders broker dry-run membership without a running worker", async () => {
     const paths = rootPaths();
     const source = path.join(paths.root, "source.ts");
     await import("node:fs/promises").then((fs) =>
@@ -157,7 +158,7 @@ describe("root CLI Oracle v2 broker", () => {
     expect(preview.dispatch).toBe(false);
   });
 
-  test("does not silently coerce an explicit broker multi-model request to API", async () => {
+  vitestTest("does not silently coerce an explicit broker multi-model request to API", async () => {
     const paths = rootPaths();
     await expect(
       runCli(
@@ -175,7 +176,7 @@ describe("root CLI Oracle v2 broker", () => {
     ).rejects.toThrow(/exactly one GPT-5\.6 Sol \/ Pro route/u);
   });
 
-  test("rejects broker-only identity options on a legacy engine", async () => {
+  vitestTest("rejects broker-only identity options on a legacy engine", async () => {
     const paths = rootPaths();
     await expect(
       runCli(

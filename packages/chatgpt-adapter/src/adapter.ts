@@ -216,6 +216,10 @@ export class ChatGptAdapter implements ProviderAdapter {
       );
     }
     await waitForEnabled(locators.send, this.actionTimeoutMs);
+    if (context.state.kind !== "dispatch-reserved") {
+      throw new Error("Final verification requires a reserved dispatch intent");
+    }
+    await installRecoveryLocator(page, context.jobId, context.state.intent.turnAttemptId);
   }
 
   async dispatchOnce(context: ProviderDispatchContext): Promise<void> {
@@ -224,7 +228,10 @@ export class ChatGptAdapter implements ProviderAdapter {
   }
 
   async observeCommit(context: ProviderDispatchContext): Promise<SubmissionReceipt | undefined> {
-    const page = await this.pageFor(context.jobId, this.urlForJob(context.jobId));
+    const page =
+      this.pages.get(context.jobId) ??
+      (await this.recoverAtRiskPage(context.jobId, context.intent.turnAttemptId));
+    if (!page) return undefined;
     const expectedPrompt = composePrompt(
       this.readObject(context.spec.input.prompt),
       context.intent.receiptFooter,
@@ -313,8 +320,18 @@ export class ChatGptAdapter implements ProviderAdapter {
         warnings: ["native markdown capture is not part of the R7 canary contract"],
       },
     };
+    await clearRecoveryLocator(page, context.jobId).catch(() => undefined);
     await page.close();
     return result;
+  }
+
+  async releaseJob(jobId: string): Promise<void> {
+    await this.pageCreations.get(jobId)?.catch(() => undefined);
+    const page = this.pages.get(jobId);
+    if (!page) return;
+    await clearRecoveryLocator(page, jobId).catch(() => undefined);
+    await page.close();
+    if (page.isClosed()) this.releasePage(jobId, page);
   }
 
   openPageCount(): number {
@@ -355,14 +372,51 @@ export class ChatGptAdapter implements ProviderAdapter {
         );
       }
       const page = await this.openTarget(initialUrl);
-      this.pages.set(jobId, page);
-      this.pageReleases.set(jobId, release);
-      page.once("close", () => this.releasePage(jobId, page));
+      this.bindOwnedPage(jobId, page, release);
       return page;
     } catch (error) {
       release();
       throw error;
     }
+  }
+
+  private async recoverAtRiskPage(jobId: string, turnAttemptId: string): Promise<Page | undefined> {
+    const marker = recoveryWindowName(jobId, turnAttemptId);
+    const restoredMatches: Page[] = [];
+    for (const page of this.context.pages()) {
+      if (page.isClosed()) continue;
+      const windowName = await page.evaluate(() => window.name).catch(() => "");
+      if (windowName === marker) restoredMatches.push(page);
+    }
+    if (restoredMatches.length > 1) {
+      throw new Error(`Commit recovery found multiple exact browser targets for ${jobId}`);
+    }
+    if (restoredMatches[0]) {
+      const release = await this.tabBudget.acquire();
+      this.bindOwnedPage(jobId, restoredMatches[0], release);
+      return restoredMatches[0];
+    }
+
+    const page = await this.pageFor(jobId, this.urlForJob(jobId));
+    const locator = await readRecoveryLocator(page, jobId, turnAttemptId);
+    if (!locator) {
+      await page.close();
+      return undefined;
+    }
+    await page.goto(locator, {
+      waitUntil: "domcontentloaded",
+      timeout: this.actionTimeoutMs,
+    });
+    if (parseConversationId(page.url()) !== parseConversationId(locator)) {
+      throw new Error(`Commit recovery rejected wrong-conversation navigation for ${jobId}`);
+    }
+    return page;
+  }
+
+  private bindOwnedPage(jobId: string, page: Page, release: ReleaseOwnedTab): void {
+    this.pages.set(jobId, page);
+    this.pageReleases.set(jobId, release);
+    page.once("close", () => this.releasePage(jobId, page));
   }
 
   private releasePage(jobId: string, page: Page): void {
@@ -393,6 +447,66 @@ async function waitForContextPageSlot(context: BrowserContext, timeoutMs: number
     count = context.pages().filter((page) => !page.isClosed()).length;
   }
   return count;
+}
+
+function recoveryStorageKey(jobId: string): string {
+  return `oracle-v2:at-risk:${digest(Buffer.from(jobId, "utf8")).slice(0, 32)}`;
+}
+
+function recoveryWindowName(jobId: string, turnAttemptId: string): string {
+  return `oracle-v2-at-risk:${digest(Buffer.from(`${jobId}\0${turnAttemptId}`, "utf8"))}`;
+}
+
+async function installRecoveryLocator(
+  page: Page,
+  jobId: string,
+  turnAttemptId: string,
+): Promise<void> {
+  const key = recoveryStorageKey(jobId);
+  const marker = recoveryWindowName(jobId, turnAttemptId);
+  const script = `(() => {
+    const storageKey = ${JSON.stringify(key)};
+    const expectedTurnAttemptId = ${JSON.stringify(turnAttemptId)};
+    window.name = ${JSON.stringify(marker)};
+    const recordCanonicalConversation = () => {
+      if (!/^\\/c\\/[a-zA-Z0-9-]+$/u.test(window.location.pathname)) return;
+      window.localStorage.setItem(storageKey, JSON.stringify({
+        turnAttemptId: expectedTurnAttemptId,
+        conversationUrl: window.location.href,
+      }));
+    };
+    recordCanonicalConversation();
+    window.setInterval(recordCanonicalConversation, 50);
+  })()`;
+  await page.evaluate(script);
+}
+
+async function readRecoveryLocator(
+  page: Page,
+  jobId: string,
+  turnAttemptId: string,
+): Promise<string | undefined> {
+  const raw = await page.evaluate(
+    (key) => window.localStorage.getItem(key),
+    recoveryStorageKey(jobId),
+  );
+  if (!raw) return undefined;
+  try {
+    const value = JSON.parse(raw) as { turnAttemptId?: unknown; conversationUrl?: unknown };
+    if (value.turnAttemptId !== turnAttemptId || typeof value.conversationUrl !== "string") {
+      return undefined;
+    }
+    const locator = new URL(value.conversationUrl);
+    const current = new URL(page.url());
+    if (locator.origin !== current.origin || !parseConversationId(locator.href)) return undefined;
+    return locator.href;
+  } catch {
+    return undefined;
+  }
+}
+
+async function clearRecoveryLocator(page: Page, jobId: string): Promise<void> {
+  await page.evaluate((key) => window.localStorage.removeItem(key), recoveryStorageKey(jobId));
 }
 
 function createFooter(context: ProviderJobContext): string {

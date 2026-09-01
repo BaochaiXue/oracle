@@ -39,6 +39,11 @@ or maintainer-only release instructions.
   sanitized `apps/oracle-provider-fixture` may define simulated provider
   markup and scenarios, but it must not become a second adapter or production
   selector authority.
+- The canonical v2 worker is a macOS GUI-session worker over an owner-only Unix
+  socket. Native Windows must fail closed before socket acquisition; do not
+  substitute a named pipe or TCP listener without an accepted plan delta and
+  equivalent owner-isolation evidence. Windows ordinary use remains on the
+  legacy `browser` engine until a non-macOS worker is deliberately added.
 - The R8 opt-in `broker` engine routes CLI and MCP through `oracle-client` and
   `oracle-bundle`; neither surface owns browser execution or worker state. R9
   routes Batch lane and synthesis execution through the same client protocol.

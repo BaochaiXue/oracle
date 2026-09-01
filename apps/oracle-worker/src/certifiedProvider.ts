@@ -61,6 +61,10 @@ export class CertifiedChatGptProvider implements ProviderAdapter {
     return (await this.ensureAdapter()).capture(context);
   }
 
+  async releaseJob(jobId: string): Promise<void> {
+    await this.adapter?.releaseJob(jobId);
+  }
+
   async close(): Promise<void> {
     const adapter = this.adapter;
     const runtime = this.runtime;

@@ -9,20 +9,26 @@ read_when:
 
 Updated: 2026-09-01
 
-Source integration: `fork/main` (R0-R9 history preserved from
-`codex/oracle-v2`)
+Source integration record: PR #5 targets `fork/main` from `codex/oracle-v2`;
+the PR merge/read-back is the authority for whether integration is complete.
 
 Legacy safety baseline: `fork/main@e6f170ff`
 
 ## Current state
 
-R0 through R9 are source-complete, verified, and integrated into `fork/main` as
-an opt-in source candidate. The usable legacy execution path and ordinary
-default remain unchanged. R8 adds an explicit opt-in `broker` engine for CLI
-and MCP, durable job inspection/recovery commands, and v2 session projection
-readback. R9 maps new Batch lane and synthesis attempts to Batch-owned durable
-v2 jobs while preserving the v1 parent manifest, sealing, blind-lane, barrier,
-answer-integrity, and owner-closure contracts.
+R0 through R9 are source-complete and carried by PR #5 as an opt-in source
+candidate for `fork/main`; GitHub's merge state and the exact `fork/main` head,
+not this dated note, prove completion. The usable legacy execution path and
+ordinary default remain unchanged. R8 adds an explicit opt-in `broker` engine
+for CLI and MCP, durable job inspection/recovery commands, and v2 session
+projection readback. R9 maps new Batch lane and synthesis attempts to
+Batch-owned durable v2 jobs while preserving the v1 parent manifest, sealing,
+blind-lane, barrier, answer-integrity, and owner-closure contracts.
+
+The canonical R0-R9 worker remains a macOS GUI-session runtime over an
+owner-only Unix socket. Native Windows fails closed before socket acquisition,
+and other non-macOS browser workers remain deferred. The legacy `browser`
+engine remains the ordinary Windows path.
 
 On 2026-09-01, an owner-authorized bounded dogfood exercised the repo-local R9
 candidate through one ordinary broker review and one two-lane-plus-synthesis

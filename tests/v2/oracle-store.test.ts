@@ -89,7 +89,9 @@ describe("Oracle v2 content-addressed storage", () => {
 
     expect(second).toEqual(first);
     expect(store.readObject(first).toString("utf8")).toBe(PROMPT_TEXT);
-    expect(statSync(store.objectPath(first.sha256)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(store.objectPath(first.sha256)).mode & 0o777).toBe(0o600);
+    }
 
     writeFileSync(store.objectPath(first.sha256), "corrupt", { mode: 0o600 });
     expect(() => store.readObject(first)).toThrow(ObjectIntegrityError);
@@ -181,8 +183,10 @@ describe("Oracle v2 job ledger", () => {
     expect(store.verifyStorage()).toMatchObject({ database: "ok", objectErrors: [] });
 
     const backupPath = await store.createBackup();
-    expect(statSync(store.databasePath).mode & 0o777).toBe(0o600);
-    expect(statSync(backupPath).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(store.databasePath).mode & 0o777).toBe(0o600);
+      expect(statSync(backupPath).mode & 0o777).toBe(0o600);
+    }
     expect(store.listBackups()).toEqual([backupPath]);
     store.close();
   });

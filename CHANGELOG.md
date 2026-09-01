@@ -10,7 +10,8 @@
   recovery, and Batch-owned durable lane and synthesis execution. The legacy
   `browser` engine remains the ordinary default until the separate G3 owner
   decision; source integration does not install, activate, or retire either
-  runtime.
+  runtime. The canonical v2 worker is currently limited to macOS GUI sessions;
+  native Windows and other non-macOS browser workers remain deferred.
 - Batch Oracle v1: declare two or more independent GPT-5.6 Pro review lanes in
   a strict JSON5 manifest, atomically snapshot admitted sources before sealing
   the blind first-stage ready set, run within owner/browser concurrency caps,
@@ -41,6 +42,14 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
 
 ### Fixed
 
+- Oracle v2 recovery and tab ownership: persist an exact browser-private
+  conversation locator before an at-risk Send, reattach only that target or
+  conversation after worker restart, release job tabs after every terminal
+  preparation/dispatch/capture outcome, and durably clear `blockedBy: provider`
+  only after a compatible provider probe. Batch admission recovery is covered
+  by a server-commit/client-response-loss regression using the original stable
+  idempotency key, so recovery maps the existing job instead of creating a new
+  attempt or duplicate Send.
 - Browser attachments: stop treating disabled Send as proof of an unfinished
   upload while Oracle has intentionally left the composer prompt empty. Stable
   complete attachment evidence can now advance to prompt composition after a

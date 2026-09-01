@@ -30,6 +30,14 @@ export class WorkerAlreadyRunningError extends Error {
   }
 }
 
+export function assertOracleV2WorkerPlatform(platform: NodeJS.Platform = process.platform): void {
+  if (platform === "win32") {
+    throw new Error(
+      "Oracle v2 worker requires an owner-only Unix socket and is not available on native Windows; use the legacy browser engine until non-macOS workers are implemented.",
+    );
+  }
+}
+
 class RequestValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -54,6 +62,7 @@ export class OracleWorker {
 
   async start(): Promise<void> {
     if (this.server) throw new Error("Oracle v2 worker is already started");
+    assertOracleV2WorkerPlatform();
     const socketDir = path.dirname(this.options.socketPath);
     mkdirSync(socketDir, { recursive: true, mode: 0o700 });
     chmodSync(socketDir, 0o700);

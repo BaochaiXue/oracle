@@ -111,6 +111,12 @@ snapshot or an already sealed child input.
 
 ## Commands
 
+New R9 Batch lane and synthesis execution uses the same canonical macOS
+GUI-session v2 worker and owner-only Unix socket as ordinary broker jobs. Do not
+start new R9 Batch work on native Windows; non-macOS browser workers remain
+deferred, and ordinary Windows consultations continue through the legacy
+`browser` engine.
+
 ```bash
 # Parse, validate, resolve files, and stop before v2 job admission.
 oracle batch validate batch.json5

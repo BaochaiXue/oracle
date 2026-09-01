@@ -455,17 +455,24 @@ describe("Oracle v2 reducer", () => {
   });
 
   test("does not schedule a provider-blocked queue", () => {
-    expect(getJobActionPolicy(initialJobState("provider"))).toEqual({
+    const blocked = initialJobState("provider");
+    expect(getJobActionPolicy(blocked)).toEqual({
       automaticAction: "none",
       sendAuthority: "available-before-at-risk",
       ownerAction: "none",
     });
+    const unblocked = reduceJob(jobSpec(), blocked, event({ type: "provider-unblocked" }));
+    expect(unblocked).toEqual({ kind: "queued" });
+    expect(getJobActionPolicy(unblocked).automaticAction).toBe("schedule");
+    expect(() =>
+      reduceJob(jobSpec(), initialJobState("owner"), event({ type: "provider-unblocked" })),
+    ).toThrow(/provider-blocked/u);
     expect(getJobActionPolicy(initialJobState()).automaticAction).toBe("schedule");
   });
 
   test("publishes an exact transition table and rejects every unlisted event", () => {
     expect(transitionTable).toEqual({
-      queued: ["preparation-started", "job-canceled-unsent"],
+      queued: ["provider-unblocked", "preparation-started", "job-canceled-unsent"],
       preparing: ["preparation-deferred", "preparation-completed", "preparation-failed"],
       "ready-to-dispatch": ["dispatch-reserved", "preparation-failed"],
       "dispatch-reserved": ["dispatch-marked-at-risk", "preparation-failed"],

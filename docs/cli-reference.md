@@ -75,6 +75,9 @@ R8 exposes the durable worker path for explicit CLI validation. It is not the
 default engine, does not replace `--engine browser`, and requires the certified
 v2 runtime plus a separately running worker. Live broker calls require a stable
 logical key so a killed caller can reattach without creating a second Send.
+The canonical worker currently supports only macOS GUI sessions. Native
+Windows fails closed before socket acquisition and continues to use the legacy
+`browser` engine; non-macOS browser workers remain deferred.
 
 ```bash
 oracle worker run

@@ -391,6 +391,7 @@ export const jobStateSchema = z.discriminatedUnion("kind", [
 
 const eventBase = { schemaVersion: z.literal(JOB_EVENT_SCHEMA_VERSION) } as const;
 const eventSchemas = [
+  z.object({ ...eventBase, type: z.literal("provider-unblocked") }).strict(),
   z
     .object({
       ...eventBase,

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test as vitestTest } from "vitest";
 import { FakeProvider, OracleWorker } from "../../apps/oracle-worker/src/index.js";
 import { OracleClient } from "../../packages/oracle-client/src/index.js";
 import { JOB_SCHEMA_VERSION, type JobSpec } from "../../packages/oracle-kernel/src/index.js";
@@ -14,6 +14,7 @@ import {
 } from "../../src/mcp/tools/jobs.js";
 
 const roots: string[] = [];
+const test = process.platform === "win32" ? vitestTest.skip : vitestTest;
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -31,7 +32,7 @@ function workerPaths() {
 }
 
 describe("Oracle v2 MCP broker", () => {
-  test("fails closed before live admission when idempotencyKey is absent", async () => {
+  vitestTest("fails closed before live admission when idempotencyKey is absent", async () => {
     const paths = workerPaths();
     const result = await runBrokerMcpConsult({
       prompt: "This must not be admitted without a stable key.",

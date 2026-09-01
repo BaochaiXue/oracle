@@ -20,7 +20,7 @@ export interface JobAuthority {
 }
 
 export const transitionTable = {
-  queued: ["preparation-started", "job-canceled-unsent"],
+  queued: ["provider-unblocked", "preparation-started", "job-canceled-unsent"],
   preparing: ["preparation-deferred", "preparation-completed", "preparation-failed"],
   "ready-to-dispatch": ["dispatch-reserved", "preparation-failed"],
   "dispatch-reserved": ["dispatch-marked-at-risk", "preparation-failed"],
@@ -122,6 +122,11 @@ export function validateJobState(authority: JobAuthority, state: JobState): JobS
 
 function applyEvent(authority: JobAuthority, state: JobState, event: JobEvent): JobState {
   switch (event.type) {
+    case "provider-unblocked":
+      if (state.kind !== "queued" || state.blockedBy !== "provider") {
+        throw new Error("provider-unblocked requires a provider-blocked queued job");
+      }
+      return { kind: "queued" };
     case "preparation-started":
       return { kind: "preparing", preparationAttempt: event.attempt };
     case "preparation-deferred":

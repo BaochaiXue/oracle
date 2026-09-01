@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test as vitestTest } from "vitest";
 import {
   CertifiedChatGptProvider,
   FakeProvider,
@@ -11,6 +11,7 @@ import {
 import { OracleClient } from "../../packages/oracle-client/src/index.js";
 
 const roots: string[] = [];
+const test = process.platform === "win32" ? vitestTest.skip : vitestTest;
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -57,7 +58,7 @@ describe("Oracle v2 production worker host", () => {
     expect(existsSync(paths.socketPath)).toBe(false);
   });
 
-  test("retains failed provider close handles for a later cleanup attempt", async () => {
+  vitestTest("retains failed provider close handles for a later cleanup attempt", async () => {
     const provider = new CertifiedChatGptProvider({ runtimeRoot: temporaryRuntimeRoot() });
     let adapterCloseAttempts = 0;
     let runtimeCloseAttempts = 0;

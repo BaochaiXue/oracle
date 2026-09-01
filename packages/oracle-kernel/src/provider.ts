@@ -44,5 +44,6 @@ export interface ProviderAdapter {
   dispatchOnce(context: ProviderDispatchContext): Promise<void>;
   observeCommit(context: ProviderDispatchContext): Promise<SubmissionReceipt | undefined>;
   capture(context: ProviderCaptureContext): Promise<ProviderCaptureResult>;
+  releaseJob?(jobId: string): Promise<void>;
   close?(): Promise<void>;
 }

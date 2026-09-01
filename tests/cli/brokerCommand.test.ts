@@ -1,11 +1,12 @@
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test as vitestTest } from "vitest";
 import { FakeProvider, OracleWorker } from "../../apps/oracle-worker/src/index.js";
 import { BrokerCliJobError, runBrokerCliCommand } from "../../src/cli/brokerCommand.js";
 
 const roots: string[] = [];
+const test = process.platform === "win32" ? vitestTest.skip : vitestTest;
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });

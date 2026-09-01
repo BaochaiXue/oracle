@@ -130,6 +130,14 @@ async function waitForIdle(client: OracleClient, timeoutMs: number): Promise<voi
   }
 }
 
+async function waitForFixtureSend(turnAttemptId: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (fixture.sendCount(turnAttemptId) === 0) {
+    if (Date.now() >= deadline) throw new Error(`Fixture did not observe Send ${turnAttemptId}`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 async function waitForTerminal(client: OracleClient, jobId: string, timeoutMs = 8_000) {
   try {
     return await client.waitForTerminal(jobId, { timeoutMs });
@@ -243,6 +251,19 @@ describe.skipIf(!executablePath)("Oracle v2 ChatGPT adapter against the provider
     15_000,
   );
 
+  test("releases every tab lease after repeated preparation failures", async () => {
+    const before = fixture.totalSendCount();
+    const { adapter, client } = await harness("missing-attachment");
+    for (let index = 0; index < 4; index += 1) {
+      const admission = await admit(client, `preparation-failure-${index}`, { bundle: true });
+      const result = await client.waitForTerminal(admission.job.id, { timeoutMs: 8_000 });
+      expect(result.state).toMatchObject({ kind: "failed-unsent", retrySafe: true });
+    }
+    await waitForIdle(client, 5_000);
+    expect(adapter.openPageCount()).toBe(0);
+    expect(fixture.totalSendCount()).toBe(before);
+  }, 30_000);
+
   test("marks a dropped click ambiguous and never performs a second Send", async () => {
     const { client, worker } = await harness("click-dropped");
     const admission = await admit(client, "click-dropped");
@@ -255,6 +276,72 @@ describe.skipIf(!executablePath)("Oracle v2 ChatGPT adapter against the provider
     clients.splice(clients.indexOf(client), 1);
     workers.splice(workers.indexOf(worker), 1);
   }, 15_000);
+
+  test("recovers an at-risk Send through its exact durable conversation locator", async () => {
+    const paths = workerPaths();
+    const browserContext = await browser.newContext();
+    contexts.push(browserContext);
+    const firstAdapter = new (class extends ChatGptAdapter {
+      override async releaseJob(): Promise<void> {
+        // A hard worker exit cannot run terminal cleanup; retain the browser-private locator.
+      }
+    })({
+      context: browserContext,
+      browserRuntimeId: "fixture-cft",
+      urlForJob: (jobId) => fixture.urlFor(jobId, "default"),
+      actionTimeoutMs: 5_000,
+      commitTimeoutMs: 2_000,
+    });
+    let interrupted = false;
+    const firstWorker = new OracleWorker({
+      ...paths,
+      provider: firstAdapter,
+      faultInjector: {
+        hit(point: WorkerFaultPoint) {
+          if (point === "immediately-after-click" && !interrupted) {
+            interrupted = true;
+            throw new Error("Injected at-risk worker interruption");
+          }
+        },
+      },
+    });
+    await firstWorker.start();
+    workers.push(firstWorker);
+    const firstClient = new OracleClient({ socketPath: paths.socketPath });
+    clients.push(firstClient);
+    const admission = await admit(firstClient, "at-risk-exact-locator");
+    const atRisk = await firstClient.waitForState(admission.job.id, "dispatch-at-risk", {
+      timeoutMs: 8_000,
+    });
+    expect(atRisk.state.kind).toBe("dispatch-at-risk");
+    if (atRisk.state.kind !== "dispatch-at-risk") throw new Error("Expected at-risk job");
+    await waitForFixtureSend(atRisk.state.intent.turnAttemptId, 5_000);
+    expect(fixture.sendCount(atRisk.state.intent.turnAttemptId)).toBe(1);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    firstClient.close();
+    clients.splice(clients.indexOf(firstClient), 1);
+    await firstWorker.stop();
+    workers.splice(workers.indexOf(firstWorker), 1);
+
+    const secondAdapter = new ChatGptAdapter({
+      context: browserContext,
+      browserRuntimeId: "fixture-cft",
+      urlForJob: (jobId) => fixture.urlFor(jobId, "default"),
+      actionTimeoutMs: 5_000,
+      commitTimeoutMs: 2_000,
+    });
+    const secondWorker = new OracleWorker({ ...paths, provider: secondAdapter });
+    await secondWorker.start();
+    workers.push(secondWorker);
+    const secondClient = new OracleClient({ socketPath: paths.socketPath });
+    clients.push(secondClient);
+    const completed = await secondClient.waitForTerminal(admission.job.id, { timeoutMs: 8_000 });
+    expect(completed.state.kind).toBe("completed");
+    expect(fixture.sendCount(atRisk.state.intent.turnAttemptId)).toBe(1);
+    await waitForIdle(secondClient, 5_000);
+    expect(secondAdapter.openPageCount()).toBe(0);
+  }, 25_000);
 
   test("recovers committed capture through a fresh worker and page without another Send", async () => {
     const paths = workerPaths();
