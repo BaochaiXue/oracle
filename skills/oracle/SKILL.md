@@ -37,6 +37,8 @@ Recommended defaults:
 - Explicit Pro effort on GPT-5.6 Sol: `--browser-thinking-time pro` (fails closed if Pro cannot be confirmed)
 - Browser GPT-5.5 with Pro effort: `--model gpt-5.5 --browser-thinking-time pro`
 - API Pro maximum reasoning: `--model gpt-5.6-sol --reasoning-mode pro --reasoning-effort max`
+- Browser Pro capture: 60 minutes per bound-conversation attempt, with one
+  same-conversation reload and no resubmission, for a two-hour default ceiling
 - Attachments: directories/globs plus excludes; never attach secrets by default
 
 GPT-5.6 availability is account-dependent. Confirm the base Sol picker and

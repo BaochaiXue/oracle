@@ -19,11 +19,39 @@ import {
   type RecoveredConversation,
 } from "../browser/recoverConversation.js";
 import { reconcileOwnedBrowserTargets } from "../browser/lifecycleReconciler.js";
+import { resolveBrowserConfig } from "../browser/config.js";
 import { resolveOutputPath } from "./writeOutputPath.js";
 import { assertGenericSessionActionAllowed } from "../batch/sessionAuthority.js";
 
 const LIVE_POLL_MS = 2000;
 const DEFAULT_STALL_THRESHOLD_MS = 60_000;
+
+function resolveProLiveTailCeilingMs(meta: SessionMetadata): number | null {
+  const config = resolveBrowserConfig(meta.browser?.config);
+  return config.thinkingTime === "pro" ? config.timeoutMs * 2 : null;
+}
+
+function deriveLiveTailState({
+  harvested,
+  unchangedMs,
+  elapsedMs,
+  stallThresholdMs,
+  proActiveCeilingMs,
+}: {
+  harvested: ChatGptTabSummary;
+  unchangedMs: number;
+  elapsedMs: number;
+  stallThresholdMs: number;
+  proActiveCeilingMs: number | null;
+}): "running" | "completed" | "stalled" | "detached" {
+  if (harvested.stopExists) {
+    if (proActiveCeilingMs !== null) {
+      return elapsedMs >= proActiveCeilingMs ? "stalled" : "running";
+    }
+    return unchangedMs >= stallThresholdMs ? "stalled" : "running";
+  }
+  return harvested.authenticated ? "completed" : "detached";
+}
 
 function isRecoverableMissingTabError(message: string): boolean {
   return (
@@ -475,6 +503,8 @@ export async function liveTailSessionBrowserOutput(
   let recoveredConversation: RecoveredConversation | null = null;
   let recoveryDisposition: "completed" | "recoverable" = "recoverable";
   const stallThresholdMs = options.stallThresholdMs ?? DEFAULT_STALL_THRESHOLD_MS;
+  const liveStartedAt = Date.now();
+  const proActiveCeilingMs = resolveProLiveTailCeilingMs(meta);
   let lastHash: string | null = null;
   let unchangedSince = Date.now();
   let requireRecoveredContent = false;
@@ -536,13 +566,14 @@ export async function liveTailSessionBrowserOutput(
         await persistHarvest(sessionId, harvested);
       }
 
-      const derivedState = harvested.stopExists
-        ? Date.now() - unchangedSince >= stallThresholdMs
-          ? "stalled"
-          : "running"
-        : harvested.authenticated
-          ? "completed"
-          : "detached";
+      const now = Date.now();
+      const derivedState = deriveLiveTailState({
+        harvested,
+        unchangedMs: now - unchangedSince,
+        elapsedMs: now - liveStartedAt,
+        stallThresholdMs,
+        proActiveCeilingMs,
+      });
 
       if (
         derivedState === "completed" ||
@@ -587,5 +618,7 @@ export async function liveTailSessionBrowserOutput(
 
 // biome-ignore lint/style/useNamingConvention: test-only export used in vitest suite
 export const __test__ = {
+  deriveLiveTailState,
   finishCompletedOwnedLiveHarvest,
+  resolveProLiveTailCeilingMs,
 };

@@ -42,6 +42,54 @@ function completedManualHarvest(overrides: Partial<ChatGptTabSummary> = {}): Cha
 }
 
 describe("browser tab CLI helpers", () => {
+  test("keeps an active Pro turn live until the two-hour capture ceiling", () => {
+    const meta = {
+      id: "pro-session",
+      createdAt: "2026-09-02T00:00:00.000Z",
+      status: "error",
+      options: {},
+      mode: "browser",
+      browser: { config: { thinkingTime: "pro" } },
+    } as SessionMetadata;
+    const ceilingMs = __test__.resolveProLiveTailCeilingMs(meta);
+    const harvested = {
+      stopExists: true,
+      authenticated: true,
+    } as ChatGptTabSummary;
+
+    expect(ceilingMs).toBe(2 * 60 * 60 * 1000);
+    expect(
+      __test__.deriveLiveTailState({
+        harvested,
+        unchangedMs: 30 * 60 * 1000,
+        elapsedMs: (ceilingMs ?? 0) - 1,
+        stallThresholdMs: 60_000,
+        proActiveCeilingMs: ceilingMs,
+      }),
+    ).toBe("running");
+    expect(
+      __test__.deriveLiveTailState({
+        harvested,
+        unchangedMs: 2 * 60 * 60 * 1000,
+        elapsedMs: ceilingMs ?? 0,
+        stallThresholdMs: 60_000,
+        proActiveCeilingMs: ceilingMs,
+      }),
+    ).toBe("stalled");
+  });
+
+  test("preserves the ordinary inactive-text stall threshold", () => {
+    expect(
+      __test__.deriveLiveTailState({
+        harvested: { stopExists: true, authenticated: true } as ChatGptTabSummary,
+        unchangedMs: 60_000,
+        elapsedMs: 60_000,
+        stallThresholdMs: 60_000,
+        proActiveCeilingMs: null,
+      }),
+    ).toBe("stalled");
+  });
+
   test("prefers stable conversation URLs over stale Chrome target ids", () => {
     const meta = {
       id: "session-1",

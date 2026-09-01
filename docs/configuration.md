@@ -33,7 +33,7 @@ JSON5 parsing, so trailing commas and comments are allowed.
     remoteToken: "…", // written by `oracle bridge client` (kept private; not printed by default)
     remoteViaSshReverseTunnel: { ssh: "user@linux-host", remotePort: 9473 }, // optional metadata
     debugPort: 9333, // optional fixed loopback port (env: ORACLE_BROWSER_PORT / ORACLE_BROWSER_DEBUG_PORT)
-    timeoutMs: 1200000,
+    timeoutMs: 1200000, // ordinary per-attempt default; omitted Pro runs use 3600000
     inputTimeoutMs: 30000,
     attachmentTimeoutMs: 90000, // wait for file upload/readiness before clicking Send (default: 45s)
     cookieSync: false, // canonical dedicated profile never copies personal Chrome cookies

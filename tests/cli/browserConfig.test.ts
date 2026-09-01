@@ -261,9 +261,23 @@ describe("buildBrowserConfig", () => {
       browserTimeout: "1h!30m",
     });
 
+    expect(config.timeoutMs).toBe(3_600_000);
+    expect(logSpy).toHaveBeenCalledWith(
+      'Warning: invalid --browser-timeout duration "1h!30m"; using fallback 3600000ms.',
+    );
+    logSpy.mockRestore();
+  });
+
+  test("keeps the ordinary malformed browser timeout fallback at twenty minutes", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const config = await buildBrowserConfig({
+      model: "gpt-5.4",
+      browserTimeout: "invalid",
+    });
+
     expect(config.timeoutMs).toBe(1_200_000);
     expect(logSpy).toHaveBeenCalledWith(
-      'Warning: invalid --browser-timeout duration "1h!30m"; using fallback 1200000ms.',
+      'Warning: invalid --browser-timeout duration "invalid"; using fallback 1200000ms.',
     );
     logSpy.mockRestore();
   });

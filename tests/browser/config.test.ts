@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import os from "node:os";
 import path from "node:path";
 import { DEFAULT_CHATGPT_COOKIE_NAMES, resolveBrowserConfig } from "../../src/browser/config.js";
-import { CHATGPT_URL, DEEP_RESEARCH_DEFAULT_TIMEOUT_MS } from "../../src/browser/constants.js";
+import {
+  CHATGPT_URL,
+  DEEP_RESEARCH_DEFAULT_TIMEOUT_MS,
+  PRO_BROWSER_CAPTURE_ATTEMPT_TIMEOUT_MS,
+} from "../../src/browser/constants.js";
 
 describe("resolveBrowserConfig", () => {
   const originalProfileDir = process.env.ORACLE_BROWSER_PROFILE_DIR;
@@ -43,6 +47,7 @@ describe("resolveBrowserConfig", () => {
       path.join(os.homedir(), ".oracle", "browser-profile"),
     );
     expect(resolved.profileLockTimeoutMs).toBe(300_000);
+    expect(resolved.timeoutMs).toBe(1_200_000);
     expect(resolved.attachmentTimeoutMs).toBe(45_000);
     expect(resolved.maxConcurrentTabs).toBe(3);
     expect(resolved.researchMode).toBe("off");
@@ -183,5 +188,12 @@ describe("resolveBrowserConfig", () => {
       DEEP_RESEARCH_DEFAULT_TIMEOUT_MS,
     );
     expect(resolveBrowserConfig({ researchMode: "deep", timeoutMs: 123 }).timeoutMs).toBe(123);
+  });
+
+  test("uses a one-hour capture attempt for Pro unless explicitly overridden", () => {
+    expect(resolveBrowserConfig({ thinkingTime: "pro" }).timeoutMs).toBe(
+      PRO_BROWSER_CAPTURE_ATTEMPT_TIMEOUT_MS,
+    );
+    expect(resolveBrowserConfig({ thinkingTime: "pro", timeoutMs: 123 }).timeoutMs).toBe(123);
   });
 });

@@ -4,7 +4,12 @@ import chalk from "chalk";
 import type { BrowserSessionConfig } from "../sessionStore.js";
 import type { ModelName, ThinkingTimeLevel } from "../oracle/types.js";
 import { normalizeThinkingTimeLevel } from "../oracle/thinkingTime.js";
-import { CHATGPT_URL, DEFAULT_MODEL_STRATEGY, DEFAULT_MODEL_TARGET } from "../browser/constants.js";
+import {
+  CHATGPT_URL,
+  DEFAULT_MODEL_STRATEGY,
+  DEFAULT_MODEL_TARGET,
+  PRO_BROWSER_CAPTURE_ATTEMPT_TIMEOUT_MS,
+} from "../browser/constants.js";
 import { normalizeChatgptUrl } from "../browser/utils.js";
 import { parseDuration } from "../duration.js";
 import { normalizeBrowserModelStrategy } from "../browser/modelStrategy.js";
@@ -192,6 +197,8 @@ export async function buildBrowserConfig(
     (normalizedBrowserModel === "gpt-5-pro" || normalizedBrowserModel === "gpt-5.5-pro")
       ? "pro"
       : undefined);
+  const browserTimeoutFallbackMs =
+    thinkingTime === "pro" ? PRO_BROWSER_CAPTURE_ATTEMPT_TIMEOUT_MS : DEFAULT_BROWSER_TIMEOUT_MS;
   assertBrowserModelAvailable(options.model, modelStrategy);
   const cookieNames = parseCookieNames(
     options.browserCookieNames ?? process.env.ORACLE_BROWSER_COOKIE_NAMES,
@@ -240,11 +247,7 @@ export async function buildBrowserConfig(
     url,
     debugPort: selectBrowserPort(options),
     timeoutMs: options.browserTimeout
-      ? parseBrowserDuration(
-          options.browserTimeout,
-          "--browser-timeout",
-          DEFAULT_BROWSER_TIMEOUT_MS,
-        )
+      ? parseBrowserDuration(options.browserTimeout, "--browser-timeout", browserTimeoutFallbackMs)
       : undefined,
     inputTimeoutMs: options.browserInputTimeout
       ? parseBrowserDuration(

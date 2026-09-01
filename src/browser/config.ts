@@ -3,6 +3,7 @@ import {
   DEEP_RESEARCH_DEFAULT_TIMEOUT_MS,
   DEFAULT_MODEL_STRATEGY,
   DEFAULT_MODEL_TARGET,
+  PRO_BROWSER_CAPTURE_ATTEMPT_TIMEOUT_MS,
 } from "./constants.js";
 import { normalizeBrowserModelStrategy } from "./modelStrategy.js";
 import {
@@ -119,7 +120,11 @@ export function resolveBrowserConfig(
   );
   const researchMode = normalizeResearchMode(config?.researchMode);
   const defaultTimeoutMs =
-    researchMode === "deep" ? DEEP_RESEARCH_DEFAULT_TIMEOUT_MS : DEFAULT_BROWSER_CONFIG.timeoutMs;
+    researchMode === "deep"
+      ? DEEP_RESEARCH_DEFAULT_TIMEOUT_MS
+      : config?.thinkingTime === "pro"
+        ? PRO_BROWSER_CAPTURE_ATTEMPT_TIMEOUT_MS
+        : DEFAULT_BROWSER_CONFIG.timeoutMs;
   return {
     ...DEFAULT_BROWSER_CONFIG,
     ...config,

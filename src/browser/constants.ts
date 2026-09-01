@@ -3,6 +3,7 @@ import type { BrowserModelStrategy } from "./types.js";
 export const CHATGPT_URL = "https://chatgpt.com/";
 export const DEFAULT_MODEL_TARGET = "Pro";
 export const DEFAULT_MODEL_STRATEGY: BrowserModelStrategy = "select";
+export const PRO_BROWSER_CAPTURE_ATTEMPT_TIMEOUT_MS = 60 * 60 * 1000;
 export const COOKIE_URLS = [
   "https://chatgpt.com",
   "https://chat.openai.com",
