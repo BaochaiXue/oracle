@@ -4,6 +4,7 @@ import type {
   ClientAdmission,
   ClientEvent,
   ClientJob,
+  ClientJobResult,
   PutClientObjectOptions,
   WaitOptions,
   WorkerStatus,
@@ -46,6 +47,10 @@ export class OracleClient {
 
   getJob(jobId: string): Promise<ClientJob> {
     return this.request(`/v2/jobs/${encodeURIComponent(jobId)}`);
+  }
+
+  getResult(jobId: string): Promise<ClientJobResult> {
+    return this.request(`/v2/jobs/${encodeURIComponent(jobId)}/result`);
   }
 
   listJobs(): Promise<ClientJob[]> {

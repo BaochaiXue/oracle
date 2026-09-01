@@ -10,6 +10,7 @@ import { registerConsultTool } from "./tools/consult.js";
 import { registerProjectSourcesTool } from "./tools/projectSources.js";
 import { registerSessionsTool } from "./tools/sessions.js";
 import { registerSessionResources } from "./tools/sessionResources.js";
+import { registerJobTools } from "./tools/jobs.js";
 
 export async function startMcpServer(): Promise<void> {
   const server = new McpServer(
@@ -29,6 +30,7 @@ export async function startMcpServer(): Promise<void> {
   registerProjectSourcesTool(server);
   registerSessionsTool(server);
   registerSessionResources(server);
+  registerJobTools(server);
 
   const transport = new StdioServerTransport();
   transport.onerror = (error) => {

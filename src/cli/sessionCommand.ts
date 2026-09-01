@@ -14,6 +14,7 @@ import {
   type BrowserLiveTailOptions,
 } from "./browserTabs.js";
 import { sessionStore } from "../sessionStore.js";
+import { displayBrokerSessionProjection } from "./brokerSessionProjection.js";
 
 export interface StatusOptions extends OptionValues {
   hours: number;
@@ -141,6 +142,9 @@ export async function handleSessionCommand(
       process.exitCode = 1;
       return;
     }
+    if (await displayBrokerSessionProjection(sessionId, { pathOnly: true })) {
+      return;
+    }
     try {
       const paths = await deps.getSessionPaths(sessionId);
       const richTty = Boolean(process.stdout.isTTY && chalk.level > 0);
@@ -200,6 +204,13 @@ export async function handleSessionCommand(
       showExamples,
       modelFilter: sessionOptions.model,
     });
+    return;
+  }
+  if (
+    await displayBrokerSessionProjection(sessionId, {
+      renderPrompt: !sessionOptions.hidePrompt,
+    })
+  ) {
     return;
   }
   // Surface any root-level flags that were provided but are ignored when attaching to a session.

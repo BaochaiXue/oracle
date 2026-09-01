@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -72,7 +72,79 @@ async function waitForIdle(client: OracleClient, timeoutMs: number): Promise<voi
   }
 }
 
+class DeferredProbeProvider extends FakeProvider {
+  readonly probeStarted: Promise<void>;
+  private markProbeStarted!: () => void;
+  private release!: () => void;
+  private readonly gate: Promise<void>;
+
+  constructor() {
+    super();
+    this.probeStarted = new Promise<void>((resolve) => {
+      this.markProbeStarted = resolve;
+    });
+    this.gate = new Promise<void>((resolve) => {
+      this.release = resolve;
+    });
+  }
+
+  override async probe() {
+    this.markProbeStarted();
+    await this.gate;
+    return super.probe();
+  }
+
+  releaseProbe(): void {
+    this.release();
+  }
+}
+
+class FailOnceCloseProvider extends FakeProvider {
+  closeAttempts = 0;
+
+  async close(): Promise<void> {
+    this.closeAttempts += 1;
+    if (this.closeAttempts === 1) throw new Error("injected provider close failure");
+  }
+}
+
 describe("Oracle v2 local worker protocol", () => {
+  test("serves an explicit starting status before store and runner readiness", async () => {
+    const paths = workerPaths();
+    const provider = new DeferredProbeProvider();
+    const worker = new OracleWorker({ ...paths, provider });
+    const starting = worker.start();
+    await provider.probeStarted;
+    const client = new OracleClient({ socketPath: paths.socketPath });
+
+    expect(await client.getWorker()).toMatchObject({
+      phase: "starting",
+      ready: false,
+      blocked: true,
+    });
+    provider.releaseProbe();
+    await starting;
+    expect(await client.getWorker()).toMatchObject({ phase: "ready", ready: true });
+
+    client.close();
+    await worker.stop();
+  });
+
+  test("releases server, store, and socket even when provider cleanup fails", async () => {
+    const paths = workerPaths();
+    const provider = new FailOnceCloseProvider();
+    const worker = new OracleWorker({ ...paths, provider });
+    await worker.start();
+
+    await expect(worker.stop()).rejects.toThrow("Oracle v2 worker cleanup failed");
+    expect(existsSync(paths.socketPath)).toBe(false);
+    const replacement = new OracleWorker({ ...paths, provider: new FakeProvider() });
+    await replacement.start();
+    await replacement.stop();
+    await expect(worker.stop()).resolves.toBeUndefined();
+    expect(provider.closeAttempts).toBe(2);
+  });
+
   test("continues after the admitting client disconnects and exposes sequenced events", async () => {
     const paths = workerPaths();
     const provider = new FakeProvider();
@@ -104,6 +176,13 @@ describe("Oracle v2 local worker protocol", () => {
       "capture-completed",
     ]);
     expect(provider.sendCount(admission.job.id)).toBe(1);
+    await expect(reconnectingClient.getResult(admission.job.id)).resolves.toMatchObject({
+      jobId: admission.job.id,
+      state: "completed",
+      ready: true,
+      text: expect.stringContaining("Fake answer"),
+      mediaType: "text/markdown",
+    });
 
     reconnectingClient.close();
     await worker.stop();
@@ -235,6 +314,11 @@ describe("Oracle v2 local worker protocol", () => {
     expect(targetRecoverable.state).toMatchObject({
       kind: "recoverable",
       basis: "committed-capture",
+    });
+    await expect(secondClient.getResult(target.job.id)).resolves.toEqual({
+      jobId: target.job.id,
+      state: "recoverable",
+      ready: false,
     });
     expect(provider.sendCount(older.job.id)).toBe(1);
     expect(provider.sendCount(target.job.id)).toBe(1);

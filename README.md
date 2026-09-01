@@ -86,6 +86,30 @@ oracle --followup <session-id> \
 
 Oracle 会记录已提交 turn 的 identity 与 timing evidence，并把 durable conversation ID 冻结为 capture authority；同一 tab 后来跳到别的 conversation 时不会复制或接纳那边的答案。恢复必须回到原 conversation；只有 durable receipt 明确证明 prompt 尚未提交、尚未 commit 且 `retrySafe:true` 时，显式 resume 才能创建新 attempt。
 
+<!-- readme-sync:broker-candidate -->
+
+## Oracle v2 broker 候选路径
+
+R8 在源码中提供了显式 opt-in 的 durable `broker` engine，供 CLI/MCP
+cutover 验证。它不是默认引擎，不会替换上面的 `--engine browser`，也不会把
+Batch 提前切到 v2。使用前必须已有 certified v2 runtime，并单独运行 worker；
+每个 live call 都必须携带稳定 idempotency key，caller 被终止后才能回到同一
+job，而不是重复 Send。
+
+```bash
+oracle worker run
+oracle --engine broker \
+  --idempotency-key review-auth-boundary-v1 \
+  -p "Review this boundary." \
+  --file "src/**"
+oracle job <job-id> --events
+oracle session <job-id>
+```
+
+CLI/MCP 的 broker client、job tools、timeout/reconnect 语义见
+[CLI reference](docs/cli-reference.md) 与 [MCP](docs/mcp.md)。在 G3 owner gate
+以前，legacy engine 仍是默认；源码候选完成不等于安装、激活或默认切换。
+
 <!-- readme-sync:batch -->
 
 ## Batch Oracle

@@ -26,12 +26,28 @@ export interface ClientEvent {
 }
 
 export interface WorkerStatus {
+  phase: "starting" | "ready";
   ready: boolean;
   blocked: boolean;
   provider: "compatible" | "incompatible";
   queued: number;
   running: number;
 }
+
+export type ClientJobResult =
+  | {
+      jobId: string;
+      state: Exclude<JobState["kind"], "completed">;
+      ready: false;
+    }
+  | {
+      jobId: string;
+      state: "completed";
+      ready: true;
+      answer: ObjectRef;
+      text: string;
+      mediaType: string;
+    };
 
 export interface PutClientObjectOptions<T extends ObjectRef["objectClass"]> {
   mediaType: string;

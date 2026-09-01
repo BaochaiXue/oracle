@@ -90,6 +90,7 @@ export class JobRunner {
 
   resume(jobId: string): StoredJob {
     const job = this.store.getJob(jobId);
+    assertGenericJobOperation(job, "resume");
     if ((this.allowDispatch && needsDispatchLane(job)) || needsCaptureLane(job)) {
       if (this.running.has(job.id)) this.ownerRequestedReruns.add(job.id);
       else this.schedule(job.id);
@@ -100,6 +101,7 @@ export class JobRunner {
 
   abandon(jobId: string, reason: string): StoredJob {
     const job = this.store.getJob(jobId);
+    assertGenericJobOperation(job, "abandon");
     if (this.running.has(job.id)) {
       throw new JobOperationConflictError(job.id, "abandon while active", job.state.kind);
     }
@@ -315,6 +317,16 @@ export class JobRunner {
       schemaVersion: JOB_EVENT_SCHEMA_VERSION,
       ...event,
     } as JobEvent);
+  }
+}
+
+function assertGenericJobOperation(job: StoredJob, operation: "resume" | "abandon"): void {
+  if (job.spec.owner.kind === "batch-lane" || job.spec.owner.kind === "batch-synthesis") {
+    throw new JobOperationConflictError(
+      job.id,
+      `${operation} batch-owned job outside its parent`,
+      job.state.kind,
+    );
   }
 }
 

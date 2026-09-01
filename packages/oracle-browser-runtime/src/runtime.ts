@@ -65,17 +65,31 @@ export async function launchOracleBrowserRuntime(options: {
     throw error;
   }
 
-  let closed = false;
+  let browserClosed = false;
+  let closeComplete = false;
+  let closeAttempt: Promise<void> | undefined;
   return {
     context: launched.context,
     receipt,
     openPage: (url) => launched.openPage(url),
     async close() {
-      if (closed) return;
-      closed = true;
-      await launched.close();
-      receipt.closedAt = new Date().toISOString();
-      writePrivateJson(path.join(runtimeRoot, LAUNCH_RECEIPT), receipt);
+      if (closeComplete) return;
+      if (closeAttempt) return closeAttempt;
+      const attempt = (async () => {
+        if (!browserClosed) {
+          await launched.close();
+          browserClosed = true;
+        }
+        receipt.closedAt ??= new Date().toISOString();
+        writePrivateJson(path.join(runtimeRoot, LAUNCH_RECEIPT), receipt);
+        closeComplete = true;
+      })();
+      closeAttempt = attempt;
+      try {
+        await attempt;
+      } finally {
+        if (closeAttempt === attempt) closeAttempt = undefined;
+      }
     },
   };
 }

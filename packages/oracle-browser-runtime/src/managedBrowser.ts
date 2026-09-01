@@ -26,9 +26,16 @@ export async function launchManagedChromeForTesting(
     const ownedPages = new Set<Page>();
     const pendingMarkers = new Set<string>();
     let closed = false;
+    let closeAttempt: Promise<void> | undefined;
     const closeLateUnownedPage = (page: Page) => {
       void delay(50).then(async () => {
-        if (closed || page.isClosed() || ownedPages.has(page) || pendingMarkers.has(page.url())) {
+        if (
+          closed ||
+          closeAttempt ||
+          page.isClosed() ||
+          ownedPages.has(page) ||
+          pendingMarkers.has(page.url())
+        ) {
           return;
         }
         await page.close({ runBeforeUnload: false }).catch(() => undefined);
@@ -41,7 +48,9 @@ export async function launchManagedChromeForTesting(
       executablePath: input.executablePath,
       restoredPageCount,
       async openPage(url) {
-        if (closed) throw new Error("Managed Chrome for Testing runtime is closed");
+        if (closed || closeAttempt) {
+          throw new Error("Managed Chrome for Testing runtime is closing or closed");
+        }
         const marker = `about:blank#oracle-v2-target-${randomUUID()}`;
         pendingMarkers.add(marker);
         const session = await browser!.newBrowserCDPSession();
@@ -72,9 +81,18 @@ export async function launchManagedChromeForTesting(
       },
       async close() {
         if (closed) return;
-        closed = true;
-        context.off("page", closeLateUnownedPage);
-        await closeOwnedBrowser(browser!, launcher, endpoint);
+        if (closeAttempt) return closeAttempt;
+        const attempt = (async () => {
+          await closeOwnedBrowser(browser!, launcher, endpoint);
+          context.off("page", closeLateUnownedPage);
+          closed = true;
+        })();
+        closeAttempt = attempt;
+        try {
+          await attempt;
+        } finally {
+          if (closeAttempt === attempt) closeAttempt = undefined;
+        }
       },
     };
   } catch (error) {

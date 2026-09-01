@@ -35,10 +35,12 @@ or maintainer-only release instructions.
   sanitized `apps/oracle-provider-fixture` may define simulated provider
   markup and scenarios, but it must not become a second adapter or production
   selector authority.
-- CLI, MCP, and Batch remain on the legacy implementation until their named
-  cutover tranches pass. A workspace skeleton or green fixture suite is not a
-  default-engine switch, installed-runtime update, live canary, or legacy
-  retirement.
+- The R8 opt-in `broker` engine routes CLI and MCP through `oracle-client` and
+  `oracle-bundle`; neither surface owns browser execution or worker state.
+  Legacy `browser` remains the shipped/default ordinary engine until G3, and
+  Batch remains on its legacy authority path until R9 passes. Source-complete
+  broker support is not an installed-runtime update, default-engine switch, or
+  legacy retirement.
 - Keep G1 runtime/login selection, G2 first live Send, G3 default-engine
   cutover, and G4 legacy removal as separate owner decisions.
 

@@ -139,6 +139,35 @@ describe("Oracle v2 certified browser runtime", () => {
     ).toEqual(runtime.receipt);
   });
 
+  test("retries managed runtime cleanup when the first close attempt fails", async () => {
+    const runtimeRoot = temporaryRoot();
+    let closeAttempts = 0;
+    const runtime = await launchOracleBrowserRuntime({
+      runtimeRoot,
+      headless: true,
+      inspection: {
+        chromeForTestingExecutablePath: "/runtime/chrome-for-testing",
+        executableExists: () => true,
+      },
+      launchManagedBrowser: async (input) => ({
+        context: { close: async () => undefined } as unknown as BrowserContext,
+        browserVersion: "test-browser",
+        executablePath: input.executablePath,
+        restoredPageCount: 0,
+        openPage: async () => ({}) as Page,
+        close: async () => {
+          closeAttempts += 1;
+          if (closeAttempts === 1) throw new Error("injected close failure");
+        },
+      }),
+    });
+
+    await expect(runtime.close()).rejects.toThrow("injected close failure");
+    await expect(runtime.close()).resolves.toBeUndefined();
+    expect(closeAttempts).toBe(2);
+    expect(runtime.receipt.closedAt).toEqual(expect.any(String));
+  });
+
   test("redacts query and fragment state from observed runtime URLs", () => {
     expect(
       sanitizeRuntimeObservationUrl(

@@ -47,7 +47,7 @@ runtime failure.
 
 ### `consult`
 
-- Inputs: `prompt` (required), `files?: string[]` (globs), `model?: string` (defaults to CLI), `engine?: "api" | "browser"` (optional; Oracle follows CLI defaults: `ORACLE_ENGINE` and the effective config first, then API when `OPENAI_API_KEY` is set, otherwise browser), `slug?: string`.
+- Inputs: `prompt` (required), `files?: string[]` (globs), `model?: string` (defaults to CLI), `engine?: "api" | "browser" | "broker"` (optional; Oracle follows CLI defaults: `ORACLE_ENGINE` and the effective config first, then API when `OPENAI_API_KEY` is set, otherwise browser), `slug?: string`.
 - Presets: `preset?: "chatgpt-pro-heavy"` applies browser mode + current Pro model alias + extended thinking, unless the request overrides those fields.
 - Browser-only extras: `browserAttachments?: "auto"|"never"|"always"`, `browserBundleFiles?: boolean`, `browserBundleFormat?: "auto"|"text"|"zip"`, `browserThinkingTime?: "light"|"standard"|"extended"|"extra-high"|"pro"|"heavy"`, `browserResearchMode?: "deep"`, `browserFollowUps?: string[]`, `browserKeepBrowser?: boolean`, `browserModelLabel?: string`, `browserModelStrategy?: "select"|"current"|"ignore"`, `generateImage?: string`, `outputPath?: string`.
 - Dry runs: set `dryRun: true` to preview the resolved request without creating a session or touching the browser.
@@ -57,6 +57,31 @@ runtime failure.
 - Multi-turn consults: set `browserFollowUps:["Challenge your recommendation", "Give the final decision"]` to keep one ChatGPT browser conversation open and ask sequential follow-up prompts. Use one-shot calls for narrow bugs and exact file-set reviews; use multi-turn for ambiguous architecture/product decisions where a challenge pass and final recommendation are useful; use Deep Research for broad public-web work with citations. Oracle never invents follow-ups automatically.
 - Conversation retention: Oracle exposes no ChatGPT archive input or action. Browser target cleanup may close Oracle-owned Chrome targets, but the account conversation remains visible for inspection and manual follow-up.
 - ChatGPT image generation: set `engine:"browser"` and `generateImage` to a path under `ORACLE_HOME_DIR/generated` to use the same image-aware wait/download path as CLI `--generate-image`. Saved files are returned in `structuredContent.images` and recorded as session artifacts; multiple images save as numbered siblings. Agent-supplied `generateImage` / `outputPath` are constrained to that generated-output directory by default (set `ORACLE_MCP_ALLOW_EXTERNAL_OUTPUT=1` to allow external paths).
+
+#### Opt-in durable broker consults
+
+R8 adds an explicit `engine:"broker"` candidate while legacy MCP defaults remain
+unchanged until G3. Start the certified local worker separately, pass a stable
+`idempotencyKey`, and optionally set `waitTimeoutMs` as the MCP host wait budget.
+A host timeout returns `jobId + state`; the worker continues and a repeated call
+with the same key and inputs reattaches to the same job. Broker-only fields are
+rejected on API/browser requests rather than ignored.
+
+```json
+{
+  "engine": "broker",
+  "idempotencyKey": "review-auth-boundary-v1",
+  "waitTimeoutMs": 120000,
+  "prompt": "Review this boundary.",
+  "files": ["src/**/*.ts"]
+}
+```
+
+The read/recovery tools are `job_status`, `job_result`, `job_events`, and
+`job_resume`. Their structured outputs expose only stable public projections;
+protocol payloads and forensic internals remain available only through the
+explicit private debug export. Batch-owned jobs reject generic `job_resume` and
+remain under their parent authority until the R9 mapping is complete.
 
 #### Long browser consults from agents
 

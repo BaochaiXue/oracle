@@ -15,6 +15,10 @@ This is the curated cheatsheet. The authoritative source is always `oracle --hel
 | `oracle restart <id>`          | Re-run an ordinary session with the same prompt + files.                                    |
 | `oracle batch …`               | Validate, run, close, resume, inspect, or render a parallel batch.                          |
 | `oracle docs check`            | Check documented flags against CLI help metadata.                                           |
+| `oracle job <job-id>`          | Inspect one durable Oracle v2 job and final result handle.                                  |
+| `oracle resume <job-id>`       | Resume an eligible ordinary v2 capture without retrying Send.                               |
+| `oracle abandon <job-id>`      | Record owner abandonment for an eligible ordinary v2 job.                                   |
+| `oracle worker …`              | Run, inspect, or diagnose the opt-in v2 worker.                                             |
 | `oracle serve`                 | Run the loopback-only-by-default remote browser host (see [Browser Mode](browser-mode.md)). |
 | `oracle bridge claude-config`  | Emit a `.mcp.json` for Claude Code (see [MCP](mcp.md)).                                     |
 | `oracle tui`                   | Interactive TUI (humans only).                                                              |
@@ -50,19 +54,43 @@ receipts, and barrier state advance together.
 
 ## Core consult flags
 
-| Flag                              | Purpose                                                                                          |
-| --------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `-p, --prompt <text>`             | Required prompt.                                                                                 |
-| `-f, --file <paths...>`           | Files / dirs / globs. Repeatable. `!` prefix = exclude.                                          |
-| `-e, --engine <api\|browser>`     | Force engine. Default: auto-pick.                                                                |
-| `-m, --model <name>`              | Single model. See [Mythical Pro Agents](mythical-pro-agents.md).                                 |
-| `--models <list>`                 | Comma-separated multi-model run (API only).                                                      |
-| `--slug <name>`                   | Stable session slug.                                                                             |
-| `--render`                        | Print the assembled bundle to stdout.                                                            |
-| `--copy`                          | Copy the bundle to the clipboard.                                                                |
-| `--write-output <path>`           | Save the final answer to a file; multi-model runs add per-model files plus `<stem>.oracle.json`. |
-| `--files-report`                  | Print per-file token usage.                                                                      |
-| `--dry-run [summary\|json\|full]` | Preview without sending.                                                                         |
+| Flag                                  | Purpose                                                                                          |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `-p, --prompt <text>`                 | Required prompt.                                                                                 |
+| `-f, --file <paths...>`               | Files / dirs / globs. Repeatable. `!` prefix = exclude.                                          |
+| `-e, --engine <api\|browser\|broker>` | Force engine. `broker` is the opt-in R8 candidate; legacy defaults remain unchanged until G3.    |
+| `-m, --model <name>`                  | Single model. See [Mythical Pro Agents](mythical-pro-agents.md).                                 |
+| `--models <list>`                     | Comma-separated multi-model run (API only).                                                      |
+| `--slug <name>`                       | Stable session slug.                                                                             |
+| `--render`                            | Print the assembled bundle to stdout.                                                            |
+| `--copy`                              | Copy the bundle to the clipboard.                                                                |
+| `--write-output <path>`               | Save the final answer to a file; multi-model runs add per-model files plus `<stem>.oracle.json`. |
+| `--files-report`                      | Print per-file token usage.                                                                      |
+| `--dry-run [summary\|json\|full]`     | Preview without sending.                                                                         |
+
+## Opt-in Oracle v2 broker candidate
+
+R8 exposes the durable worker path for explicit CLI validation. It is not the
+default engine, does not replace `--engine browser`, and requires the certified
+v2 runtime plus a separately running worker. Live broker calls require a stable
+logical key so a killed caller can reattach without creating a second Send.
+
+```bash
+oracle worker run
+oracle --engine broker \
+  --idempotency-key review-auth-boundary-v1 \
+  -p "Review this boundary." \
+  --file "src/**"
+oracle job <job-id> --events
+oracle session <job-id>
+```
+
+`oracle worker status|doctor` distinguishes the `starting` phase from a ready
+worker. `oracle resume` is capture-only for eligible ordinary jobs;
+`oracle abandon --reason <text>` records an owner decision. Generic resume or
+abandon rejects Batch-owned jobs. Broker-only identity flags fail closed on
+legacy engines instead of being silently ignored. Batch continues to use its
+legacy parent/child execution path until R9.
 
 ## Followup / lineage
 

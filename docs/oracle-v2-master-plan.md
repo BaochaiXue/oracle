@@ -196,8 +196,8 @@ and cannot complete without attachment evidence on the committed user turn.
 | R4       | provider fixture, Playwright adapter, capability probe, UI fingerprint, test faults                      | R3           | 500 fixture jobs; all fault points; Send count at most one                | verified    |
 | R5 / G1  | certify worker-managed Chrome for Testing over direct CDP after owner login                              | R4           | persistent login, cold restart, model/effort/upload/click stability       | verified    |
 | R6       | real ChatGPT no-Send adapter probe and sanitized fixture capture                                         | G1           | compatibility receipt; no prompt submitted                                | verified    |
-| R7 / G2  | text, bundle, and committed-capture-recovery live canaries                                               | R6           | exact model/effort/turn/bundle/conversation/capture receipts; one Send    | owner-gated |
-| R8       | CLI and MCP v2 engine/cutover candidate; legacy remains default                                          | G2           | repeated reviews; client reconnect; MCP timeout retrieval                 | planned     |
+| R7 / G2  | text, bundle, and committed-capture-recovery live canaries                                               | R6           | exact model/effort/turn/bundle/conversation/capture receipts; one Send    | verified    |
+| R8       | CLI and MCP v2 engine/cutover candidate; legacy remains default                                          | G2           | repeated reviews; client reconnect; MCP timeout retrieval                 | verified    |
 | R9       | Batch lane/synthesis jobs preserve sealing, barrier, blind lanes, owner closure                          | R8           | restart/recoverable/accept-missing/synthesis Batch with no duplicate Send | planned     |
 | R10 / G3 | make v2 the default browser engine; move legacy operations to advanced surface                           | R8-R9        | packed CLI, fixture/fault suite, stable-window evidence                   | owner-gated |
 | R11      | remote bridge proxies durable objects/jobs/events/artifacts                                              | R10          | disconnect/idempotency/artifact transfer integration                      | planned     |
@@ -216,21 +216,21 @@ separate facts.
 | D02 | duplicate idempotency key returns one job                      | R2-R3        | store/API integration          | verified    |
 | D03 | each turn attempt sends at most once                           | R1-R4        | reducer + fixture send counter | verified    |
 | D04 | hard exit after click cannot cause resend                      | R3-R4        | process fault injection        | verified    |
-| D05 | committed job stays bound to its conversation                  | R1, R4, R7   | fixture and canary receipts    | in-progress |
+| D05 | committed job stays bound to its conversation                  | R1, R4, R7   | fixture and canary receipts    | verified    |
 | D06 | wrong-conversation navigation is rejected                      | R4           | fixture scenario               | verified    |
-| D07 | bundle completion requires committed-turn attachment evidence  | R1, R4, R7   | reducer, fixture, canary       | in-progress |
-| D08 | model and Pro effort have independent receipts                 | R1, R4, R7   | schema + fixture + canary      | in-progress |
+| D07 | bundle completion requires committed-turn attachment evidence  | R1, R4, R7   | reducer, fixture, canary       | verified    |
+| D08 | model and Pro effort have independent receipts                 | R1, R4, R7   | schema + fixture + canary      | verified    |
 | D09 | incompatible provider UI blocks before Send globally           | R3-R4        | compatibility incident test    | verified    |
-| D10 | worker owns browser runtime without normal PID/port operations | R5-R7        | runtime and canary evidence    | in-progress |
-| D11 | CLI, MCP, and Batch use only the client protocol               | R8-R9        | boundary check + integration   | planned     |
+| D10 | worker owns browser runtime without normal PID/port operations | R5-R7        | runtime and canary evidence    | verified    |
+| D11 | CLI, MCP, and Batch use only the client protocol               | R8-R9        | boundary check + integration   | in-progress |
 | D12 | Batch sealing, barrier, and owner authority remain intact      | R9           | Batch integration              | planned     |
 | D13 | session projections rebuild from DB/CAS                        | R2           | deletion/rebuild test          | verified    |
 | D14 | debug objects obey TTL/cap/pinning                             | R2-R3        | retention tests                | verified    |
-| D15 | default output excludes forensic internals                     | R3, R8       | output tests                   | planned     |
+| D15 | default output excludes forensic internals                     | R3, R8       | output tests                   | verified    |
 | D16 | v2 page knowledge exists only in chatgpt-adapter               | R0, R4       | boundary check                 | verified    |
-| D17 | real canary receipts pass                                      | R7           | owner-authorized live canaries | owner-gated |
+| D17 | real canary receipts pass                                      | R7           | owner-authorized live canaries | verified    |
 | D18 | fixture fault suite passes                                     | R4           | fixture/fault suite            | verified    |
-| D19 | worker/browser/page soak has no continuing growth              | R4, R7-R10   | fixture and live soak          | planned     |
+| D19 | worker/browser/page soak has no continuing growth              | R4, R7-R10   | fixture and live soak          | in-progress |
 | D20 | canonical flow works with legacy engine disabled               | R12          | canonical E2E with legacy off  | owner-gated |
 
 Full completion means every D01-D20 row is verified at its appropriate layer.

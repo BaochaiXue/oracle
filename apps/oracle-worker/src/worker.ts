@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import {
@@ -56,12 +56,14 @@ export class OracleWorker {
     const socketDir = path.dirname(this.options.socketPath);
     mkdirSync(socketDir, { recursive: true, mode: 0o700 });
     chmodSync(socketDir, 0o700);
-    if (existsSync(this.options.socketPath)) {
-      if (await socketIsHealthy(this.options.socketPath)) {
+    const existingSocket = socketIdentity(this.options.socketPath);
+    if (existingSocket) {
+      if (await socketIsOwned(this.options.socketPath)) {
         throw new WorkerAlreadyRunningError(this.options.socketPath);
       }
-      const staleSocket = socketIdentity(this.options.socketPath);
-      unlinkSocketIfOwned(this.options.socketPath, staleSocket);
+      if (!unlinkSocketIfOwned(this.options.socketPath, existingSocket)) {
+        throw new WorkerAlreadyRunningError(this.options.socketPath);
+      }
     }
 
     const server = http.createServer((request, response) => {
@@ -99,44 +101,84 @@ export class OracleWorker {
       this.ready = true;
       runner.recover();
     } catch (error) {
-      store?.close();
-      await this.options.provider.close?.().catch(() => undefined);
-      if (didBind) {
-        await closeServer(server).catch(() => undefined);
-        unlinkSocketIfOwned(this.options.socketPath, boundSocket);
+      const cleanupErrors: unknown[] = [];
+      const storeToClose = store;
+      if (storeToClose) {
+        await collectCleanupError(cleanupErrors, () => storeToClose.close());
       }
+      if (this.options.provider.close) {
+        await collectCleanupError(cleanupErrors, () => this.options.provider.close!());
+      }
+      if (didBind) {
+        await collectCleanupError(cleanupErrors, () => closeServer(server));
+        await collectCleanupError(cleanupErrors, () => {
+          unlinkSocketIfOwned(this.options.socketPath, boundSocket);
+        });
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(
+          [error, ...cleanupErrors],
+          "Oracle v2 worker startup and cleanup both failed",
+        );
+      }
+      if (isAddressInUse(error)) throw new WorkerAlreadyRunningError(this.options.socketPath);
       throw error;
     }
   }
 
   async stop(): Promise<void> {
     this.ready = false;
-    if (this.runner) await this.runner.stop();
-    await this.options.provider.close?.();
-    if (this.server) await closeServer(this.server);
-    this.store?.close();
-    unlinkSocketIfOwned(this.options.socketPath, this.ownedSocket);
+    const runner = this.runner;
+    const server = this.server;
+    const store = this.store;
+    const ownedSocket = this.ownedSocket;
+    const cleanupErrors: unknown[] = [];
+    if (runner) await collectCleanupError(cleanupErrors, () => runner.stop());
+    if (this.options.provider.close) {
+      await collectCleanupError(cleanupErrors, () => this.options.provider.close!());
+    }
+    if (server) await collectCleanupError(cleanupErrors, () => closeServer(server));
+    if (store) await collectCleanupError(cleanupErrors, () => store.close());
+    await collectCleanupError(cleanupErrors, () => {
+      unlinkSocketIfOwned(this.options.socketPath, ownedSocket);
+    });
     this.server = undefined;
     this.runner = undefined;
     this.store = undefined;
     this.ownedSocket = undefined;
     this.providerStatus = "incompatible";
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(cleanupErrors, "Oracle v2 worker cleanup failed");
+    }
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     try {
-      const store = this.requireStore();
-      const runner = this.requireRunner();
       const url = new URL(request.url ?? "/", "http://oracle.local");
       if (request.method === "GET" && url.pathname === "/v2/worker") {
+        if (!this.store || !this.runner) {
+          sendJson(response, 200, {
+            phase: "starting",
+            ready: false,
+            provider: "incompatible",
+            blocked: true,
+            queued: 0,
+            running: 0,
+          });
+          return;
+        }
+        const runner = this.runner;
         const status = runner.status();
         sendJson(response, 200, {
+          phase: "ready",
           ready: this.ready && !status.blocked,
           provider: this.providerStatus,
           ...status,
         });
         return;
       }
+      const store = this.requireStore();
+      const runner = this.requireRunner();
       if (request.method !== "GET" && (!this.ready || runner.isBlocked())) {
         sendJson(response, 503, { error: "worker_not_ready" });
         return;
@@ -241,6 +283,23 @@ export class OracleWorker {
         sendJson(response, 200, runner.abandon(decodeURIComponent(abandonMatch[1]!), reason));
         return;
       }
+      const resultMatch = url.pathname.match(/^\/v2\/jobs\/([^/]+)\/result$/u);
+      if (request.method === "GET" && resultMatch) {
+        const job = store.getJob(decodeURIComponent(resultMatch[1]!));
+        if (job.state.kind !== "completed") {
+          sendJson(response, 200, { jobId: job.id, state: job.state.kind, ready: false });
+          return;
+        }
+        sendJson(response, 200, {
+          jobId: job.id,
+          state: job.state.kind,
+          ready: true,
+          answer: job.state.answer,
+          text: store.readObject(job.state.answer).toString("utf8"),
+          mediaType: job.state.answer.mediaType,
+        });
+        return;
+      }
       const jobMatch = url.pathname.match(/^\/v2\/jobs\/([^/]+)$/u);
       if (request.method === "GET" && jobMatch) {
         sendJson(response, 200, store.getJob(decodeURIComponent(jobMatch[1]!)));
@@ -289,7 +348,7 @@ function closeServer(server: http.Server): Promise<void> {
   });
 }
 
-function socketIsHealthy(socketPath: string): Promise<boolean> {
+function socketIsOwned(socketPath: string): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (owned: boolean) => {
@@ -345,11 +404,32 @@ function socketIdentity(socketPath: string): SocketIdentity | undefined {
   }
 }
 
-function unlinkSocketIfOwned(socketPath: string, owned: SocketIdentity | undefined): void {
-  if (!owned) return;
+function unlinkSocketIfOwned(socketPath: string, owned: SocketIdentity | undefined): boolean {
+  if (!owned) return socketIdentity(socketPath) === undefined;
   const current = socketIdentity(socketPath);
-  if (!current || current.device !== owned.device || current.inode !== owned.inode) return;
+  if (!current) return true;
+  if (current.device !== owned.device || current.inode !== owned.inode) return false;
   unlinkSync(socketPath);
+  return true;
+}
+
+async function collectCleanupError(
+  errors: unknown[],
+  cleanup: () => void | Promise<void>,
+): Promise<void> {
+  try {
+    await cleanup();
+  } catch (error) {
+    errors.push(error);
+  }
+}
+
+function isAddressInUse(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "EADDRINUSE"
+  );
 }
 
 function isMissingPath(error: unknown): boolean {

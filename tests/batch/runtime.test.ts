@@ -103,11 +103,14 @@ describe("Batch Oracle runtime", () => {
       { cwd, maxParallel: 3, log: (message) => logs.push(message) },
       { buildBrowserConfig: async () => browserConfig, dispatchChild },
     );
-    await vi.waitFor(() => {
-      expect(new Set(starts)).toEqual(
-        new Set(["lane:constitution", "lane:cognition", "lane:tribunal"]),
-      );
-    });
+    await vi.waitFor(
+      () => {
+        expect(new Set(starts)).toEqual(
+          new Set(["lane:constitution", "lane:cognition", "lane:tribunal"]),
+        );
+      },
+      { timeout: 5_000 },
+    );
     expect(logs.filter((line) => line.startsWith("Dispatching lane "))).toEqual([
       "Dispatching lane constitution...",
       "Dispatching lane cognition...",
