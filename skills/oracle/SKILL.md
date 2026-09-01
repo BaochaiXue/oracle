@@ -88,14 +88,51 @@ cannot rely on a detached stale node.
 
 ## Golden path
 
-1. Pick the smallest file set that still contains the truth.
-2. Run the browser consultation directly. Normal consults must not run
+1. For a project published on GitHub, resolve its canonical GitHub repository
+   identity from Git metadata and add the connector directive below.
+2. Pick the smallest file set that still contains the truth.
+3. Run the browser consultation directly. Normal consults must not run
    dry-runs, smoke tests, live tests, doctor, or preflight validation unless a
    concrete bundle/runtime uncertainty makes that diagnostic material.
-3. Use browser mode, direct CDP, and the GPT-5.6 Pro target. Do not switch
+4. Use browser mode, direct CDP, and the GPT-5.6 Pro target. Do not switch
    model, tier, provider, or transport silently.
-4. If a run detaches or times out, reattach to the stored session instead of
+5. If a run detaches or times out, reattach to the stored session instead of
    starting a duplicate.
+
+## GitHub repository context
+
+For every GPT-5.6 Pro consultation about a project already published on
+GitHub, actively ask ChatGPT to use its connected GitHub app/connector for
+repository background. Resolve the project as the canonical `owner/repository`
+slug from Git metadata; never infer it from the local folder name. Prefer the
+current branch's configured GitHub remote, then `origin`. When a fork also has
+an `upstream`, name their roles explicitly and use the fork as the project
+unless the task targets upstream. If no unique GitHub remote can be established,
+omit the connector claim instead of guessing.
+
+Never place a raw remote URL, embedded credentials, access token, or private
+machine path in the prompt. Include only the sanitized `owner/repository` slug
+and, when useful, the branch and commit. Before dispatch, add this block with
+the placeholders replaced:
+
+```text
+GitHub repository context:
+Use the connected GitHub app/connector to inspect the exact repository
+`OWNER/REPOSITORY` for relevant code, documentation, issues, and pull requests
+before answering. This repository identity comes from Git metadata, not the
+local directory name. Do not substitute a similarly named repository. If the
+GitHub app or this repository is unavailable or unauthorized in this ChatGPT
+surface, state that explicitly and continue only from the prompt and attached
+files. Treat the attached files and stated local commit or dirty diff as
+authoritative wherever they differ from GitHub.
+```
+
+The connector supplies remote background; it does not replace the minimal
+attachments needed to establish unpushed, dirty, generated, or otherwise
+commit-specific facts. For Batch Oracle, place the same repository identity
+and directive in every relevant lane while keeping the sealed snapshot as the
+evaluation authority. A follow-up in the same conversation need not repeat the
+block unless the repository or authority changed.
 
 ## WSLg Linux Chrome ownership
 
@@ -349,6 +386,8 @@ derives the HTTP timeout unless `--http-timeout` is supplied.
 
 Oracle starts with zero project knowledge. Include:
 
+- GitHub project identity and the connector directive above when the project is
+  already published on GitHub
 - Project briefing: stack, services, build/test commands, and platform constraints
 - Where things live: entrypoints, configs, key modules, and dependency boundaries
 - Exact question, prior attempts, and verbatim error text
