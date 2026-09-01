@@ -198,7 +198,7 @@ and cannot complete without attachment evidence on the committed user turn.
 | R6       | real ChatGPT no-Send adapter probe and sanitized fixture capture                                         | G1           | compatibility receipt; no prompt submitted                                | verified    |
 | R7 / G2  | text, bundle, and committed-capture-recovery live canaries                                               | R6           | exact model/effort/turn/bundle/conversation/capture receipts; one Send    | verified    |
 | R8       | CLI and MCP v2 engine/cutover candidate; legacy remains default                                          | G2           | repeated reviews; client reconnect; MCP timeout retrieval                 | verified    |
-| R9       | Batch lane/synthesis jobs preserve sealing, barrier, blind lanes, owner closure                          | R8           | restart/recoverable/accept-missing/synthesis Batch with no duplicate Send | planned     |
+| R9       | Batch lane/synthesis jobs preserve sealing, barrier, blind lanes, owner closure                          | R8           | restart/recoverable/accept-missing/synthesis Batch with no duplicate Send | verified    |
 | R10 / G3 | make v2 the default browser engine; move legacy operations to advanced surface                           | R8-R9        | packed CLI, fixture/fault suite, stable-window evidence                   | owner-gated |
 | R11      | remote bridge proxies durable objects/jobs/events/artifacts                                              | R10          | disconnect/idempotency/artifact transfer integration                      | planned     |
 | R12 / G4 | retire legacy canonical execution; keep read-only session compatibility and rollback                     | R10-R11      | no canonical legacy imports; migration/read compatibility; rollback tag   | owner-gated |
@@ -222,8 +222,8 @@ separate facts.
 | D08 | model and Pro effort have independent receipts                 | R1, R4, R7   | schema + fixture + canary      | verified    |
 | D09 | incompatible provider UI blocks before Send globally           | R3-R4        | compatibility incident test    | verified    |
 | D10 | worker owns browser runtime without normal PID/port operations | R5-R7        | runtime and canary evidence    | verified    |
-| D11 | CLI, MCP, and Batch use only the client protocol               | R8-R9        | boundary check + integration   | in-progress |
-| D12 | Batch sealing, barrier, and owner authority remain intact      | R9           | Batch integration              | planned     |
+| D11 | CLI, MCP, and Batch use only the client protocol               | R8-R9        | boundary check + integration   | verified    |
+| D12 | Batch sealing, barrier, and owner authority remain intact      | R9           | Batch integration              | verified    |
 | D13 | session projections rebuild from DB/CAS                        | R2           | deletion/rebuild test          | verified    |
 | D14 | debug objects obey TTL/cap/pinning                             | R2-R3        | retention tests                | verified    |
 | D15 | default output excludes forensic internals                     | R3, R8       | output tests                   | verified    |

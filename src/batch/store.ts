@@ -8,9 +8,9 @@ import { withBatchMutationLock } from "./lock.js";
 
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
-// `resumeBatch` may reconcile an `error` batch, including one left with only a
-// prefix of its child sessions created. Keep every referenced child protected
-// until the batch has published a completed or owner-accepted partial result.
+// Pre-R9 Batch state remains readable but cannot relaunch its legacy browser
+// children. Keep every referenced legacy session protected until that parent
+// has published a completed or owner-accepted partial result.
 const CHILD_SESSION_RELEASE_STATUSES = new Set(["completed", "partial"]);
 const mutationTails = new Map<string, Promise<void>>();
 
@@ -199,7 +199,9 @@ export async function listProtectedBatchSessionIds(): Promise<Set<string>> {
     if (CHILD_SESSION_RELEASE_STATUSES.has(state.status)) continue;
     for (const lane of [...state.lanes, ...(state.synthesis ? [state.synthesis] : [])]) {
       if (lane.sessionId) protectedIds.add(lane.sessionId);
-      for (const attempt of lane.attempts) protectedIds.add(attempt.sessionId);
+      for (const attempt of lane.attempts) {
+        if (attempt.sessionId) protectedIds.add(attempt.sessionId);
+      }
     }
   }
   return protectedIds;

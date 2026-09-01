@@ -88,6 +88,7 @@ export async function sealSynthesisInput(
   const laneStatus = state.lanes.map((lane) => ({
     id: lane.id,
     status: lane.status,
+    jobId: lane.jobId,
     sessionId: lane.sessionId,
     inputManifestSha256: lane.inputManifestSha256,
     outputSha256: lane.outputSha256,

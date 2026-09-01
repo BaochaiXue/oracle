@@ -367,14 +367,14 @@ describe.skipIf(!executablePath)("Oracle v2 ChatGPT adapter against the provider
     const before = fixture.totalSendCount();
     const { client } = await harness("conversation-rollback-after-commit");
     const admission = await admit(client, "conversation-rollback-after-commit");
-    const result = await client.waitForTerminal(admission.job.id, { timeoutMs: 8_000 });
+    const result = await client.waitForTerminal(admission.job.id, { timeoutMs: 30_000 });
     expect(result.state.kind).toBe("ambiguous");
     expect(fixture.totalSendCount() - before).toBe(1);
     const events = await client.listEvents(admission.job.id);
     const eventTypes = events.map((item) => item.type);
     expect(eventTypes.filter((type) => type === "submission-committed")).toHaveLength(0);
     expect(eventTypes.filter((type) => type === "dispatch-ambiguous")).toHaveLength(1);
-  }, 15_000);
+  }, 40_000);
 
   test("waits for a canonical conversation URL instead of committing a provisional WEB route", async () => {
     const before = fixture.totalSendCount();

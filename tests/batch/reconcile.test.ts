@@ -1,284 +1,224 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { setOracleHomeDirOverrideForTest } from "../../src/oracleHome.js";
-import { reconcileBatchState, deriveLaneSessionState } from "../../src/batch/reconcile.js";
-import { initializeBatchStore } from "../../src/batch/store.js";
-import { sessionStore, type SessionMetadata } from "../../src/sessionStore.js";
-import type { BatchSourceManifestV1, LoadedBatchManifest } from "../../src/batch/types.js";
+import { describe, expect, test, vi } from "vitest";
+import type { ClientJob } from "../../packages/oracle-client/src/index.js";
+import type { JobState } from "../../packages/oracle-kernel/src/index.js";
+import {
+  batchAttemptIdempotencyKey,
+  classifyParentStatus,
+  deriveLaneJobState,
+  reconcileBatchState,
+} from "../../src/batch/reconcile.js";
+import type { BatchStateV1 } from "../../src/batch/types.js";
 
-describe("batch reconciliation", () => {
-  let home: string;
-  let cwd: string;
+const NOW = "2026-09-01T00:00:00.000Z";
 
-  beforeEach(async () => {
-    home = await fs.mkdtemp(path.join(os.tmpdir(), "oracle-batch-reconcile-home-"));
-    cwd = await fs.mkdtemp(path.join(os.tmpdir(), "oracle-batch-reconcile-cwd-"));
-    setOracleHomeDirOverrideForTest(home);
-  });
-
-  afterEach(async () => {
-    setOracleHomeDirOverrideForTest(null);
-    await Promise.all([
-      fs.rm(home, { recursive: true, force: true }),
-      fs.rm(cwd, { recursive: true, force: true }),
-    ]);
-  });
-
-  test("discovers a child written before its parent mapping and keeps the same session", async () => {
-    const loaded = fixtureLoaded(cwd);
-    const state = await initializeBatchStore({
-      loaded,
-      batchId: "fixture-batch",
-      sourceManifest: fixtureSource(cwd),
-      effectiveMaxParallel: 2,
-      effectiveMaxChildSessions: 5,
-    });
-    state.lanes[0]!.inputManifestSha256 = "a".repeat(64);
-    const child = await sessionStore.createSession(
-      { prompt: "one", model: "gpt-5-pro", mode: "browser" },
-      cwd,
-    );
-    await sessionStore.updateSession(child.id, {
-      batch: {
-        batchId: state.batchId,
-        laneId: "one",
-        role: "lane",
-        attempt: 1,
-        inputManifestSha256: "a".repeat(64),
-      },
-    });
-
-    const reconciled = await reconcileBatchState(state, sessionStore);
-    expect(reconciled.lanes[0]).toEqual(
-      expect.objectContaining({
-        sessionId: child.id,
-        status: "session-created",
-        inputManifestSha256: "a".repeat(64),
-      }),
-    );
-    expect(reconciled.lanes[0]!.attempts).toEqual([
-      expect.objectContaining({ attempt: 1, sessionId: child.id }),
-    ]);
-  });
-
-  test("only classifies an explicitly unsubmitted and uncommitted gate as retry-safe", () => {
-    const base = {
-      id: "child",
-      slug: "child",
-      createdAt: new Date().toISOString(),
-      status: "error" as const,
-      mode: "browser" as const,
-      models: [],
-      notifications: { enabled: false, sound: false },
-      options: { prompt: "test", model: "gpt-5-pro" },
-    };
-    const safe = deriveLaneSessionState({
-      ...base,
-      error: {
-        category: "browser-automation",
-        message: "gate",
-        details: {
+describe("Batch v2 job reconciliation", () => {
+  test("maps durable job states without granting a second Send", () => {
+    expect(deriveLaneJobState(job({ kind: "queued" })).status).toBe("running");
+    expect(
+      deriveLaneJobState(
+        job({
+          kind: "failed-unsent",
           retrySafe: true,
-          submissionCommitted: false,
-          runtime: { promptSubmitted: false, proTurnCommitted: false },
-        },
-      },
-    });
-    const committed = deriveLaneSessionState({
-      ...base,
-      error: {
-        category: "browser-automation",
-        message: "gate",
-        details: { retrySafe: true, promptSubmitted: true, submissionCommitted: true },
-      },
-    });
-    expect(safe).toEqual(
+          failure: failure("pre_send_gate", "none", "safe-new-attempt"),
+        }),
+      ),
+    ).toEqual(
       expect.objectContaining({
         status: "recoverable",
-        lastError: expect.objectContaining({ retrySafe: true, message: "gate" }),
+        lastError: expect.objectContaining({ retrySafe: true }),
       }),
     );
-    expect(committed.lastError?.retrySafe).toBe(false);
+    expect(
+      deriveLaneJobState(
+        job({
+          kind: "recoverable",
+          basis: "committed-capture",
+          preparation: {} as never,
+          intent: {} as never,
+          submission: {} as never,
+          failure: failure("capture_failed", "committed", "capture-only"),
+        }),
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        status: "recoverable",
+        lastError: expect.objectContaining({ retrySafe: false }),
+      }),
+    );
+    expect(
+      deriveLaneJobState(
+        job({
+          kind: "ambiguous",
+          preparation: {} as never,
+          intent: {} as never,
+          failure: failure("commit_unknown", "possible", "owner-required"),
+        }),
+      ).status,
+    ).toBe("indeterminate");
   });
 
-  test("keeps a live committed child running before applying recoverable-conversation rules", () => {
-    const metadata: SessionMetadata = {
-      id: "active-child",
-      createdAt: new Date().toISOString(),
-      status: "running",
-      mode: "browser",
-      models: [],
-      notifications: { enabled: false, sound: false },
-      options: { prompt: "test", model: "gpt-5-pro" },
-      browser: {
-        config: { transport: "cdp" } as never,
-        runtime: {
-          controllerPid: process.pid,
-          promptSubmitted: true,
-          proTurnCommitted: true,
-          conversationId: "conversation-active",
-          browserDisposition: "active",
-        },
-      },
+  test("reconciles only an exact Batch owner and idempotency mapping", async () => {
+    const state = batchState();
+    const client = {
+      getJob: vi.fn(async () => job({ kind: "queued" })),
     };
-    const state = deriveLaneSessionState(metadata);
-    expect(state).toEqual({ status: "running" });
-    expect(deriveLaneSessionState(metadata, undefined, { actionSettled: true })).toEqual({
-      status: "recoverable",
-      clearReservation: true,
-    });
-  });
+    const reconciled = await reconcileBatchState(state, client);
+    expect(reconciled.lanes[0]).toEqual(
+      expect.objectContaining({
+        status: "running",
+        jobId: "job-one",
+        attempts: [expect.objectContaining({ jobId: "job-one", phase: "started" })],
+      }),
+    );
 
-  test("fails closed when a started child has no runtime and no safe pre-submit receipt", () => {
-    const metadata: SessionMetadata = {
-      id: "lost-child",
-      createdAt: new Date().toISOString(),
-      status: "running",
-      mode: "browser",
-      models: [],
-      notifications: { enabled: false, sound: false },
-      options: { prompt: "test", model: "gpt-5-pro" },
-    };
-    const derived = deriveLaneSessionState(metadata, {
-      id: "one",
-      role: "lane",
-      status: "running",
-      required: true,
-      attempts: [
+    client.getJob.mockResolvedValueOnce(
+      job(
+        { kind: "queued" },
         {
-          attempt: 1,
-          sessionId: metadata.id,
-          createdAt: metadata.createdAt,
-          phase: "started",
-          dispatchStartedAt: metadata.createdAt,
+          owner: { kind: "batch-lane", batchId: state.batchId, laneId: "other", attempt: 1 },
         },
-      ],
-    });
-    expect(derived).toEqual(
+      ),
+    );
+    const mismatched = await reconcileBatchState(state, client);
+    expect(mismatched.lanes[0]).toEqual(
       expect.objectContaining({
         status: "indeterminate",
+        lastError: expect.objectContaining({ code: "batch-job-identity-mismatch" }),
+      }),
+    );
+  });
+
+  test("keeps an admitted job recoverable when the worker cannot be observed", async () => {
+    const state = batchState();
+    const reconciled = await reconcileBatchState(state, {
+      getJob: vi.fn(async () => {
+        throw new Error("socket unavailable during restart");
+      }),
+    });
+    expect(reconciled.lanes[0]).toEqual(
+      expect.objectContaining({
+        jobId: "job-one",
+        status: "recoverable",
         lastError: expect.objectContaining({
-          code: "batch-dispatch-outcome-indeterminate",
+          code: "batch-job-observation-failed",
           retrySafe: false,
         }),
       }),
     );
   });
 
-  test("does not select a latest orphan when the sealed digest is mismatched", async () => {
-    const loaded = fixtureLoaded(cwd);
-    const state = await initializeBatchStore({
-      loaded,
-      batchId: "fixture-batch",
-      sourceManifest: fixtureSource(cwd),
-      effectiveMaxParallel: 2,
-      effectiveMaxChildSessions: 5,
-    });
-    state.lanes[0]!.inputManifestSha256 = "a".repeat(64);
-    const child = await sessionStore.createSession(
-      { prompt: "one", model: "gpt-5-pro", mode: "browser" },
-      cwd,
-    );
-    await sessionStore.updateSession(child.id, {
-      batch: {
-        batchId: state.batchId,
-        laneId: "one",
-        role: "lane",
-        attempt: 1,
-        inputManifestSha256: "b".repeat(64),
-      },
-    });
-    const reconciled = await reconcileBatchState(state, sessionStore);
-    expect(reconciled.lanes[0]).toEqual(
-      expect.objectContaining({
-        status: "indeterminate",
-        lastError: expect.objectContaining({ code: "batch-orphan-child-ambiguity" }),
-      }),
-    );
-  });
-
-  test("rejects two orphan children that claim the same attempt", async () => {
-    const loaded = fixtureLoaded(cwd);
-    const state = await initializeBatchStore({
-      loaded,
-      batchId: "fixture-batch",
-      sourceManifest: fixtureSource(cwd),
-      effectiveMaxParallel: 2,
-      effectiveMaxChildSessions: 5,
-    });
-    const digest = "a".repeat(64);
-    state.lanes[0]!.inputManifestSha256 = digest;
-    for (const prompt of ["orphan one", "orphan duplicate"]) {
-      const child = await sessionStore.createSession(
-        { prompt, model: "gpt-5-pro", mode: "browser" },
-        cwd,
-      );
-      await sessionStore.updateSession(child.id, {
-        batch: {
-          batchId: state.batchId,
-          laneId: "one",
-          role: "lane",
-          attempt: 1,
-          inputManifestSha256: digest,
-        },
-      });
-    }
-    const reconciled = await reconcileBatchState(state, sessionStore);
-    expect(reconciled.lanes[0]).toEqual(
-      expect.objectContaining({
-        status: "indeterminate",
-        lastError: expect.objectContaining({ code: "batch-orphan-child-ambiguity" }),
-      }),
-    );
+  test("classifies the parent barrier and owner gates from durable lane states", () => {
+    const running = batchState();
+    expect(classifyParentStatus(running)).toBe("awaiting-recovery");
+    const owner = {
+      ...running,
+      lanes: running.lanes.map((lane) => ({ ...lane, status: "indeterminate" as const })),
+    };
+    expect(classifyParentStatus(owner)).toBe("awaiting-owner");
+    const completed = {
+      ...running,
+      lanes: running.lanes.map((lane) => ({ ...lane, status: "completed" as const })),
+    };
+    expect(classifyParentStatus(completed)).toBe("completed");
   });
 });
 
-function fixtureLoaded(cwd: string): LoadedBatchManifest {
-  const manifest = {
-    schemaVersion: "oracle.batch.v1" as const,
-    slug: "fixture-batch",
+function batchState(): BatchStateV1 {
+  const batchId = "fixture-20260901T000000Z-abcd";
+  const idempotencyKey = batchAttemptIdempotencyKey(batchId, "one", "lane", 1);
+  return {
+    schemaVersion: "oracle.batch.v1",
+    batchId,
+    slug: "fixture",
     project: "fixture",
-    objective: "Reconcile children.",
+    objective: "Reconcile a Batch-owned job.",
+    status: "running",
+    createdAt: NOW,
+    updatedAt: NOW,
+    cwd: "/tmp",
+    effectiveMaxParallel: 3,
+    effectiveMaxChildSessions: 3,
     lanes: [
       {
         id: "one",
-        title: "One",
-        mandate: "A",
-        whyThisLane: "A",
-        falsificationTarget: "A",
-        prompt: "A",
-        outputContract: ["A"],
-      },
-      {
-        id: "two",
-        title: "Two",
-        mandate: "B",
-        whyThisLane: "B",
-        falsificationTarget: "B",
-        prompt: "B",
-        outputContract: ["B"],
+        role: "lane",
+        status: "running",
+        required: true,
+        jobId: "job-one",
+        attempts: [
+          {
+            attempt: 1,
+            jobId: "job-one",
+            idempotencyKey,
+            createdAt: NOW,
+            phase: "started",
+          },
+        ],
       },
     ],
   };
+}
+
+function job(
+  state: JobState,
+  overrides: {
+    owner?: ClientJob["spec"]["owner"];
+    idempotencyKey?: string;
+  } = {},
+): ClientJob {
+  const batchId = "fixture-20260901T000000Z-abcd";
   return {
-    sourcePath: path.join(cwd, "batch.json5"),
-    sourceText: JSON.stringify(manifest),
-    cwd,
-    manifest,
-    files: { sharedAuthority: [], lanes: { one: [], two: [] }, synthesis: [] },
+    id: "job-one",
+    spec: {
+      schemaVersion: "oracle.job.v2",
+      requestId: "batch-job-one",
+      idempotency: {
+        scope: "oracle-batch",
+        key: overrides.idempotencyKey ?? batchAttemptIdempotencyKey(batchId, "one", "lane", 1),
+      },
+      owner: overrides.owner ?? {
+        kind: "batch-lane",
+        batchId,
+        laneId: "one",
+        attempt: 1,
+      },
+      input: {
+        prompt: {
+          sha256: "1".repeat(64),
+          sizeBytes: 1,
+          mediaType: "text/plain",
+          objectClass: "prompt",
+        },
+        promptSha256: "1".repeat(64),
+      },
+      route: { provider: "chatgpt-web", model: "gpt-5.6-sol", effort: "pro" },
+      policy: {
+        maxCaptureMs: 60_000,
+        allowAutomaticCaptureRecovery: true,
+        allowAutomaticResend: false,
+        requireCommittedBundleEvidence: false,
+      },
+    },
+    specObjectSha256: "2".repeat(64),
+    state,
+    stateVersion: 1,
+    projectionPending: false,
+    createdAt: NOW,
+    updatedAt: NOW,
   };
 }
 
-function fixtureSource(cwd: string): BatchSourceManifestV1 {
+function failure(
+  code: string,
+  risk: "none" | "possible" | "committed",
+  retryPolicy: "safe-new-attempt" | "capture-only" | "owner-required" | "forbidden",
+) {
   return {
-    schemaVersion: "oracle.batch.v1",
-    batchId: "fixture-batch",
-    capturedAt: new Date().toISOString(),
-    cwd,
-    git: {},
-    manifestSha256: "b".repeat(64),
-    files: [],
+    code,
+    phase: "fixture",
+    message: code,
+    occurredAt: NOW,
+    externalEffectRisk: risk,
+    retryPolicy,
   };
 }

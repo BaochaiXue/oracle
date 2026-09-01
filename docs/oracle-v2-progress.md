@@ -15,12 +15,14 @@ Legacy safety baseline: `fork/main@e6f170ff`
 
 ## Current state
 
-R0 through R8 are source-complete and verified on `codex/oracle-v2`; the clean,
+R0 through R9 are source-complete and verified on `codex/oracle-v2`; the clean,
 usable `fork-main` checkout remains unchanged. R8 adds an explicit opt-in
 `broker` engine for CLI and MCP, durable job inspection/recovery commands, and
-v2 session projection readback. Legacy `browser` remains the shipped/default
-ordinary engine, and Batch remains on its legacy authority path until R9. The
-v2 candidate is not installed, activated, or selected as the default engine.
+v2 session projection readback. R9 maps new Batch lane and synthesis attempts
+to Batch-owned durable v2 jobs while preserving the v1 parent manifest,
+sealing, blind-lane, barrier, answer-integrity, and owner-closure contracts.
+Legacy `browser` remains the shipped/default ordinary engine until G3. The v2
+candidate is not installed, activated, or selected as the default engine.
 
 G2 remains certified from three bounded live canaries: canonical text, sealed
 bundle, and an injected committed-capture interruption followed by
@@ -274,23 +276,60 @@ canary`, `oracle debug export`, and `oracle session <job-id>` expose durable
   receipts remain under `~/.oracle/v2/`; none are tracked source or evidence of
   installation/default activation.
 
+Fresh R9 source and fixture evidence:
+
+- every lane attempt uses
+  `batch:<batchId>:lane:<laneId>:attempt:<n>` and synthesis uses
+  `batch:<batchId>:synthesis:<synthesisId>:attempt:<n>`; immutable client
+  intent identity includes prompt bytes, bundle bytes and media type, policy,
+  lineage, route, and exact Batch owner;
+- the Batch parent no longer imports or launches the legacy browser child
+  runtime. It seals the complete first stage, admits jobs through
+  `oracle-client`, hides sibling answers until the barrier, and consumes only
+  worker answer objects bound to immutable Batch receipts and input manifests;
+- local `maxParallel` is only a client admission cap. The worker retains one
+  global preparation/dispatch lane and no more than three concurrent captures;
+  Batch does not create or retain a page pool of its own;
+- generic job resume/abandon rejects Batch-owned work. Parent-only resume and
+  abandon require the exact owner identity. Failed-unsent or verified-unsent
+  work gets a new attempt only through explicit Batch resume; committed
+  capture recovery keeps the same `jobId` and performs zero additional Sends;
+- the R9 integration runs a three-lane blind Batch through synthesis, restarts
+  the worker after one committed lane capture failure, creates one safe second
+  attempt after a targeted final-verification failure, accepts one ambiguous
+  lane as missing, performs explicit partial synthesis, verifies raw answer
+  receipts, and preserves TXT or ZIP sealed bundle media types. Every admitted
+  attempt records at most one Send;
+- pre-R9 Batch child-session state remains readable and protected from
+  retention while referenced, but the v2 Batch runtime refuses to relaunch it;
+- the full gate found that launcher cleanup could SIGKILL Chrome after its CDP
+  endpoint closed but before Chrome 152 finished flushing the profile. Runtime
+  close now waits a bounded interval for the owned process to exit naturally
+  before fallback cleanup; the real managed-process cold-restart fixture
+  preserves its profile sentinel and exits cleanly;
+- focused Batch/client/adapter gates passed 38 tests with one bounded test
+  skipped. The memory-safe serialized full repository suite passed 181 files
+  and 2,047 tests with 15 files and 34 tests skipped. No real ChatGPT prompt was
+  submitted for R9; all Batch Send/recovery evidence uses the sanitized fixture
+  or `FakeProvider`.
+
 ## Tranche ledger
 
-| Tranche                        | State       | Evidence / blocker                                                                         |
-| ------------------------------ | ----------- | ------------------------------------------------------------------------------------------ |
-| R0 freeze and architecture     | verified    | public plan, coverage ledger, workspace skeleton, contribution contract, boundary checker  |
-| R1 kernel                      | verified    | 13 focused tests plus full repository gates                                                |
-| R2 store/CAS/projection        | verified    | 8 store tests, 13 kernel tests, and full repository gates                                  |
-| R3 worker/client/fake provider | verified    | 9 ordinary tests plus the 1,000-job / 8,000-event bounded soak                             |
-| R4 fixture/adapter/faults      | verified    | 15 scenarios, 10 hard faults, and 500-job / 4,000-event no-page-leak soak                  |
-| R5 / G1 runtime and login      | verified    | eight checks passed; fixed runtime certified after persistent owner login                  |
-| R6 real no-Send probe          | verified    | real compatible receipt; GPT-5.6 Sol/Pro/composer/upload checks; no prompt submitted       |
-| R7 / G2 live canary            | verified    | text, sealed-bundle, and committed-capture-recovery receipts all certified                 |
-| R8 CLI/MCP cutover candidate   | verified    | repeated real reviews, killed-client reconnect, MCP timeout retrieval; legacy default kept |
-| R9 Batch cutover               | planned     | legacy Batch authority unchanged                                                           |
-| R10 / G3 default switch        | owner-gated | not reached                                                                                |
-| R11 remote job bridge          | planned     | not reached                                                                                |
-| R12 / G4 legacy retirement     | owner-gated | not reached                                                                                |
+| Tranche                        | State       | Evidence / blocker                                                                               |
+| ------------------------------ | ----------- | ------------------------------------------------------------------------------------------------ |
+| R0 freeze and architecture     | verified    | public plan, coverage ledger, workspace skeleton, contribution contract, boundary checker        |
+| R1 kernel                      | verified    | 13 focused tests plus full repository gates                                                      |
+| R2 store/CAS/projection        | verified    | 8 store tests, 13 kernel tests, and full repository gates                                        |
+| R3 worker/client/fake provider | verified    | 9 ordinary tests plus the 1,000-job / 8,000-event bounded soak                                   |
+| R4 fixture/adapter/faults      | verified    | 15 scenarios, 10 hard faults, and 500-job / 4,000-event no-page-leak soak                        |
+| R5 / G1 runtime and login      | verified    | eight checks passed; fixed runtime certified after persistent owner login                        |
+| R6 real no-Send probe          | verified    | real compatible receipt; GPT-5.6 Sol/Pro/composer/upload checks; no prompt submitted             |
+| R7 / G2 live canary            | verified    | text, sealed-bundle, and committed-capture-recovery receipts all certified                       |
+| R8 CLI/MCP cutover candidate   | verified    | repeated real reviews, killed-client reconnect, MCP timeout retrieval; legacy default kept       |
+| R9 Batch cutover               | verified    | durable lane/synthesis jobs; restart, retry, owner closure, barrier, receipts, no duplicate Send |
+| R10 / G3 default switch        | owner-gated | not reached                                                                                      |
+| R11 remote job bridge          | planned     | not reached                                                                                      |
+| R12 / G4 legacy retirement     | owner-gated | not reached                                                                                      |
 
 ## Current stop conditions
 
@@ -305,8 +344,7 @@ canary`, `oracle debug export`, and `oracle session <job-id>` expose durable
 ## Next safe action
 
 Preserve every historical canary and R8 review attempt; do not resend or create
-a duplicate. The next source tranche is R9: map Batch lane and synthesis work
-to durable jobs while preserving sealed inputs, blind-lane dispatch, barrier,
-recoverable/ambiguous semantics, accept-missing decisions, and parent-only
-owner closure. Stop at G3 after R9 evidence: no installation, default-engine
-switch, legacy removal, or release claim is authorized by R8 completion.
+a duplicate. The programme is intentionally stopped at G3. R10 may begin only
+after an explicit owner decision to make v2 the default ordinary browser
+engine. Until then, do not install or activate this candidate, change the
+default engine, remove legacy execution, start R11, or make a release claim.

@@ -2,6 +2,7 @@ import { chmodSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import {
+  jobOwnerSchema,
   objectRefSchema,
   parseJobSpec,
   type ProviderAdapter,
@@ -276,11 +277,35 @@ export class OracleWorker {
         sendJson(response, 200, runner.resume(decodeURIComponent(resumeMatch[1]!)));
         return;
       }
+      const batchResumeMatch = url.pathname.match(/^\/v2\/jobs\/([^/]+)\/batch-resume$/u);
+      if (request.method === "POST" && batchResumeMatch) {
+        const owner = parseBatchOwner(
+          JSON.parse((await readBody(request)).toString("utf8")) as unknown,
+        );
+        sendJson(
+          response,
+          200,
+          runner.resumeBatch(decodeURIComponent(batchResumeMatch[1]!), owner),
+        );
+        return;
+      }
       const abandonMatch = url.pathname.match(/^\/v2\/jobs\/([^/]+)\/abandon$/u);
       if (request.method === "POST" && abandonMatch) {
         const body = JSON.parse((await readBody(request)).toString("utf8")) as unknown;
         const reason = parseReason(body);
         sendJson(response, 200, runner.abandon(decodeURIComponent(abandonMatch[1]!), reason));
+        return;
+      }
+      const batchAbandonMatch = url.pathname.match(/^\/v2\/jobs\/([^/]+)\/batch-abandon$/u);
+      if (request.method === "POST" && batchAbandonMatch) {
+        const body = JSON.parse((await readBody(request)).toString("utf8")) as unknown;
+        const owner = parseBatchOwner(body);
+        const reason = parseReason(body);
+        sendJson(
+          response,
+          200,
+          runner.abandonBatch(decodeURIComponent(batchAbandonMatch[1]!), owner, reason),
+        );
         return;
       }
       const resultMatch = url.pathname.match(/^\/v2\/jobs\/([^/]+)\/result$/u);
@@ -447,6 +472,18 @@ function parseReason(input: unknown): string {
     throw new RequestValidationError("Abandon requires a reason");
   }
   return reason.trim();
+}
+
+function parseBatchOwner(input: unknown): ReturnType<typeof jobOwnerSchema.parse> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new RequestValidationError("Batch parent operation requires an owner identity");
+  }
+  const owner = (input as Record<string, unknown>).owner;
+  const parsed = jobOwnerSchema.parse(owner);
+  if (parsed.kind !== "batch-lane" && parsed.kind !== "batch-synthesis") {
+    throw new RequestValidationError("Batch parent operation requires a Batch-owned job identity");
+  }
+  return parsed;
 }
 
 function httpStatus(error: unknown): number {

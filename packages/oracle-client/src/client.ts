@@ -61,10 +61,24 @@ export class OracleClient {
     return this.request(`/v2/jobs/${encodeURIComponent(jobId)}/resume`, { method: "POST" });
   }
 
+  resumeBatchJob(jobId: string, owner: JobSpec["owner"]): Promise<ClientJob> {
+    return this.request(`/v2/jobs/${encodeURIComponent(jobId)}/batch-resume`, {
+      method: "POST",
+      json: { owner },
+    });
+  }
+
   abandonJob(jobId: string, reason: string): Promise<ClientJob> {
     return this.request(`/v2/jobs/${encodeURIComponent(jobId)}/abandon`, {
       method: "POST",
       json: { reason },
+    });
+  }
+
+  abandonBatchJob(jobId: string, owner: JobSpec["owner"], reason: string): Promise<ClientJob> {
+    return this.request(`/v2/jobs/${encodeURIComponent(jobId)}/batch-abandon`, {
+      method: "POST",
+      json: { owner, reason },
     });
   }
 

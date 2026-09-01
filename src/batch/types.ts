@@ -152,7 +152,10 @@ export type BatchLaneStatus =
 
 export interface BatchLaneAttempt {
   attempt: number;
-  sessionId: string;
+  jobId?: string;
+  idempotencyKey?: string;
+  /** Recovery-only identity for Batch runs created before the v2 job cutover. */
+  sessionId?: string;
   createdAt: string;
   phase?: "created" | "claimed" | "started" | "completed" | "failed" | "abandoned";
   claimedAt?: string;
@@ -169,6 +172,8 @@ export interface BatchLaneState {
   inputManifestPath?: string;
   outputPath?: string;
   outputSha256?: string;
+  jobId?: string;
+  /** Recovery-only identity for Batch runs created before the v2 job cutover. */
   sessionId?: string;
   attempts: BatchLaneAttempt[];
   startedAt?: string;
@@ -195,6 +200,7 @@ export interface BatchOwnerDecision {
   stageId?: string;
   stageRole?: "lane" | "synthesis";
   reason?: string;
+  jobId?: string;
   sessionId?: string;
 }
 
@@ -270,12 +276,15 @@ export interface BatchAnswerReceiptV1 {
   batchId: string;
   laneId: string;
   role: "lane" | "synthesis";
-  sessionId: string;
+  jobId?: string;
+  /** Recovery-only identity for answer receipts created before the v2 job cutover. */
+  sessionId?: string;
   status: "completed" | "error";
   capturedAt: string;
   inputManifestSha256: string;
   answerSha256?: string;
   answerBytes?: number;
+  answerObjectSha256?: string;
   conversationId?: string;
   error?: string;
 }

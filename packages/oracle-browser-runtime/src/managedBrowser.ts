@@ -8,7 +8,9 @@ import { closeRestoredBrowserPages } from "./reconcile.js";
 const LOOPBACK_HOST = "127.0.0.1";
 const BACKGROUND_STARTING_URL = "--no-startup-window";
 
-type LauncherHandle = Pick<LaunchedChrome, "port" | "kill">;
+type LauncherHandle = Pick<LaunchedChrome, "port" | "kill"> & {
+  process?: ChildProcess;
+};
 
 export async function launchManagedChromeForTesting(
   input: ManagedBrowserLaunchInput,
@@ -170,7 +172,11 @@ async function launchOwnedBrowser(input: ManagedBrowserLaunchInput): Promise<Lau
     launcher.kill();
     throw new Error("Managed Chrome for Testing did not expose a loopback CDP port");
   }
-  return { port: launcher.port, kill: () => launcher.kill() };
+  return {
+    port: launcher.port,
+    kill: () => launcher.kill(),
+    process: launcher.chromeProcess,
+  };
 }
 
 function buildManagedChromeFlags(headless: boolean): string[] {
@@ -223,10 +229,29 @@ async function closeOwnedBrowser(
   }
 
   const closedGracefully = await waitForEndpoint(endpoint, false, 5_000);
+  await waitForProcessExit(launcher.process, 5_000);
   launcher.kill();
   if (!closedGracefully && !(await waitForEndpoint(endpoint, false, 2_000))) {
     throw new Error("Managed Chrome for Testing did not close its loopback CDP endpoint");
   }
+}
+
+async function waitForProcessExit(
+  child: ChildProcess | undefined,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return true;
+  return new Promise((resolve) => {
+    const onExit = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    const timer = setTimeout(() => {
+      child.off("exit", onExit);
+      resolve(false);
+    }, timeoutMs);
+    child.once("exit", onExit);
+  });
 }
 
 async function waitForEndpoint(

@@ -69,7 +69,7 @@ describe("first-stage input sealing", () => {
     });
     await expect(
       sealFirstStageInputs(loaded, "fixture-batch", { assemblePrompt: assemble }),
-    ).rejects.toThrow(/before any child session was created/u);
+    ).rejects.toThrow(/before any v2 job was admitted/u);
     await expect(
       fs.stat(path.join(getBatchPaths("fixture-batch").inputs, "lanes")),
     ).rejects.toMatchObject({ code: "ENOENT" });

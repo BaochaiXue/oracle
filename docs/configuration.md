@@ -167,9 +167,13 @@ contract.
 
 Batch manifests may only narrow `batch.maxParallel` and
 `batch.maxChildSessions`; they cannot raise local owner caps. The effective
-parallel capacity is also bounded by `browser.maxConcurrentTabs`. Setting
-`batch.enabled:false` disables `batch run` and `batch resume` locally while
-leaving ordinary consultations unchanged. See [Batch Oracle v1](batch-oracle.md).
+`batch.maxParallel` value is a client admission cap only; the separately
+running v2 worker owns global dispatch serialization and its independent limit
+of three capture pages. `maxChildSessions` is the preserved v1 configuration
+name for the total declared lane plus synthesis job cap; new R9 execution does
+not create browser child sessions. Setting `batch.enabled:false` disables
+`batch run` and `batch resume` locally while leaving ordinary consultations
+unchanged. See [Batch Oracle v1](batch-oracle.md).
 
 ## Session retention
 

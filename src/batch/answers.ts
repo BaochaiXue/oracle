@@ -30,7 +30,7 @@ export async function readVerifiedBatchAnswer(
 ): Promise<VerifiedBatchAnswer> {
   if (
     lane.status !== "completed" ||
-    !lane.sessionId ||
+    (!lane.jobId && !lane.sessionId) ||
     !lane.outputPath ||
     !lane.outputSha256 ||
     !lane.inputManifestSha256
@@ -61,12 +61,15 @@ export async function readVerifiedBatchAnswer(
     );
   }
   const answerSha256 = createHash("sha256").update(answer).digest("hex");
+  const executionIdentityMatches = lane.jobId
+    ? receipt.jobId === lane.jobId && receipt.answerObjectSha256 === lane.outputSha256
+    : receipt.sessionId === lane.sessionId;
   if (
     receipt.schemaVersion !== BATCH_SCHEMA_VERSION ||
     receipt.batchId !== batchId ||
     receipt.laneId !== lane.id ||
     receipt.role !== lane.role ||
-    receipt.sessionId !== lane.sessionId ||
+    !executionIdentityMatches ||
     receipt.status !== "completed" ||
     receipt.inputManifestSha256 !== lane.inputManifestSha256 ||
     sealed.inputManifest.inputManifestSha256 !== lane.inputManifestSha256 ||

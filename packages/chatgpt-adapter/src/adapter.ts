@@ -129,14 +129,14 @@ export class ChatGptAdapter implements ProviderAdapter {
 
     const bundleSha256 = context.spec.input.bundleSha256;
     if (context.spec.input.bundle && bundleSha256) {
-      const filename = bundleFilename(bundleSha256);
+      const filename = bundleFilename(bundleSha256, context.spec.input.bundle.mediaType);
       const bytes = this.readObject(context.spec.input.bundle);
       await locators.attachmentButton
         .click({ timeout: this.actionTimeoutMs })
         .catch(() => undefined);
       await locators.uploadInput.setInputFiles({
         name: filename,
-        mimeType: "text/markdown",
+        mimeType: context.spec.input.bundle.mediaType,
         buffer: Buffer.from(bytes),
       });
       await waitForComposerAttachment(page, filename, this.actionTimeoutMs);
@@ -211,7 +211,7 @@ export class ChatGptAdapter implements ProviderAdapter {
     if (receipt.bundleSha256) {
       await waitForComposerAttachment(
         page,
-        bundleFilename(receipt.bundleSha256),
+        bundleFilename(receipt.bundleSha256, context.spec.input.bundle?.mediaType),
         Math.min(this.actionTimeoutMs, 5_000),
       );
     }
@@ -233,7 +233,9 @@ export class ChatGptAdapter implements ProviderAdapter {
     const observation = await waitForCommittedTurn(page, {
       expectedUserTurnDigest: normalizedTurnDigest(expectedPrompt),
       baselineTurnCount: context.intent.baselineTurnCount,
-      bundleFilename: bundleSha256 ? bundleFilename(bundleSha256) : undefined,
+      bundleFilename: bundleSha256
+        ? bundleFilename(bundleSha256, context.spec.input.bundle?.mediaType)
+        : undefined,
       timeoutMs: this.commitTimeoutMs,
     });
     if (!observation) return undefined;
@@ -406,8 +408,16 @@ function composePrompt(bytes: Uint8Array, footer: string): string {
   return `${prompt.endsWith("\n") ? prompt : `${prompt}\n`}\n${footer}`;
 }
 
-function bundleFilename(sha256: string): string {
-  return `oracle-source-${sha256.slice(0, 12)}.md`;
+function bundleFilename(sha256: string, mediaType = "text/markdown"): string {
+  const extension =
+    mediaType === "application/zip"
+      ? "zip"
+      : mediaType === "text/plain"
+        ? "txt"
+        : mediaType === "application/pdf"
+          ? "pdf"
+          : "md";
+  return `oracle-source-${sha256.slice(0, 12)}.${extension}`;
 }
 
 function digest(bytes: Uint8Array): string {

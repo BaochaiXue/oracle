@@ -27,7 +27,7 @@ export async function renderBatch(
     const lane = state.lanes.find((entry) => entry.id === laneSpec.id);
     if (!lane) continue;
     lines.push(
-      `- ${lane.id}: ${lane.status}; session=${lane.sessionId ?? "none"}; raw=${lane.outputPath ?? "unavailable"}`,
+      `- ${lane.id}: ${lane.status}; job=${lane.jobId ?? "none"}; raw=${lane.outputPath ?? "unavailable"}`,
     );
     if (lane.lastError) lines.push(`  - error: ${lane.lastError.message}`);
   }
@@ -51,7 +51,7 @@ export async function renderBatch(
       "## Synthesis",
       "",
       `- Status: ${state.synthesis.status}`,
-      `- Session: ${state.synthesis.sessionId ?? "none"}`,
+      `- Job: ${state.synthesis.jobId ?? "none"}`,
       `- Raw path: ${state.synthesis.outputPath ?? "unavailable"}`,
     );
     if (state.synthesis.outputPath && state.synthesis.status === "completed") {
@@ -95,6 +95,7 @@ export function buildBatchStatusProjection(state: BatchStateV1) {
     lanes: state.lanes.map((lane) => ({
       id: lane.id,
       status: lane.status,
+      jobId: lane.jobId,
       sessionId: lane.sessionId,
       attempt: lane.attempts.at(-1)?.attempt,
       inputManifestSha256: lane.inputManifestSha256,
@@ -108,6 +109,7 @@ export function buildBatchStatusProjection(state: BatchStateV1) {
       ? {
           id: state.synthesis.id,
           status: state.synthesis.status,
+          jobId: state.synthesis.jobId,
           sessionId: state.synthesis.sessionId,
           outputPath: state.synthesis.outputPath,
           acceptedMissing: state.synthesis.acceptedMissing ?? false,

@@ -22,6 +22,7 @@ export interface OracleJobInvocation {
   owner: JobSpec["owner"];
   promptBytes: Uint8Array;
   bundleBytes?: Uint8Array;
+  bundleMediaType?: string;
   intentDirectory: string;
   maxCaptureMs?: number;
   lineage?: JobSpec["lineage"];
@@ -35,7 +36,8 @@ export interface OracleJobAdmission {
   admissionPath: string;
 }
 
-type InvocationTransport = Pick<OracleClient, "putObject" | "admitJob" | "admitCanary">;
+type InvocationTransport = Pick<OracleClient, "putObject" | "admitJob"> &
+  Partial<Pick<OracleClient, "admitCanary">>;
 
 interface ClientIntentReceipt {
   schemaVersion: "oracle.client-intent.v2";
@@ -45,6 +47,7 @@ interface ClientIntentReceipt {
   owner: JobSpec["owner"];
   promptSha256: string;
   bundleSha256: string | null;
+  bundleMediaType: string | null;
   createdAt: string;
 }
 
@@ -61,6 +64,9 @@ export async function admitOracleJob(
 ): Promise<OracleJobAdmission> {
   const promptSha256 = digest(invocation.promptBytes);
   const bundleSha256 = invocation.bundleBytes ? digest(invocation.bundleBytes) : undefined;
+  const bundleMediaType = invocation.bundleBytes
+    ? invocation.bundleMediaType?.trim() || "text/markdown"
+    : undefined;
   const maxCaptureMs = invocation.maxCaptureMs ?? 30 * 60_000;
   const admissionKind = invocation.admissionKind ?? "job";
   safeRequestId(invocation.requestId);
@@ -80,6 +86,7 @@ export async function admitOracleJob(
         owner: invocation.owner,
         promptSha256,
         bundleSha256: bundleSha256 ?? null,
+        bundleMediaType: bundleMediaType ?? null,
         admissionKind,
         route: { provider: "chatgpt-web", model: "gpt-5.6-sol", effort: "pro" },
         policy: {
@@ -101,6 +108,7 @@ export async function admitOracleJob(
     owner: invocation.owner,
     promptSha256,
     bundleSha256: bundleSha256 ?? null,
+    bundleMediaType: bundleMediaType ?? null,
     createdAt: new Date().toISOString(),
   });
   const prompt = await client.putObject(invocation.promptBytes, {
@@ -109,7 +117,7 @@ export async function admitOracleJob(
   });
   const bundle = invocation.bundleBytes
     ? await client.putObject(invocation.bundleBytes, {
-        mediaType: "text/markdown",
+        mediaType: bundleMediaType!,
         objectClass: "bundle",
       })
     : undefined;
@@ -137,8 +145,11 @@ export async function admitOracleJob(
     },
     ...(invocation.lineage ? { lineage: invocation.lineage } : {}),
   };
+  if (admissionKind === "canary" && !client.admitCanary) {
+    throw new Error("Oracle client transport does not support canary admission");
+  }
   const admission =
-    admissionKind === "canary" ? await client.admitCanary(spec) : await client.admitJob(spec);
+    admissionKind === "canary" ? await client.admitCanary!(spec) : await client.admitJob(spec);
   loadOrCreateAdmission(admissionPath, {
     schemaVersion: "oracle.client-admission.v2",
     admissionFingerprint,
@@ -162,7 +173,8 @@ function loadOrCreateIntent(
     existing.idempotency.key !== expected.idempotency.key ||
     JSON.stringify(existing.owner) !== JSON.stringify(expected.owner) ||
     existing.promptSha256 !== expected.promptSha256 ||
-    existing.bundleSha256 !== expected.bundleSha256
+    existing.bundleSha256 !== expected.bundleSha256 ||
+    existing.bundleMediaType !== expected.bundleMediaType
   ) {
     throw new Error(`Oracle client intent identity mismatch for ${expected.requestId}`);
   }

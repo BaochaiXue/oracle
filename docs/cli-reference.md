@@ -11,7 +11,7 @@ This is the curated cheatsheet. The authoritative source is always `oracle --hel
 | ------------------------------ | ------------------------------------------------------------------------------------------- |
 | `oracle [flags] -p "<prompt>"` | Run a consult.                                                                              |
 | `oracle status`                | List recent sessions (see [Sessions](sessions.md)).                                         |
-| `oracle session <id>`          | Replay or block on an ordinary stored session; inspect a Batch child read-only.             |
+| `oracle session <id>`          | Replay or block on an ordinary stored session; read a durable v2 job projection by job ID.  |
 | `oracle restart <id>`          | Re-run an ordinary session with the same prompt + files.                                    |
 | `oracle batch …`               | Validate, run, close, resume, inspect, or render a parallel batch.                          |
 | `oracle docs check`            | Check documented flags against CLI help metadata.                                           |
@@ -26,29 +26,30 @@ This is the curated cheatsheet. The authoritative source is always `oracle --hel
 
 ## Batch Oracle
 
-| Command                                                              | Purpose                                                                                          |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `oracle batch validate <manifest.json5>`                             | Strictly validate JSON5, paths, duplicate lanes, and child caps without dispatch.                |
-| `oracle batch run <manifest.json5>`                                  | Seal all first-stage lanes, create child mappings, and dispatch the blind ready set in parallel. |
-| `oracle batch status [batch-id] [--json]`                            | Reconcile child sessions and show one batch, or list recent batches.                             |
-| `oracle batch resume <batch-id>`                                     | Reattach original sessions and retry only proven unsubmitted, uncommitted, retry-safe attempts.  |
-| `oracle batch accept-missing <batch-id> --lane <id> --reason <text>` | Preserve the session and record an explicit owner closure for one unavailable lane.              |
-| `oracle batch accept-missing <batch-id> --synthesis --reason <text>` | Preserve an unavailable terminal synthesis and close the parent honestly as `partial`.           |
-| `oracle batch resume <batch-id> --allow-partial`                     | Cross the barrier after every unavailable lane has an `accept-missing` decision.                 |
-| `oracle batch render <batch-id> [--lane <id>\|--all]`                | Render status, one raw answer, or all raw answers in manifest order followed by synthesis.       |
+| Command                                                              | Purpose                                                                                                  |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `oracle batch validate <manifest.json5>`                             | Strictly validate JSON5, paths, duplicate lanes, and declared job caps without admission.                |
+| `oracle batch run <manifest.json5>`                                  | Seal all first-stage lanes and admit the blind ready set as Batch-owned durable v2 jobs.                 |
+| `oracle batch status [batch-id] [--json]`                            | Reconcile durable worker jobs and show one Batch, or list recent batches.                                |
+| `oracle batch resume <batch-id>`                                     | Resume committed capture on the same job; create a new attempt only after verified-unsent/failed-unsent. |
+| `oracle batch accept-missing <batch-id> --lane <id> --reason <text>` | Preserve the job lineage and record an explicit owner closure for one unavailable lane.                  |
+| `oracle batch accept-missing <batch-id> --synthesis --reason <text>` | Preserve an unavailable terminal synthesis job and close the parent honestly as `partial`.               |
+| `oracle batch resume <batch-id> --allow-partial`                     | Cross the barrier after every unavailable lane has an `accept-missing` decision.                         |
+| `oracle batch render <batch-id> [--lane <id>\|--all]`                | Render status, one verified raw answer, or all answers in manifest order followed by synthesis.          |
 
 `batch run --max-parallel <count>` can only lower the effective manifest,
-user-config, and browser capacity. Batch v1 always uses local dedicated-profile
-direct CDP, `gpt-5-pro`, and the Pro reasoning tier. See
+user-config, and Batch client admission capacity. It does not define or reserve
+browser pages. New Batch work requires a separately running v2 worker, which
+owns global dispatch serialization and a maximum of three concurrent capture
+pages. Batch v1 still requires exact GPT-5.6 Pro/Sol selection and the Pro
+reasoning tier. See
 [Batch Oracle v1](batch-oracle.md).
 
-Batch child inspection is read-only: status/metadata, existing log/artifact
-rendering, and paths may be read by ID. Plain attach returns one snapshot
-without waiting, reattaching, repairing capture, writing session evidence, or
-terminalizing. Generic `session --live|--harvest`, `--followup <batch-child>`,
-`restart <batch-child>`, and stored-session execution are rejected before they
-can touch the conversation or create a new session. This applies to lanes and
-synthesis, including an owner-abandoned synthesis. Perform all recovery, retry,
+Batch job inspection is read-only. Generic `oracle resume <job-id>` and
+`oracle abandon <job-id>` reject Batch-owned jobs; the parent uses exact-owner
+Batch operations instead. Pre-R9 child sessions remain read-only and protected
+while referenced, but generic live/harvest, follow-up, restart, and
+stored-session execution remain rejected. Perform all recovery, retry,
 completion, and owner closure through the Batch parent so canonical answers,
 receipts, and barrier state advance together.
 
@@ -89,8 +90,9 @@ oracle session <job-id>
 worker. `oracle resume` is capture-only for eligible ordinary jobs;
 `oracle abandon --reason <text>` records an owner decision. Generic resume or
 abandon rejects Batch-owned jobs. Broker-only identity flags fail closed on
-legacy engines instead of being silently ignored. Batch continues to use its
-legacy parent/child execution path until R9.
+legacy engines instead of being silently ignored. R9 Batch lane/synthesis jobs
+also use this client protocol, while the ordinary default engine remains legacy
+until G3.
 
 ## Followup / lineage
 
@@ -99,8 +101,9 @@ legacy parent/child execution path until R9.
 | `--followup <id\|slug\|resp_…>` | Continue a saved ChatGPT browser or OpenAI/Azure Responses API session. |
 | `--followup-model <model>`      | Pick API lineage when the parent used `--models`.                       |
 
-`--followup` accepts ordinary sessions only. A Batch child fails closed before
-conversation URL resolution; use `oracle batch resume <batch-id>`.
+`--followup` accepts ordinary sessions only. Batch-owned jobs and pre-R9 Batch
+children fail closed before conversation URL resolution; use
+`oracle batch resume <batch-id>`.
 
 ## Run control
 

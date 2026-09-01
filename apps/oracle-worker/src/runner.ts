@@ -5,6 +5,7 @@ import {
   type JobEvent,
   type ObjectRef,
   type ProviderAdapter,
+  type JobSpec,
 } from "../../../packages/oracle-kernel/src/index.js";
 import { createHash } from "node:crypto";
 import { OracleStore, type StoredJob } from "../../../packages/oracle-store/src/index.js";
@@ -91,6 +92,16 @@ export class JobRunner {
   resume(jobId: string): StoredJob {
     const job = this.store.getJob(jobId);
     assertGenericJobOperation(job, "resume");
+    return this.resumeAuthorized(job);
+  }
+
+  resumeBatch(jobId: string, owner: JobSpec["owner"]): StoredJob {
+    const job = this.store.getJob(jobId);
+    assertBatchJobOperation(job, owner, "resume");
+    return this.resumeAuthorized(job);
+  }
+
+  private resumeAuthorized(job: StoredJob): StoredJob {
     if ((this.allowDispatch && needsDispatchLane(job)) || needsCaptureLane(job)) {
       if (this.running.has(job.id)) this.ownerRequestedReruns.add(job.id);
       else this.schedule(job.id);
@@ -102,6 +113,16 @@ export class JobRunner {
   abandon(jobId: string, reason: string): StoredJob {
     const job = this.store.getJob(jobId);
     assertGenericJobOperation(job, "abandon");
+    return this.abandonAuthorized(job, reason);
+  }
+
+  abandonBatch(jobId: string, owner: JobSpec["owner"], reason: string): StoredJob {
+    const job = this.store.getJob(jobId);
+    assertBatchJobOperation(job, owner, "abandon");
+    return this.abandonAuthorized(job, reason);
+  }
+
+  private abandonAuthorized(job: StoredJob, reason: string): StoredJob {
     if (this.running.has(job.id)) {
       throw new JobOperationConflictError(job.id, "abandon while active", job.state.kind);
     }
@@ -325,6 +346,27 @@ function assertGenericJobOperation(job: StoredJob, operation: "resume" | "abando
     throw new JobOperationConflictError(
       job.id,
       `${operation} batch-owned job outside its parent`,
+      job.state.kind,
+    );
+  }
+}
+
+function assertBatchJobOperation(
+  job: StoredJob,
+  owner: JobSpec["owner"],
+  operation: "resume" | "abandon",
+): void {
+  if (job.spec.owner.kind !== "batch-lane" && job.spec.owner.kind !== "batch-synthesis") {
+    throw new JobOperationConflictError(
+      job.id,
+      `${operation} non-batch job through its Batch parent`,
+      job.state.kind,
+    );
+  }
+  if (JSON.stringify(job.spec.owner) !== JSON.stringify(owner)) {
+    throw new JobOperationConflictError(
+      job.id,
+      `${operation} batch-owned job with mismatched parent identity`,
       job.state.kind,
     );
   }

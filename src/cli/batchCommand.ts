@@ -82,9 +82,7 @@ export function registerBatchCommand(program: Command): void {
 
   batch
     .command("resume <batch-id>")
-    .description(
-      "Reconcile and resume original child sessions without duplicate committed prompts.",
-    )
+    .description("Reconcile Batch-owned jobs without duplicating a committed Send.")
     .option(
       "--allow-partial",
       "Cross the barrier after unavailable lanes have explicit accept-missing decisions.",
@@ -138,11 +136,11 @@ function printRunOutcome(
 ): void {
   console.log(`Batch ${state.batchId}: ${state.status}`);
   for (const lane of state.lanes) {
-    console.log(`- ${lane.id}: ${lane.status}; session=${lane.sessionId ?? "none"}`);
+    console.log(`- ${lane.id}: ${lane.status}; job=${lane.jobId ?? "none"}`);
   }
   if (state.synthesis) {
     console.log(
-      `- synthesis ${state.synthesis.id}: ${state.synthesis.status}; session=${state.synthesis.sessionId ?? "none"}`,
+      `- synthesis ${state.synthesis.id}: ${state.synthesis.status}; job=${state.synthesis.jobId ?? "none"}`,
     );
   }
   console.log(`Report: ${reportPath}`);
@@ -156,13 +154,13 @@ function printBatchProjection(projection: ReturnType<typeof buildBatchStatusProj
   console.log(`Objective: ${projection.objective}`);
   for (const lane of projection.lanes) {
     console.log(
-      `- ${lane.id}: ${lane.status}; attempt=${lane.attempt ?? 0}; session=${lane.sessionId ?? "none"}`,
+      `- ${lane.id}: ${lane.status}; attempt=${lane.attempt ?? 0}; job=${lane.jobId ?? "none"}`,
     );
     if (lane.error) console.log(`  error: ${lane.error.message}`);
   }
   if (projection.synthesis) {
     console.log(
-      `- synthesis ${projection.synthesis.id}: ${projection.synthesis.status}; session=${projection.synthesis.sessionId ?? "none"}`,
+      `- synthesis ${projection.synthesis.id}: ${projection.synthesis.status}; job=${projection.synthesis.jobId ?? "none"}`,
     );
   }
   if (projection.ownerAction) console.log(`Owner action: ${projection.ownerAction}`);

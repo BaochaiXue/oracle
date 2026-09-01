@@ -61,7 +61,7 @@ const promptRefSchema = objectRefSchema.extend({ objectClass: z.literal("prompt"
 const bundleRefSchema = objectRefSchema.extend({ objectClass: z.literal("bundle") }).strict();
 const answerRefSchema = objectRefSchema.extend({ objectClass: z.literal("answer") }).strict();
 
-const ownerSchema = z.discriminatedUnion("kind", [
+export const jobOwnerSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("ordinary"), sessionSlug: nonEmpty }).strict(),
   z
     .object({
@@ -86,7 +86,7 @@ export const jobSpecSchema = z
     schemaVersion: z.literal(JOB_SCHEMA_VERSION),
     requestId: nonEmpty,
     idempotency: z.object({ scope: nonEmpty, key: nonEmpty }).strict(),
-    owner: ownerSchema,
+    owner: jobOwnerSchema,
     input: z
       .object({
         prompt: promptRefSchema,

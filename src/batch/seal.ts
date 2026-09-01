@@ -85,7 +85,7 @@ export async function sealFirstStageInputs(
         return `${laneId}: ${message}`;
       })
       .join("; ");
-    throw new Error(`Batch sealing failed before any child session was created: ${detail}`);
+    throw new Error(`Batch sealing failed before any v2 job was admitted: ${detail}`);
   }
 
   const successful = attempts as Array<

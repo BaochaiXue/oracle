@@ -29,6 +29,8 @@ describe("Oracle v2 client invocation", () => {
       idempotency: { scope: "cli", key: "request-client-reconnect" },
       owner: { kind: "ordinary" as const, sessionSlug: "client-reconnect" },
       promptBytes: Buffer.from("Review the sealed client invocation.\n", "utf8"),
+      bundleBytes: Buffer.from("sealed source bytes\n", "utf8"),
+      bundleMediaType: "text/plain",
       intentDirectory: path.join(root, "intents"),
     };
 
@@ -60,6 +62,12 @@ describe("Oracle v2 client invocation", () => {
       admitOracleJob(client, {
         ...invocation,
         maxCaptureMs: 5_000,
+      }),
+    ).rejects.toThrow("intent identity mismatch");
+    await expect(
+      admitOracleJob(client, {
+        ...invocation,
+        bundleMediaType: "application/zip",
       }),
     ).rejects.toThrow("intent identity mismatch");
     client.close();
