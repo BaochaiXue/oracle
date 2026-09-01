@@ -4,6 +4,14 @@
 
 ### Added
 
+- Oracle v2 opt-in broker candidate: add a durable job kernel, SQLite/CAS
+  store, owner-only worker socket, worker-managed Chrome for Testing runtime,
+  isolated ChatGPT adapter, sealed bundle path, CLI/MCP job inspection and
+  recovery, and Batch-owned durable lane and synthesis execution. The legacy
+  `browser` engine remains the ordinary default until the separate G3 owner
+  decision; source integration does not install, activate, or retire either
+  runtime. The canonical v2 worker is currently limited to macOS GUI sessions;
+  native Windows and other non-macOS browser workers remain deferred.
 - Batch Oracle v1: declare two or more independent GPT-5.6 Pro review lanes in
   a strict JSON5 manifest, atomically snapshot admitted sources before sealing
   the blind first-stage ready set, run within owner/browser concurrency caps,
@@ -34,6 +42,23 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
 
 ### Fixed
 
+- Oracle v2 recovery and tab ownership: persist an exact browser-private
+  conversation locator before an at-risk Send, reattach only that target or
+  conversation after worker restart, release job tabs after every terminal
+  preparation/dispatch/capture outcome, and durably clear `blockedBy: provider`
+  only after a compatible provider probe. Batch admission recovery is covered
+  by a server-commit/client-response-loss regression using the original stable
+  idempotency key, so recovery maps the existing job instead of creating a new
+  attempt or duplicate Send. Cross-drive Windows inputs are also mapped into
+  the sealed bundle's portable external-file namespace instead of leaking a
+  drive-qualified host path into the artifact.
+- Oracle v2 review hardening: preserve only exact durable at-risk recovery
+  targets while closing stale restored pages, require explicit selected-state
+  evidence for GPT-5.6 Sol instead of accepting a submenu affordance, return a
+  `recoverable` broker job immediately as action-required, and reject an
+  oversized prompt or sealed source bundle before writing durable client
+  intent or attempting admission. Each worker object body remains capped at 16
+  MiB.
 - Browser attachments: stop treating disabled Send as proof of an unfinished
   upload while Oracle has intentionally left the composer prompt empty. Stable
   complete attachment evidence can now advance to prompt composition after a

@@ -10,7 +10,7 @@ JSON5 parsing, so trailing commas and comments are allowed.
 ```json5
 {
   // Default engine/model when neither CLI flags nor env override them
-  engine: "browser", // or "api"
+  engine: "browser", // "api" or the opt-in R8 candidate "broker"
   model: "gpt-5-pro", // moving browser alias → GPT-5.6 Sol + Pro
   search: "on", // "on" | "off"
 
@@ -131,7 +131,7 @@ CLI flags and explicit override environment variables → effective config (proj
 - The effective config starts with `~/.oracle/config.json`, then layers project `.oracle/config.json` files from parent to child. `engine`, `model`, `search`, `filesReport`, `heartbeatSeconds`, `maxFileSizeBytes`, and `apiBaseUrl` in the effective config override auto-detected values unless explicitly set on the CLI or through a supported override environment variable.
 - Project `.oracle/config.json` files can override safe workflow defaults such as `engine`, `model`, `search`, `filesReport`, `heartbeatSeconds`, `maxFileSizeBytes`, `promptSuffix`, and allowed `browser.*` workflow settings.
 - Provider routing, machine-local fields, and Batch owner caps (`apiBaseUrl`, `modelOverrides`, `azure`, remote browser host/token defaults, Chrome binary/profile paths, cookie DB paths, the OpenCLI executable path, `batch`, and session retention cleanup) are ignored in project configs and are read only from the user config, environment variables, or explicit CLI flags.
-- `ORACLE_ENGINE=api|browser` is a global override for engine selection (useful for MCP/Codex setups); it wins over `config.json`.
+- `ORACLE_ENGINE=api|browser|broker` is a global override for engine selection (useful for MCP/Codex setups); it wins over `config.json`. `broker` is the opt-in R8 candidate and does not change the shipped/default engine before G3.
 - If `azure.endpoint` (or `--azure-endpoint`) is set, Oracle reads `AZURE_OPENAI_API_KEY` first and falls back to `OPENAI_API_KEY` for GPT models.
 - Remote browser defaults follow the same order: `--remote-host/--remote-token` win, then `browser.remoteHost` / `browser.remoteToken` in the config, then `ORACLE_REMOTE_HOST` / `ORACLE_REMOTE_TOKEN` if still unset.
 - `OPENAI_API_KEY` only influences engine selection when neither the CLI nor `config.json` specify an engine (API when present, otherwise browser).
@@ -167,9 +167,13 @@ contract.
 
 Batch manifests may only narrow `batch.maxParallel` and
 `batch.maxChildSessions`; they cannot raise local owner caps. The effective
-parallel capacity is also bounded by `browser.maxConcurrentTabs`. Setting
-`batch.enabled:false` disables `batch run` and `batch resume` locally while
-leaving ordinary consultations unchanged. See [Batch Oracle v1](batch-oracle.md).
+`batch.maxParallel` value is a client admission cap only; the separately
+running v2 worker owns global dispatch serialization and its independent limit
+of three capture pages. `maxChildSessions` is the preserved v1 configuration
+name for the total declared lane plus synthesis job cap; new R9 execution does
+not create browser child sessions. Setting `batch.enabled:false` disables
+`batch run` and `batch resume` locally while leaving ordinary consultations
+unchanged. See [Batch Oracle v1](batch-oracle.md).
 
 ## Session retention
 

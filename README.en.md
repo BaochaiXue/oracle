@@ -86,6 +86,41 @@ oracle --followup <session-id> \
 
 Oracle records the committed turn identity and timing evidence and freezes the durable conversation ID as capture authority; if the same tab later navigates elsewhere, Oracle does not copy or accept that other conversation's answer. Recovery must return to the original conversation. A new attempt is allowed only on explicit resume after a durable receipt proves that the prompt was unsubmitted, uncommitted, and `retrySafe:true`.
 
+<!-- readme-sync:broker-candidate -->
+
+## Oracle v2 broker candidate
+
+R8 exposes an explicit opt-in durable `broker` engine in source for CLI/MCP
+cutover validation. It is not the default engine, does not replace the
+`--engine browser` path above, and does not move Batch to v2 early. It requires
+an already certified v2 runtime and a separately running worker. Every live
+call must carry a stable idempotency key so a killed caller can return to the
+same job instead of repeating Send. The canonical v2 worker currently supports
+only macOS GUI sessions; native Windows and other non-macOS browser workers
+remain deferred, so ordinary Windows use stays on the legacy `browser` engine.
+
+Each v2 prompt object and sealed source bundle object must be no larger than 16
+MiB. CLI, MCP, and Batch check that boundary before writing durable client
+intent or attempting admission, so an oversized input does not leave a falsely
+recoverable job. A broker job that reaches `recoverable` returns its durable job
+handle and explicit resume/inspect action immediately instead of consuming the
+full host wait timeout.
+
+```bash
+oracle worker run
+oracle --engine broker \
+  --idempotency-key review-auth-boundary-v1 \
+  -p "Review this boundary." \
+  --file "src/**"
+oracle job <job-id> --events
+oracle session <job-id>
+```
+
+See the [CLI reference](docs/cli-reference.md) and [MCP](docs/mcp.md) for broker
+clients, job tools, and timeout/reconnect semantics. The legacy engine remains
+the default until the G3 owner gate; source-candidate completion is not
+installation, activation, or a default switch.
+
 <!-- readme-sync:batch -->
 
 ## Batch Oracle

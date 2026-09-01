@@ -113,6 +113,9 @@ importers:
       oxlint:
         specifier: ^1.77.0
         version: 1.77.0
+      playwright-core:
+        specifier: ^1.62.1
+        version: 1.62.1
       puppeteer-core:
         specifier: ^25.5.0
         version: 25.5.0
@@ -125,6 +128,55 @@ importers:
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.1)(tsx@4.23.11))
+
+  apps/oracle-provider-fixture: {}
+
+  apps/oracle-worker:
+    dependencies:
+      '@oracle-v2/kernel':
+        specifier: workspace:*
+        version: link:../../packages/oracle-kernel
+      '@oracle-v2/store':
+        specifier: workspace:*
+        version: link:../../packages/oracle-store
+
+  packages/chatgpt-adapter:
+    dependencies:
+      '@oracle-v2/kernel':
+        specifier: workspace:*
+        version: link:../oracle-kernel
+      playwright-core:
+        specifier: ^1.62.1
+        version: 1.62.1
+
+  packages/oracle-browser-runtime:
+    dependencies:
+      chrome-launcher:
+        specifier: ^1.2.1
+        version: 1.2.1(supports-color@10.2.2)
+      playwright-core:
+        specifier: ^1.62.1
+        version: 1.62.1
+
+  packages/oracle-bundle: {}
+
+  packages/oracle-client:
+    dependencies:
+      '@oracle-v2/kernel':
+        specifier: workspace:*
+        version: link:../oracle-kernel
+
+  packages/oracle-kernel:
+    dependencies:
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
+  packages/oracle-store:
+    dependencies:
+      '@oracle-v2/kernel':
+        specifier: workspace:*
+        version: link:../oracle-kernel
 
 packages:
 
@@ -1917,6 +1969,11 @@ packages:
   pkce-challenge@5.0.1:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
     engines: {node: '>=16.20.0'}
+
+  playwright-core@1.62.1:
+    resolution: {integrity: sha512-wPYSwEBJY9GHraISXqyqtx0na0LpO3XEX7jNDhntbex7tzUS7kLnZsOlFruFJB4Hi/rhDMjXGqHewDZ68nYZVw==}
+    engines: {node: '>=20'}
+    hasBin: true
 
   postcss@8.5.26:
     resolution: {integrity: sha512-u82N74LFzG8ca+dD8puPnplTXoGH4fTPpVGuIbt36G3qvNlkvfD0lEAZSxaly3KX8TS/L1A1gsCEmvKmBcVbkQ==}
@@ -3835,6 +3892,8 @@ snapshots:
   picomatch@4.0.5: {}
 
   pkce-challenge@5.0.1: {}
+
+  playwright-core@1.62.1: {}
 
   postcss@8.5.26:
     dependencies:

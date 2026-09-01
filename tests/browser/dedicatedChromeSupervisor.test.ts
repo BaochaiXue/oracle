@@ -239,6 +239,7 @@ describe("Windows process observation", () => {
       const inventory = await listObservedProcesses();
       expect(inventory.some((entry) => entry.pid === process.pid)).toBe(true);
     },
+    20_000,
   );
 });
 

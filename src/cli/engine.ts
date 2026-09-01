@@ -1,7 +1,7 @@
 import { isProModel } from "../oracle/modelResolver.js";
 import type { ReasoningMode } from "../oracle/types.js";
 
-export type EngineMode = "api" | "browser";
+export type EngineMode = "api" | "browser" | "broker";
 
 export function defaultWaitPreference(
   model: string,
@@ -22,7 +22,7 @@ export function defaultWaitPreference(
  * 1) Legacy --browser flag forces browser.
  * 2) Explicit --engine value.
  * 3) Explicit API provider routing flags force API.
- * 4) ORACLE_ENGINE environment override (api|browser).
+ * 4) ORACLE_ENGINE environment override (api|browser|broker).
  * 5) Config engine value.
  * 6) API environment decides: api when set, otherwise browser.
  */
@@ -69,5 +69,6 @@ function normalizeEngineMode(raw: unknown): EngineMode | null {
   const normalized = raw.trim().toLowerCase();
   if (normalized === "api") return "api";
   if (normalized === "browser") return "browser";
+  if (normalized === "broker") return "broker";
   return null;
 }

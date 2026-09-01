@@ -86,11 +86,49 @@ oracle --followup <session-id> \
 
 Oracle 会记录已提交 turn 的 identity 与 timing evidence，并把 durable conversation ID 冻结为 capture authority；同一 tab 后来跳到别的 conversation 时不会复制或接纳那边的答案。恢复必须回到原 conversation；只有 durable receipt 明确证明 prompt 尚未提交、尚未 commit 且 `retrySafe:true` 时，显式 resume 才能创建新 attempt。
 
+<!-- readme-sync:broker-candidate -->
+
+## Oracle v2 broker 候选路径
+
+R8 在源码中提供了显式 opt-in 的 durable `broker` engine，供 CLI/MCP
+cutover 验证。它不是默认引擎，不会替换上面的 `--engine browser`，也不会把
+普通咨询自动切到 v2。使用前必须已有 certified v2 runtime，并单独运行 worker；
+每个 live call 都必须携带稳定 idempotency key，caller 被终止后才能回到同一
+job，而不是重复 Send。当前 canonical v2 worker 仅支持 macOS GUI session；
+native Windows 与其他 non-macOS browser worker 仍 deferred，Windows 普通使用
+继续走 legacy `browser` engine。
+
+每个 v2 prompt object 与 sealed source bundle object 都必须不超过 16 MiB；CLI、
+MCP 与 Batch 会在写入 durable client intent 或 admission 以前完成检查，超限输入
+不会留下一个假装可恢复的 job。进入 `recoverable` 的 broker job 会立即返回
+durable job handle 与明确的 resume/inspect 动作，而不是耗完整个 host wait timeout。
+
+```bash
+oracle worker run
+oracle --engine broker \
+  --idempotency-key review-auth-boundary-v1 \
+  -p "Review this boundary." \
+  --file "src/**"
+oracle job <job-id> --events
+oracle session <job-id>
+```
+
+CLI/MCP 的 broker client、job tools、timeout/reconnect 语义见
+[CLI reference](docs/cli-reference.md) 与 [MCP](docs/mcp.md)。在 G3 owner gate
+以前，legacy engine 仍是默认；源码候选完成不等于安装、激活或默认切换。
+
 <!-- readme-sync:batch -->
 
 ## Batch Oracle
 
 Batch Oracle 适合把一项复杂决策拆成不同职责的独立审查 lane，例如 product constitution、security、human cognition 与 adversarial tribunal。它保留各 lane 的原始回答和分歧，之后可由 host 直接整合，也可配置 contradiction-first synthesis。
+
+R9 源码候选保留 v1 manifest 与 parent contract，但把每个 lane / synthesis
+attempt 映射为 durable Oracle v2 job。Batch parent 只负责 sealed input、blind
+lane、barrier、retry admission 和 owner closure；worker 独占 browser/page
+execution。运行前必须单独启动 `oracle worker run`。`--max-parallel` 只是 Batch
+client 的 admission cap，worker 仍以自己的全局 dispatch mutex 与最多三个
+capture page 执行；Batch 不会自行拉起 Chrome 或堆 child tabs。
 
 ```bash
 oracle batch validate batch.json5
@@ -104,6 +142,12 @@ oracle batch render <batch-id> --all
 ```
 
 第一阶段 lane 的缺失、以及已提交但长期不可恢复的 synthesis，都需要 owner 以 durable decision 明确关闭。Oracle 不会静默接受缺失，也不会用新 prompt 替换已 commit 的 conversation。普通 field use 通常采用两到三条独立 lane；配置式 Pro synthesis 保持可选。
+
+只有 durable worker evidence 明确为 `failed-unsent` / verified-unsent 时，显式
+`batch resume` 才会创建下一个 attempt；committed recoverable work 恢复同一
+`jobId`，不会重复 Send。generic `oracle resume|abandon <job-id>` 会拒绝
+Batch-owned job，所有恢复和 accept-missing 都由 parent 完成。旧的 pre-R9
+child-session state 仍可只读检查，但不会被新 Batch execution 重新拉起。
 
 完整 manifest、状态机、恢复矩阵、bundle identity 与 v1 边界见 [Batch Oracle v1](docs/batch-oracle.md)。
 
