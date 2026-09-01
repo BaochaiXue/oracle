@@ -14,6 +14,8 @@ import { buildMarkdownBundle } from "../../src/cli/markdownBundle.js";
 
 const roots: string[] = [];
 const workerTest = process.platform === "win32" ? test.skip : test;
+const reconnectTestName =
+  "reconnects with one stable request identity and returns the completed answer";
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -45,7 +47,7 @@ describe("Oracle v2 broker bridge", () => {
     );
   });
 
-  workerTest("reconnects with one stable request identity and returns the completed answer", async () => {
+  workerTest(reconnectTestName, async () => {
     const root = mkdtempSync(path.join(tmpdir(), "oracle-v2-broker-review-"));
     roots.push(root);
     const paths = {

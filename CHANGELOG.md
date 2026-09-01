@@ -49,7 +49,9 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   only after a compatible provider probe. Batch admission recovery is covered
   by a server-commit/client-response-loss regression using the original stable
   idempotency key, so recovery maps the existing job instead of creating a new
-  attempt or duplicate Send.
+  attempt or duplicate Send. Cross-drive Windows inputs are also mapped into
+  the sealed bundle's portable external-file namespace instead of leaking a
+  drive-qualified host path into the artifact.
 - Browser attachments: stop treating disabled Send as proof of an unfinished
   upload while Oracle has intentionally left the composer prompt empty. Stable
   complete attachment evidence can now advance to prompt composition after a

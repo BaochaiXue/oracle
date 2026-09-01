@@ -256,7 +256,8 @@ function createBundleInputs(
       relative &&
       relative !== ".." &&
       !relative.startsWith("../") &&
-      !path.posix.isAbsolute(relative)
+      !path.posix.isAbsolute(relative) &&
+      !path.win32.isAbsolute(relative)
     ) {
       bundlePath = relative;
     } else {
