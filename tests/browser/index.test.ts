@@ -102,6 +102,28 @@ describe("shouldPreserveBrowserOnErrorForTest", () => {
 
     expect(classifyPreservedBrowserErrorForTest(error, false)).toBeNull();
   });
+
+  test("preserves unowned pre-existing composer content for manual inspection", () => {
+    const error = new BrowserAutomationError("Composer already contains text.", {
+      stage: "submit-prompt",
+      code: "preexisting-composer-content",
+      submissionCommitted: false,
+      draftRetained: true,
+    });
+
+    expect(classifyPreservedBrowserErrorForTest(error, false)).toBe("preexisting-composer");
+  });
+
+  test("preserves an ambiguous cleared composer for reattach instead of resending", () => {
+    const error = new BrowserAutomationError("Composer cleared without an observable turn.", {
+      stage: "submit-prompt",
+      code: "commit-ambiguous-composer-cleared",
+      submissionCommitted: false,
+      draftRetained: false,
+    });
+
+    expect(classifyPreservedBrowserErrorForTest(error, false)).toBe("commit-ambiguous");
+  });
 });
 
 describe("authenticated model-selection errors", () => {

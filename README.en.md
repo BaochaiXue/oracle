@@ -86,6 +86,8 @@ oracle --followup <session-id> \
 
 Oracle records the committed turn identity and timing evidence and freezes the durable conversation ID as capture authority; if the same tab later navigates elsewhere, Oracle does not copy or accept that other conversation's answer. Recovery must return to the original conversation. A new attempt is allowed only on explicit resume after a durable receipt proves that the prompt was unsubmitted, uncommitted, and `retrySafe:true`.
 
+Legacy direct-CDP submission activates and revalidates the exact owned target before measuring a fresh trusted Send point; clicks and Enter share one exact-user-turn verification path. One opposite-method bounded recovery is allowed only for a text-only retained draft whose baseline, document token, target owner, composer identity, and absence of external effects all still agree. Unowned non-empty composer content, attachment ambiguity, and cleared-but-unobserved commits fail closed and preserve the exact tab; inspect it with `oracle session <session-id> --render` instead of rerunning the prompt.
+
 <!-- readme-sync:broker-candidate -->
 
 ## Oracle v2 broker candidate

@@ -189,13 +189,51 @@ function isRetainedDraftError(error: unknown): error is BrowserAutomationError {
     | { code?: string; submissionCommitted?: boolean; draftRetained?: boolean }
     | undefined;
   return (
-    details?.code === "prompt-commit-timeout" &&
+    [
+      "prompt-commit-timeout",
+      "trusted-click-noop",
+      "enter-noop",
+      "send-control-unavailable",
+      "composer-mutated-before-send",
+      "ownership-changed-before-send",
+      "ownership-changed-before-retry",
+      "document-changed-before-retry",
+      "target-activation-failed",
+      "commit-unverified-draft-retained",
+    ].includes(details?.code ?? "") &&
+    details?.submissionCommitted === false &&
+    details.draftRetained === true
+  );
+}
+
+function isPreexistingComposerError(error: unknown): error is BrowserAutomationError {
+  if (!(error instanceof BrowserAutomationError)) return false;
+  const details = error.details as
+    | { code?: string; submissionCommitted?: boolean; draftRetained?: boolean }
+    | undefined;
+  return (
+    details?.code === "preexisting-composer-content" &&
     details.submissionCommitted === false &&
     details.draftRetained === true
   );
 }
 
-type PreservedBrowserErrorKind = "cloudflare-challenge" | "reattachable-capture" | "draft-retained";
+function isAmbiguousCommitError(error: unknown): error is BrowserAutomationError {
+  if (!(error instanceof BrowserAutomationError)) return false;
+  const details = error.details as { code?: string; submissionCommitted?: boolean } | undefined;
+  return (
+    ["commit-ambiguous-composer-cleared", "commit-ambiguous-multiple-user-turns"].includes(
+      details?.code ?? "",
+    ) && details?.submissionCommitted === false
+  );
+}
+
+type PreservedBrowserErrorKind =
+  | "cloudflare-challenge"
+  | "reattachable-capture"
+  | "draft-retained"
+  | "preexisting-composer"
+  | "commit-ambiguous";
 
 function recoveryExpiryFromNow(kind: NonNullable<BrowserRuntimeMetadata["recoveryKind"]>): string {
   const ttlMs =
@@ -214,6 +252,8 @@ function classifyPreservedBrowserError(
   if (headless) return null;
   if (isCloudflareChallengeError(error)) return "cloudflare-challenge";
   if (isReattachableCaptureError(error)) return "reattachable-capture";
+  if (isAmbiguousCommitError(error)) return "commit-ambiguous";
+  if (isPreexistingComposerError(error)) return "preexisting-composer";
   if (isRetainedDraftError(error)) return "draft-retained";
   return null;
 }
@@ -1707,7 +1747,6 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         generatedBundle: a.generatedBundle === true,
       }));
       let inputOnlyAttachments = false;
-      await raceWithDisconnect(clearPromptComposer(Runtime, logger));
       await raceWithDisconnect(ensurePromptReady(Runtime, config.inputTimeoutMs, logger));
       if (submissionAttachments.length > 0) {
         if (!DOM) {
@@ -1771,6 +1810,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       const providerState: Record<string, unknown> = {
         runtime: Runtime,
         input: Input,
+        page: Page,
         logger,
         timeoutMs: config.timeoutMs,
         inputTimeoutMs: config.inputTimeoutMs ?? undefined,
@@ -2381,7 +2421,6 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       await requireConversationIdentity(`follow-up-${index + 1}-owner`);
       await acquireProfileLockIfNeeded();
       try {
-        await raceWithDisconnect(clearPromptComposer(Runtime, logger));
         await raceWithDisconnect(ensurePromptReady(Runtime, config.inputTimeoutMs, logger));
         const submission = await runSubmissionWithRecovery({
           prompt: followUpPrompt,
@@ -2619,16 +2658,31 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       logger("Assistant capture incomplete; leaving browser open for reattach.");
       throw normalizedError;
     }
-    if (preservedErrorKind === "draft-retained") {
+    if (
+      preservedErrorKind === "draft-retained" ||
+      preservedErrorKind === "preexisting-composer" ||
+      preservedErrorKind === "commit-ambiguous"
+    ) {
       if (usingCopiedProfile) {
         throw normalizedError;
       }
       preserveBrowserOnError = true;
       browserDisposition = "recoverable";
-      recoveryKind = "draft-retained";
-      recoveryExpiresAt = recoveryExpiryFromNow("draft-retained");
+      recoveryKind =
+        preservedErrorKind === "preexisting-composer"
+          ? "manual-intervention"
+          : preservedErrorKind === "commit-ambiguous"
+            ? "awaiting-response"
+            : "draft-retained";
+      recoveryExpiresAt = recoveryExpiryFromNow(recoveryKind);
       await emitRuntimeHint();
-      logger("Prompt draft remains in the composer; leaving this exact tab open for recovery.");
+      logger(
+        preservedErrorKind === "preexisting-composer"
+          ? "Unowned composer content remains untouched; leaving this exact tab open for manual inspection."
+          : preservedErrorKind === "commit-ambiguous"
+            ? "Prompt commit remains ambiguous; leaving this exact tab open for reattach instead of dispatching again."
+            : "Prompt draft remains in the composer; leaving this exact tab open for recovery.",
+      );
       const details =
         normalizedError instanceof BrowserAutomationError ? normalizedError.details : undefined;
       throw new BrowserAutomationError(
@@ -3493,7 +3547,6 @@ async function runRemoteBrowserMode(
         name: path.basename(a.path),
         generatedBundle: a.generatedBundle === true,
       }));
-      await clearPromptComposer(Runtime, logger);
       await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
       if (submissionAttachments.length > 0) {
         if (!DOM) {
@@ -3542,6 +3595,7 @@ async function runRemoteBrowserMode(
       const providerState: Record<string, unknown> = {
         runtime: Runtime,
         input: Input,
+        page: Page,
         logger,
         timeoutMs: config.timeoutMs,
         inputTimeoutMs: config.inputTimeoutMs ?? undefined,
@@ -4068,7 +4122,6 @@ async function runRemoteBrowserMode(
       const followUpPrompt = followUpPrompts[index];
       logger(`[browser] Sending follow-up ${index + 1}/${followUpPrompts.length}`);
       await requireConversationIdentity(`follow-up-${index + 1}-owner`);
-      await clearPromptComposer(Runtime, logger);
       await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
       const submission = await runSubmissionWithRecovery({
         prompt: followUpPrompt,
@@ -4206,6 +4259,44 @@ async function runRemoteBrowserMode(
     connectionClosedUnexpectedly = connectionClosedUnexpectedly || socketClosed;
 
     if (!socketClosed) {
+      const preservedErrorKind = classifyPreservedBrowserError(normalizedError, config.headless);
+      if (
+        preservedErrorKind === "draft-retained" ||
+        preservedErrorKind === "preexisting-composer" ||
+        preservedErrorKind === "commit-ambiguous"
+      ) {
+        const recoveryKind =
+          preservedErrorKind === "preexisting-composer"
+            ? "manual-intervention"
+            : preservedErrorKind === "commit-ambiguous"
+              ? "awaiting-response"
+              : "draft-retained";
+        const details =
+          normalizedError instanceof BrowserAutomationError ? normalizedError.details : undefined;
+        throw new BrowserAutomationError(
+          normalizedError.message,
+          {
+            ...details,
+            runtime: {
+              browserTransport: "cdp",
+              chromeHost: host,
+              chromePort: port,
+              chromeBrowserWSEndpoint: browserWSEndpoint,
+              chromeProfileRoot,
+              chromeTargetId: remoteTargetId ?? undefined,
+              tabUrl: authoritativeConversationUrl(),
+              conversationId: authoritativeConversationId(),
+              promptSubmitted,
+              browserDisposition: "recoverable",
+              recoveryKind,
+              recoveryExpiresAt: recoveryExpiryFromNow(recoveryKind),
+              controllerPid: process.pid,
+              ...proTimingRuntime,
+            },
+          },
+          normalizedError,
+        );
+      }
       logger(`Failed to complete ChatGPT run: ${normalizedError.message}`);
       if ((config.debug || process.env.CHATGPT_DEVTOOLS_TRACE === "1") && normalizedError.stack) {
         logger(normalizedError.stack);

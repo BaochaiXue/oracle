@@ -286,7 +286,7 @@ describe("promptComposer", () => {
 
       const promise = promptComposer.verifyPromptCommitted(runtime as never, "hello", 150);
       // Attach the rejection handler before timers advance to avoid unhandled-rejection warnings.
-      const assertion = expect(promise).rejects.toThrow(/prompt did not appear/i);
+      const assertion = expect(promise).rejects.toThrow(/commit remains ambiguous/i);
       await vi.advanceTimersByTimeAsync(250);
       await assertion;
     } finally {
@@ -335,7 +335,7 @@ describe("promptComposer", () => {
         undefined,
         2,
       );
-      const assertion = expect(promise).rejects.toThrow(/prompt did not appear/i);
+      const assertion = expect(promise).rejects.toThrow(/commit remains ambiguous/i);
       await vi.advanceTimersByTimeAsync(250);
       await assertion;
     } finally {
@@ -382,7 +382,7 @@ describe("promptComposer", () => {
       );
       const assertion = expect(promise).rejects.toMatchObject({
         details: expect.objectContaining({
-          code: "prompt-commit-timeout",
+          code: "commit-ambiguous-composer-cleared",
           commitProbe: expect.objectContaining({
             lastMatched: false,
             lastUserTurnAvailable: true,
@@ -437,11 +437,11 @@ describe("promptComposer", () => {
         details?: Record<string, unknown>;
         message?: string;
       };
-      expect(error.message).toMatch(/prompt did not appear/i);
+      expect(error.message).toMatch(/commit remains ambiguous/i);
       expect(error.name).toBe("BrowserAutomationError");
       expect(error.details).toMatchObject({
         stage: "submit-prompt",
-        code: "prompt-commit-timeout",
+        code: "commit-ambiguous-composer-cleared",
         commitProbe: expect.objectContaining({
           hasNewTurn: false,
           composerCleared: true,
@@ -488,7 +488,7 @@ describe("promptComposer", () => {
       };
 
       const promise = promptComposer.verifyPromptCommitted(runtime as never, "hello", 150);
-      const assertion = expect(promise).rejects.toThrow(/prompt did not appear/i);
+      const assertion = expect(promise).rejects.toThrow(/commit remains ambiguous/i);
       await vi.advanceTimersByTimeAsync(250);
       await assertion;
     } finally {
@@ -527,7 +527,7 @@ describe("promptComposer", () => {
       );
       const assertion = expect(promise).rejects.toMatchObject({
         details: expect.objectContaining({
-          code: "prompt-commit-timeout",
+          code: "commit-ambiguous-composer-cleared",
           commitProbe: expect.objectContaining({
             lastMatched: false,
             lastUserTurnAvailable: false,
@@ -568,10 +568,9 @@ describe("promptComposer", () => {
 
       const promise = promptComposer.verifyPromptCommitted(runtime as never, "unsent prompt", 150);
       const assertion = expect(promise).rejects.toMatchObject({
-        message:
-          "Prompt remained in the composer after the send attempt; submission did not commit.",
+        message: expect.stringMatching(/exact prompt remains in the composer/i),
         details: expect.objectContaining({
-          code: "prompt-commit-timeout",
+          code: "enter-noop",
           submissionCommitted: false,
           draftRetained: true,
         }),
@@ -631,6 +630,9 @@ describe("promptComposer", () => {
         if (expression.includes("document.readyState")) {
           return { result: { value: { ready: true, composer: true, fileInput: false } } };
         }
+        if (expression.includes("oracle-preexisting-composer-check")) {
+          return { result: { value: { composerLength: 0, composerEmpty: true } } };
+        }
         if (expression.includes("focused: true")) {
           return { result: { value: { focused: true } } };
         }
@@ -682,12 +684,769 @@ describe("promptComposer", () => {
     expect(callbacks).toEqual(["dispatched", "committed"]);
   });
 
+  test("rejects pre-existing composer content before inserting a new prompt", async () => {
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("document.readyState")) {
+          return { result: { value: { ready: true, composer: true, fileInput: false } } };
+        }
+        if (expression.includes("oracle-preexisting-composer-check")) {
+          return {
+            result: {
+              value: { composerLength: 19, composerEmpty: false },
+            },
+          };
+        }
+        if (expression.includes("focused: true")) {
+          return { result: { value: { focused: true } } };
+        }
+        if (expression.includes("editorText")) {
+          return {
+            result: {
+              value: { editorText: "old draftnew prompt", activeValue: "old draftnew prompt" },
+            },
+          };
+        }
+        return { result: { value: { status: "missing" } } };
+      }),
+    };
+    const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
+    const logger = Object.assign(vi.fn(), { verbose: false });
+
+    await expect(
+      submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          baselineTurns: 0,
+        },
+        "new prompt",
+        logger as never,
+      ),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "preexisting-composer-content",
+        submissionCommitted: false,
+        draftRetained: true,
+        composerLengthBeforeDispatch: 19,
+      }),
+    });
+    expect(input.insertText).not.toHaveBeenCalled();
+    expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
+  });
+
+  test("fails closed when the active composer cannot be identified", async () => {
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("document.readyState")) {
+          return { result: { value: { ready: true, composer: true, fileInput: false } } };
+        }
+        if (expression.includes("oracle-preexisting-composer-check")) {
+          return {
+            result: {
+              value: { composerFound: false, composerLength: 0, composerEmpty: true },
+            },
+          };
+        }
+        throw new Error("typing must not start without an identified composer");
+      }),
+    };
+    const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
+    const logger = Object.assign(vi.fn(), { verbose: false });
+
+    await expect(
+      submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          baselineTurns: 0,
+        },
+        "new prompt",
+        logger as never,
+      ),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "composer-state-unavailable",
+        submissionCommitted: false,
+      }),
+    });
+    expect(input.insertText).not.toHaveBeenCalled();
+  });
+
+  test("activates the exact owned target before final composer identity and point measurement", async () => {
+    const actions: string[] = [];
+    let activated = false;
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("document.readyState")) {
+          return { result: { value: { ready: true, composer: true, fileInput: false } } };
+        }
+        if (expression.includes("oracle-preexisting-composer-check")) {
+          return { result: { value: { composerLength: 0, composerEmpty: true } } };
+        }
+        if (expression.includes("focused: true")) {
+          return { result: { value: { focused: true } } };
+        }
+        if (expression.includes("editorText")) {
+          if (expression.includes("submissionDocumentTokenProperty")) {
+            actions.push("final-composer-read");
+          }
+          return {
+            result: {
+              value: {
+                editorText: "hello",
+                fallbackValue: "",
+                activeValue: "hello",
+                href: "https://chatgpt.com/",
+                documentTokenStored: true,
+              },
+            },
+          };
+        }
+        if (expression.includes("button.scrollIntoView")) {
+          actions.push(`measure-${activated ? "active" : "inactive"}`);
+          return {
+            result: {
+              value: { status: "point", x: activated ? 30 : 10, y: activated ? 40 : 20 },
+            },
+          };
+        }
+        return {
+          result: {
+            value: {
+              baseline: 0,
+              turnsCount: 1,
+              newUserTurnCount: 1,
+              matchingUserTurnCount: 1,
+              userMatched: true,
+              matchedUserTurnIndex: 0,
+              lastMatched: true,
+              hasNewTurn: true,
+              stopVisible: true,
+              assistantVisible: false,
+              composerCleared: true,
+              inConversation: true,
+            },
+          },
+        };
+      }),
+    };
+    const input = {
+      insertText: vi.fn(),
+      dispatchKeyEvent: vi.fn(),
+      dispatchMouseEvent: vi.fn(async ({ type, x, y }: { type: string; x: number; y: number }) => {
+        if (type === "mousePressed") actions.push(`press-${x}-${y}`);
+      }),
+    };
+    const page = {
+      bringToFront: vi.fn(async () => {
+        activated = true;
+        actions.push("activate");
+      }),
+    };
+    const isSubmissionOwner = vi.fn(() => true);
+    const logger = Object.assign(vi.fn(), { verbose: false });
+
+    await expect(
+      submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          page: page as never,
+          baselineTurns: 0,
+          isSubmissionOwner,
+        },
+        "hello",
+        logger as never,
+      ),
+    ).resolves.toBe(1);
+
+    expect(page.bringToFront).toHaveBeenCalledTimes(1);
+    expect(actions.indexOf("activate")).toBeLessThan(actions.indexOf("final-composer-read"));
+    expect(actions).toContain("measure-active");
+    expect(actions).toContain("press-30-40");
+    expect(actions).not.toContain("measure-inactive");
+  });
+
+  test("recovers one trusted-click no-op with one Enter and exactly one new user turn", async () => {
+    vi.useFakeTimers();
+    try {
+      let committed = false;
+      const runtime = {
+        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+          if (expression.includes("document.readyState")) {
+            return { result: { value: { ready: true, composer: true, fileInput: false } } };
+          }
+          if (expression.includes("oracle-preexisting-composer-check")) {
+            return { result: { value: { composerLength: 0, composerEmpty: true } } };
+          }
+          if (expression.includes("focused: true")) {
+            return { result: { value: { focused: true } } };
+          }
+          if (expression.includes("editorText")) {
+            return {
+              result: {
+                value: {
+                  editorText: "hello",
+                  fallbackValue: "",
+                  activeValue: "hello",
+                  href: "https://chatgpt.com/",
+                  documentTokenStored: true,
+                },
+              },
+            };
+          }
+          if (expression.includes("expectedOwnerHref")) {
+            return {
+              result: {
+                value: {
+                  status: "eligible",
+                  gate: {
+                    submissionCommitted: false,
+                    draftRetained: true,
+                    composerMatchesPrompt: true,
+                    hasNewTurn: false,
+                    userMatched: false,
+                    stopVisible: false,
+                    assistantVisible: false,
+                    baselineKnown: true,
+                    baselineUnchanged: true,
+                    ownerMatched: true,
+                    documentTokenMatched: true,
+                  },
+                },
+              },
+            };
+          }
+          if (expression.includes("oracle-composer-unchanged-check")) {
+            return { result: { value: { unchanged: true, observedLength: 5 } } };
+          }
+          if (expression.includes("button.scrollIntoView")) {
+            return { result: { value: { status: "point", x: 10, y: 20 } } };
+          }
+          return {
+            result: {
+              value: {
+                baseline: 0,
+                turnsCount: committed ? 1 : 0,
+                newUserTurnCount: committed ? 1 : 0,
+                matchingUserTurnCount: committed ? 1 : 0,
+                userMatched: committed,
+                matchedUserTurnIndex: committed ? 0 : null,
+                lastMatched: committed,
+                hasNewTurn: committed,
+                stopVisible: committed,
+                assistantVisible: false,
+                composerCleared: committed,
+                inConversation: committed,
+                editorValue: committed ? "" : "hello",
+              },
+            },
+          };
+        }),
+      };
+      const input = {
+        insertText: vi.fn(),
+        dispatchMouseEvent: vi.fn(),
+        dispatchKeyEvent: vi.fn(async ({ type }: { type: string }) => {
+          if (type === "keyUp") committed = true;
+        }),
+      };
+      const page = { bringToFront: vi.fn() };
+      const logger = Object.assign(vi.fn(), { verbose: false });
+
+      const result = submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          page: page as never,
+          baselineTurns: 0,
+          isSubmissionOwner: () => true,
+        },
+        "hello",
+        logger as never,
+      );
+      const assertion = expect(result).resolves.toBe(1);
+      await vi.advanceTimersByTimeAsync(61_000);
+      await assertion;
+
+      expect(input.dispatchMouseEvent).toHaveBeenCalledTimes(3);
+      expect(input.dispatchKeyEvent).toHaveBeenCalledTimes(2);
+      expect(input.dispatchKeyEvent).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ type: "keyDown", key: "Enter" }),
+      );
+      expect(input.dispatchKeyEvent).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ type: "keyUp", key: "Enter" }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("recovers one Enter no-op with one revalidated trusted click", async () => {
+    vi.useFakeTimers();
+    try {
+      let committed = false;
+      let sendControlProbe = 0;
+      const runtime = {
+        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+          if (expression.includes("document.readyState")) {
+            return { result: { value: { ready: true, composer: true, fileInput: false } } };
+          }
+          if (expression.includes("oracle-preexisting-composer-check")) {
+            return { result: { value: { composerLength: 0, composerEmpty: true } } };
+          }
+          if (expression.includes("focused: true")) {
+            return { result: { value: { focused: true } } };
+          }
+          if (expression.includes("editorText")) {
+            return {
+              result: {
+                value: {
+                  editorText: "hello",
+                  fallbackValue: "",
+                  activeValue: "hello",
+                  href: "https://chatgpt.com/",
+                  documentTokenStored: true,
+                },
+              },
+            };
+          }
+          if (expression.includes("expectedOwnerHref")) {
+            return {
+              result: {
+                value: {
+                  status: "eligible",
+                  gate: {
+                    submissionCommitted: false,
+                    draftRetained: true,
+                    composerMatchesPrompt: true,
+                    hasNewTurn: false,
+                    userMatched: false,
+                    stopVisible: false,
+                    assistantVisible: false,
+                    baselineKnown: true,
+                    baselineUnchanged: true,
+                    ownerMatched: true,
+                    documentTokenMatched: true,
+                  },
+                },
+              },
+            };
+          }
+          if (expression.includes("oracle-composer-unchanged-check")) {
+            return { result: { value: { unchanged: true, observedLength: 5 } } };
+          }
+          if (expression.includes("button.scrollIntoView")) {
+            sendControlProbe += 1;
+            return {
+              result: {
+                value:
+                  sendControlProbe === 1
+                    ? { status: "missing" }
+                    : { status: "point", x: 30, y: 40 },
+              },
+            };
+          }
+          return {
+            result: {
+              value: {
+                baseline: 0,
+                turnsCount: committed ? 1 : 0,
+                newUserTurnCount: committed ? 1 : 0,
+                matchingUserTurnCount: committed ? 1 : 0,
+                userMatched: committed,
+                matchedUserTurnIndex: committed ? 0 : null,
+                lastMatched: committed,
+                hasNewTurn: committed,
+                stopVisible: committed,
+                assistantVisible: false,
+                composerCleared: committed,
+                inConversation: committed,
+                editorValue: committed ? "" : "hello",
+              },
+            },
+          };
+        }),
+      };
+      let enterKeyUps = 0;
+      const input = {
+        insertText: vi.fn(),
+        dispatchKeyEvent: vi.fn(async ({ type }: { type: string }) => {
+          if (type === "keyUp") enterKeyUps += 1;
+        }),
+        dispatchMouseEvent: vi.fn(async ({ type }: { type: string }) => {
+          if (type === "mouseReleased") committed = true;
+        }),
+      };
+      const page = { bringToFront: vi.fn() };
+      const logger = Object.assign(vi.fn(), { verbose: false });
+
+      const result = submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          page: page as never,
+          baselineTurns: 0,
+          isSubmissionOwner: () => true,
+        },
+        "hello",
+        logger as never,
+      );
+      const assertion = expect(result).resolves.toBe(1);
+      await vi.advanceTimersByTimeAsync(61_000);
+      await assertion;
+
+      expect(enterKeyUps).toBe(1);
+      expect(input.dispatchMouseEvent).toHaveBeenCalledTimes(3);
+      expect(page.bringToFront).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("remeasures the send point after scrolling invalidates the first rectangle", async () => {
+    vi.useFakeTimers();
+    try {
+      const evaluate = vi
+        .fn()
+        .mockResolvedValueOnce({ result: { value: { status: "settling" } } })
+        .mockResolvedValueOnce({ result: { value: { status: "point", x: 30, y: 40 } } });
+      const input = { dispatchMouseEvent: vi.fn() };
+
+      const result = promptComposer.attemptSendButton(
+        { evaluate } as never,
+        input as never,
+        undefined,
+        undefined,
+        undefined,
+        "hello",
+      );
+      const assertion = expect(result).resolves.toBe(true);
+      await vi.advanceTimersByTimeAsync(200);
+      await assertion;
+
+      expect(evaluate).toHaveBeenCalledTimes(2);
+      expect(input.dispatchMouseEvent).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ type: "mousePressed", x: 30, y: 40 }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("does not replace an unavailable trusted point dispatch with a synthetic DOM click", async () => {
+    const evaluate = vi.fn().mockResolvedValue({
+      result: { value: { status: "point", x: 30, y: 40 } },
+    });
+
+    await expect(
+      promptComposer.attemptSendButton(
+        { evaluate } as never,
+        {} as never,
+        undefined,
+        undefined,
+        undefined,
+        "hello",
+      ),
+    ).resolves.toBe(false);
+    expect(evaluate).toHaveBeenCalledTimes(1);
+  });
+
+  test("never certifies a delayed first click that would create two user turns", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(0);
+      let alternateDispatched = false;
+      const runtime = {
+        evaluate: vi.fn(async () => {
+          const now = Date.now();
+          const newUserTurnCount = !alternateDispatched ? 0 : now < 3_500 ? 1 : 2;
+          return {
+            result: {
+              value: {
+                baseline: 0,
+                turnsCount: newUserTurnCount,
+                newUserTurnCount,
+                matchingUserTurnCount: newUserTurnCount,
+                userMatched: newUserTurnCount > 0,
+                matchedUserTurnIndex: newUserTurnCount > 0 ? 0 : null,
+                lastMatched: newUserTurnCount > 0,
+                hasNewTurn: newUserTurnCount > 0,
+                stopVisible: newUserTurnCount > 0,
+                assistantVisible: false,
+                composerCleared: newUserTurnCount > 0,
+                editorValue: newUserTurnCount > 0 ? "" : "hello",
+              },
+            },
+          };
+        }),
+      };
+      const retry = vi.fn(async () => {
+        alternateDispatched = true;
+        return { status: "dispatched" as const };
+      });
+
+      const result = promptComposer.verifyPromptCommitted(
+        runtime as never,
+        "hello",
+        5_000,
+        undefined,
+        0,
+        undefined,
+        retry,
+      );
+      const assertion = expect(result).rejects.toMatchObject({
+        details: expect.objectContaining({
+          code: "commit-ambiguous-multiple-user-turns",
+          submissionCommitted: false,
+          commitProbe: expect.objectContaining({
+            newUserTurnCount: 2,
+            matchingUserTurnCount: 2,
+          }),
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(6_000);
+      await assertion;
+      expect(retry).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("keeps attachment-bearing click no-ops fail-closed without alternate dispatch", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = {
+        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+          if (expression.includes("document.readyState")) {
+            return { result: { value: { ready: true, composer: true, fileInput: true } } };
+          }
+          if (expression.includes("oracle-preexisting-composer-check")) {
+            return { result: { value: { composerLength: 0, composerEmpty: true } } };
+          }
+          if (expression.includes("focused: true")) {
+            return { result: { value: { focused: true } } };
+          }
+          if (expression.includes("editorText")) {
+            return {
+              result: {
+                value: {
+                  editorText: "hello",
+                  fallbackValue: "",
+                  activeValue: "hello",
+                  href: "https://chatgpt.com/",
+                  documentTokenStored: true,
+                },
+              },
+            };
+          }
+          if (expression.includes("const expected =")) {
+            return { result: { value: true } };
+          }
+          if (expression.includes("button.scrollIntoView")) {
+            return { result: { value: { status: "point", x: 10, y: 20 } } };
+          }
+          return {
+            result: {
+              value: {
+                baseline: 0,
+                turnsCount: 0,
+                newUserTurnCount: 0,
+                matchingUserTurnCount: 0,
+                userMatched: false,
+                matchedUserTurnIndex: null,
+                lastMatched: false,
+                hasNewTurn: false,
+                stopVisible: false,
+                assistantVisible: false,
+                composerCleared: false,
+                inConversation: false,
+                editorValue: "hello",
+              },
+            },
+          };
+        }),
+      };
+      const input = {
+        insertText: vi.fn(),
+        dispatchMouseEvent: vi.fn(),
+        dispatchKeyEvent: vi.fn(),
+      };
+      const page = { bringToFront: vi.fn() };
+      const logger = Object.assign(vi.fn(), { verbose: false });
+
+      const result = submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          page: page as never,
+          attachmentNames: ["evidence.txt"],
+          baselineTurns: 0,
+          isSubmissionOwner: () => true,
+        },
+        "hello",
+        logger as never,
+      );
+      const assertion = expect(result).rejects.toMatchObject({
+        details: expect.objectContaining({
+          code: "trusted-click-noop",
+          draftRetained: true,
+          submissionDiagnostic: {
+            initialDispatchMethod: "trusted-click",
+            targetActivationAttempted: true,
+            targetActivationVerified: true,
+            preDispatchBaseline: 0,
+            composerLengthBeforeDispatch: 5,
+            composerCleared: false,
+            draftRetained: true,
+            newUserTurnObserved: false,
+            matchingUserTurnObserved: false,
+            assistantObserved: false,
+            generationControlObserved: false,
+            retryEligible: false,
+            retryBlockedReason: "attachment-commit-identity-unavailable",
+            alternateDispatchAttempted: false,
+            alternateDispatchMethod: null,
+            finalCommitClassification: "trusted-click-noop",
+            ownershipVerified: true,
+            documentTokenVerified: false,
+          },
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(61_000);
+      await assertion;
+
+      expect(input.dispatchMouseEvent).toHaveBeenCalledTimes(3);
+      expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("classifies an unavailable opposite send control without a synthetic dispatch", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = {
+        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+          if (expression.includes("document.readyState")) {
+            return { result: { value: { ready: true, composer: true, fileInput: false } } };
+          }
+          if (expression.includes("oracle-preexisting-composer-check")) {
+            return { result: { value: { composerLength: 0, composerEmpty: true } } };
+          }
+          if (expression.includes("focused: true")) {
+            return { result: { value: { focused: true } } };
+          }
+          if (expression.includes("editorText")) {
+            return {
+              result: {
+                value: {
+                  editorText: "hello",
+                  fallbackValue: "",
+                  activeValue: "hello",
+                  href: "https://chatgpt.com/",
+                  documentTokenStored: true,
+                },
+              },
+            };
+          }
+          if (expression.includes("expectedOwnerHref")) {
+            return {
+              result: {
+                value: {
+                  status: "eligible",
+                  gate: {
+                    submissionCommitted: false,
+                    draftRetained: true,
+                    composerMatchesPrompt: true,
+                    hasNewTurn: false,
+                    userMatched: false,
+                    stopVisible: false,
+                    assistantVisible: false,
+                    baselineKnown: true,
+                    baselineUnchanged: true,
+                    ownerMatched: true,
+                    documentTokenMatched: true,
+                  },
+                },
+              },
+            };
+          }
+          if (expression.includes("button.scrollIntoView")) {
+            return { result: { value: { status: "missing" } } };
+          }
+          if (expression.includes("oracle-composer-unchanged-check")) {
+            return { result: { value: { unchanged: true, observedLength: 5 } } };
+          }
+          return {
+            result: {
+              value: {
+                baseline: 0,
+                turnsCount: 0,
+                newUserTurnCount: 0,
+                matchingUserTurnCount: 0,
+                userMatched: false,
+                matchedUserTurnIndex: null,
+                lastMatched: false,
+                hasNewTurn: false,
+                stopVisible: false,
+                assistantVisible: false,
+                composerCleared: false,
+                editorValue: "hello",
+              },
+            },
+          };
+        }),
+      };
+      const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
+      const page = { bringToFront: vi.fn() };
+      const logger = Object.assign(vi.fn(), { verbose: false });
+
+      const result = submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          page: page as never,
+          baselineTurns: 0,
+          isSubmissionOwner: () => true,
+        },
+        "hello",
+        logger as never,
+      );
+      const assertion = expect(result).rejects.toMatchObject({
+        details: expect.objectContaining({
+          code: "send-control-unavailable",
+          submissionDiagnostic: expect.objectContaining({
+            initialDispatchMethod: "enter",
+            retryEligible: true,
+            alternateDispatchMethod: "trusted-click",
+            alternateDispatchAttempted: false,
+            retryBlockedReason: "send-control-unavailable",
+          }),
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(61_000);
+      await assertion;
+
+      expect(input.dispatchKeyEvent).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("sends without activating the ChatGPT page", async () => {
     const actions: string[] = [];
     const runtime = {
       evaluate: vi.fn(async ({ expression }: { expression: string }) => {
         if (expression.includes("document.readyState")) {
           return { result: { value: { ready: true, composer: true, fileInput: false } } };
+        }
+        if (expression.includes("oracle-preexisting-composer-check")) {
+          return { result: { value: { composerLength: 0, composerEmpty: true } } };
         }
         if (expression.includes("focused: true")) {
           return { result: { value: { focused: true } } };
@@ -735,7 +1494,7 @@ describe("promptComposer", () => {
     expect(actions).toEqual(["send-click"]);
   });
 
-  test("retries one retained draft through an atomic page-side gate without Enter", async () => {
+  test("retries one retained draft through the verified gate with one alternate Enter", async () => {
     vi.useFakeTimers();
     try {
       let retryDispatched = false;
@@ -745,6 +1504,9 @@ describe("promptComposer", () => {
         evaluate: vi.fn(async ({ expression }: { expression: string }) => {
           if (expression.includes("document.readyState")) {
             return { result: { value: { ready: true, composer: true, fileInput: false } } };
+          }
+          if (expression.includes("oracle-preexisting-composer-check")) {
+            return { result: { value: { composerLength: 0, composerEmpty: true } } };
           }
           if (expression.includes("focused: true")) {
             return { result: { value: { focused: true } } };
@@ -764,11 +1526,10 @@ describe("promptComposer", () => {
           }
           if (expression.includes("expectedOwnerHref")) {
             retryChecks += 1;
-            retryDispatched = true;
             return {
               result: {
                 value: {
-                  status: "dispatched",
+                  status: "eligible",
                   gate: {
                     submissionCommitted: false,
                     draftRetained: true,
@@ -822,13 +1583,20 @@ describe("promptComposer", () => {
           };
         }),
       };
-      const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
+      const input = {
+        insertText: vi.fn(),
+        dispatchKeyEvent: vi.fn(async ({ type }: { type: string }) => {
+          if (type === "keyUp") retryDispatched = true;
+        }),
+      };
+      const page = { bringToFront: vi.fn() };
       const logger = Object.assign(vi.fn(), { verbose: false });
 
       const result = submitPrompt(
         {
           runtime: runtime as never,
           input: input as never,
+          page: page as never,
           baselineTurns: 0,
           isSubmissionOwner,
         },
@@ -836,12 +1604,12 @@ describe("promptComposer", () => {
         logger as never,
       );
       const assertion = expect(result).resolves.toBe(2);
-      await vi.advanceTimersByTimeAsync(3_000);
+      await vi.advanceTimersByTimeAsync(6_000);
       await assertion;
 
-      expect(isSubmissionOwner).toHaveBeenCalledTimes(1);
+      expect(isSubmissionOwner).toHaveBeenCalledTimes(5);
       expect(retryChecks).toBe(1);
-      expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
+      expect(input.dispatchKeyEvent).toHaveBeenCalledTimes(2);
       expect(logger).toHaveBeenCalledWith("Retained-draft Send retry decision: dispatched");
     } finally {
       vi.useRealTimers();
@@ -859,6 +1627,9 @@ describe("promptComposer", () => {
         evaluate: vi.fn(async ({ expression }: { expression: string }) => {
           if (expression.includes("document.readyState")) {
             return { result: { value: { ready: true, composer: true, fileInput: false } } };
+          }
+          if (expression.includes("oracle-preexisting-composer-check")) {
+            return { result: { value: { composerLength: 0, composerEmpty: true } } };
           }
           if (expression.includes("focused: true")) {
             return { result: { value: { focused: true } } };
@@ -940,6 +1711,9 @@ describe("promptComposer", () => {
       evaluate: vi.fn(async ({ expression }: { expression: string }) => {
         if (expression.includes("document.readyState")) {
           return { result: { value: { ready: true, composer: true, fileInput: false } } };
+        }
+        if (expression.includes("oracle-preexisting-composer-check")) {
+          return { result: { value: { composerLength: 0, composerEmpty: true } } };
         }
         if (expression.includes("focused: true")) {
           return { result: { value: { focused: true } } };
@@ -1038,7 +1812,7 @@ describe("promptComposer", () => {
       );
       const assertion = expect(promise).rejects.toMatchObject({
         details: expect.objectContaining({
-          code: "prompt-commit-timeout",
+          code: "enter-noop",
           submissionCommitted: false,
         }),
       });
@@ -1144,6 +1918,9 @@ describe("promptComposer", () => {
         if (expression.includes("document.readyState")) {
           return { result: { value: { ready: true, composer: true, fileInput: false } } };
         }
+        if (expression.includes("oracle-preexisting-composer-check")) {
+          return { result: { value: { composerLength: 0, composerEmpty: true } } };
+        }
         if (expression.includes("focused: true")) {
           return { result: { value: { focused: true } } };
         }
@@ -1171,7 +1948,7 @@ describe("promptComposer", () => {
         logger as never,
       ),
     ).rejects.toMatchObject({
-      message: "Prompt composer changed after Oracle populated it; refusing to send.",
+      message: expect.stringMatching(/Prompt composer changed after Oracle populated it/i),
       details: {
         code: "composer-mutated-before-send",
         submissionCommitted: false,
@@ -1190,6 +1967,9 @@ describe("promptComposer", () => {
       evaluate: vi.fn(async ({ expression }: { expression: string }) => {
         if (expression.includes("document.readyState")) {
           return { result: { value: { ready: true, composer: true, fileInput: false } } };
+        }
+        if (expression.includes("oracle-preexisting-composer-check")) {
+          return { result: { value: { composerLength: 0, composerEmpty: true } } };
         }
         if (expression.includes("focused: true")) {
           return { result: { value: { focused: true } } };
@@ -1242,6 +2022,9 @@ describe("promptComposer", () => {
       evaluate: vi.fn(async ({ expression }: { expression: string }) => {
         if (expression.includes("document.readyState")) {
           return { result: { value: { ready: true, composer: true, fileInput: false } } };
+        }
+        if (expression.includes("oracle-preexisting-composer-check")) {
+          return { result: { value: { composerLength: 0, composerEmpty: true } } };
         }
         if (expression.includes("focused: true")) {
           return { result: { value: { focused: true } } };
