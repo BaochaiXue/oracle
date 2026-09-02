@@ -77,11 +77,15 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   CDP target later navigates to another conversation. The original submitted
   conversation remains the recovery authority; Oracle never accepts or copies
   the other tab state as this run's answer.
-- Browser picker: select GPT-5.6 Pro from ChatGPT's current five-step Power
-  slider even when no static `Pro` option exists in the menu. Oracle reads the
-  slider's ARIA position, sends bounded ArrowRight input to its keyboard-owning
-  row, and requires both the maximum position and visible `Pro` label before
-  Send; an unchanged or unverified slider still fails closed.
+- Browser picker: select explicit Pro effort from ChatGPT's current five-step
+  Power slider even when no static `Pro` option exists in the menu. Slider use
+  now follows the visible, interactive ARIA control shape instead of one model
+  family; model identity remains independently verified. Oracle re-reads
+  min/max/current after bounded ArrowRight input and requires the maximum
+  position to agree with an exact `Pro` semantic label or effort pill across
+  Unicode punctuation and whitespace. Position-only, `Professional`, malformed,
+  and numerically contradictory states fail closed with bounded structural
+  diagnostics.
 - Dedicated Chrome lifecycle: supervise current and older installed Chrome for
   Testing generations through one startup/final-release/`browser heal` path.
   Healthy old generations finish current work and roll over when idle; stale

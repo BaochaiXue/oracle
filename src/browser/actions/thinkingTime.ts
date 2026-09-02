@@ -1,5 +1,6 @@
 import type { ChromeClient, BrowserLogger } from "../types.js";
 import type { ThinkingTimeLevel } from "../../oracle/types.js";
+import type { BrowserModelSelectionEvidence } from "../../sessionStore.js";
 import {
   MENU_CONTAINER_SELECTOR,
   MENU_ITEM_SELECTOR,
@@ -60,8 +61,14 @@ export async function ensureThinkingTime(
   level: ThinkingTimeLevel,
   logger: BrowserLogger,
   desiredModel?: string | null,
+  modelSelectionEvidence?: BrowserModelSelectionEvidence,
 ) {
-  const result = await evaluateThinkingTimeSelection(Runtime, level, desiredModel);
+  const result = await evaluateThinkingTimeSelection(
+    Runtime,
+    level,
+    desiredModel,
+    modelSelectionEvidence,
+  );
   const capitalizedLevel = level.charAt(0).toUpperCase() + level.slice(1);
   const targetModelKind = inferThinkingTargetModelKind(desiredModel);
   const observedModelKind = result && "modelKind" in result ? result.modelKind : null;
@@ -136,9 +143,15 @@ export async function ensureThinkingTimeIfAvailable(
   level: ThinkingTimeLevel,
   logger: BrowserLogger,
   desiredModel?: string | null,
+  modelSelectionEvidence?: BrowserModelSelectionEvidence,
 ): Promise<boolean> {
   try {
-    const result = await evaluateThinkingTimeSelection(Runtime, level, desiredModel);
+    const result = await evaluateThinkingTimeSelection(
+      Runtime,
+      level,
+      desiredModel,
+      modelSelectionEvidence,
+    );
     const capitalizedLevel = level.charAt(0).toUpperCase() + level.slice(1);
 
     switch (result?.status) {
@@ -181,9 +194,10 @@ async function evaluateThinkingTimeSelection(
   Runtime: ChromeClient["Runtime"],
   level: ThinkingTimeLevel,
   desiredModel?: string | null,
+  modelSelectionEvidence?: BrowserModelSelectionEvidence,
 ): Promise<ThinkingTimeOutcome | undefined> {
   const outcome = await Runtime.evaluate({
-    expression: buildThinkingTimeExpression(level, desiredModel),
+    expression: buildThinkingTimeExpression(level, desiredModel, modelSelectionEvidence),
     awaitPromise: true,
     returnByValue: true,
   });
@@ -194,6 +208,7 @@ async function evaluateThinkingTimeSelection(
 export function buildThinkingTimeExpression(
   level: ThinkingTimeLevel,
   desiredModel?: string | null,
+  modelSelectionEvidence?: BrowserModelSelectionEvidence,
 ): string {
   const menuContainerLiteral = JSON.stringify(MENU_CONTAINER_SELECTOR);
   const menuItemLiteral = JSON.stringify(MENU_ITEM_SELECTOR);
@@ -203,6 +218,11 @@ export function buildThinkingTimeExpression(
   const targetIsGpt56ModelLiteral = JSON.stringify(
     /(?:^|[^0-9])5[._ -]6(?:[^0-9]|$)/i.test(desiredModel ?? ""),
   );
+  const requestedModelKeyLiteral = JSON.stringify(
+    modelSelectionEvidence?.requestedModel ?? desiredModel ?? null,
+  );
+  const observedModelLabelLiteral = JSON.stringify(modelSelectionEvidence?.resolvedLabel ?? null);
+  const modelVerifiedLiteral = JSON.stringify(modelSelectionEvidence?.verified === true);
 
   return `(async () => {
     ${buildClickDispatcher()}
@@ -213,8 +233,12 @@ export function buildThinkingTimeExpression(
     const TARGET_LEVEL = ${targetLevelLiteral};
     const TARGET_MODEL_KIND = ${targetModelKindLiteral};
     const TARGET_IS_GPT56_MODEL = ${targetIsGpt56ModelLiteral};
+    const REQUESTED_MODEL_KEY = ${requestedModelKeyLiteral};
+    const OBSERVED_MODEL_LABEL = ${observedModelLabelLiteral};
+    const MODEL_VERIFIED = ${modelVerifiedLiteral};
 
-    let powerSliderTrace = { attempted: false };
+    let powerSliderTrace = { attempted: false, eligible: false, state: null };
+    let failureStage = null;
 
     // Multilingual matchers: English level token + observed German/Japanese/Chinese variants.
     const LEVEL_TOKENS = {
@@ -255,6 +279,8 @@ export function buildThinkingTimeExpression(
       .replace(/\\s+/g, ' ')
       .trim();
     const hasToken = (text, token) => normalize(text).split(' ').includes(token);
+    const hasExactProPrefix = (value) =>
+      /^pro(?:$|[\\s\\p{P}])/iu.test(String(value ?? '').trimStart());
     // Whole-word/phrase containment. Latin effort labels are short words that also
     // occur inside unrelated UI text ("Hochladen", "Ermitteln") and inside their own
     // row descriptions ("Hoch – für sehr komplexe Aufgaben"), so plain substring
@@ -378,13 +404,11 @@ export function buildThinkingTimeExpression(
         tag: el.tagName || null,
         testid: el.getAttribute('data-testid'),
         role: el.getAttribute('role'),
-        ariaLabel: redactDiagnosticText(el.getAttribute('aria-label')),
         ariaExpanded: el.getAttribute('aria-expanded'),
         ariaChecked: el.getAttribute('aria-checked'),
         ariaSelected: el.getAttribute('aria-selected'),
         ariaHaspopup: el.getAttribute('aria-haspopup'),
         dataState: el.getAttribute('data-state'),
-        text: redactDiagnosticText(el.textContent, 80),
         rect,
       };
     };
@@ -415,10 +439,54 @@ export function buildThinkingTimeExpression(
           isVisible,
         );
         const modelBtn = findModelButton();
+        const sliderState = powerSliderTrace?.state || null;
+        const locale =
+          document.documentElement?.lang ||
+          (typeof navigator === 'object' ? navigator.language : '') ||
+          null;
+        const pickerShape = (() => {
+          const simple = Array.from(
+            document.querySelectorAll('[data-testid="composer-model-picker-slider-simple-view"]'),
+          ).find(isVisible);
+          if (simple) {
+            if (!sliderState) return 'uninspected-power-slider';
+            return sliderState.shapeValid === true
+              ? 'five-position-power-slider'
+              : 'malformed-power-slider';
+          }
+          if (
+            isVisible(
+              document.querySelector('[data-testid="composer-model-picker-slider-advanced-view"]'),
+            )
+          ) {
+            return 'advanced-effort-picker';
+          }
+          if (isVisible(document.querySelector(INTELLIGENCE_MENU_SELECTOR))) {
+            return 'flat-intelligence-picker';
+          }
+          return trailings.length > 0 ? 'legacy-effort-menu' : 'unknown';
+        })();
         return {
+          requestedModelKey: redactDiagnosticText(REQUESTED_MODEL_KEY, 80) || null,
+          requestedEffort: TARGET_LEVEL,
+          observedModelLabel:
+            redactDiagnosticText(
+              OBSERVED_MODEL_LABEL ||
+                modelBtn?.textContent ||
+                modelBtn?.getAttribute?.('aria-label'),
+              80,
+            ) || null,
+          modelVerified: MODEL_VERIFIED,
+          pageLocale: redactDiagnosticText(locale, 32) || null,
+          pickerShape,
+          sliderMinimum: sliderState?.minimum ?? null,
+          sliderMaximum: sliderState?.maximum ?? null,
+          sliderCurrent: sliderState?.current ?? null,
+          boundedSelectedLabel: sliderState?.selectedLabel ?? null,
+          powerSliderEligible: powerSliderTrace?.eligible === true,
+          failureStage,
           targetModelKind: TARGET_MODEL_KIND,
           targetLevel: TARGET_LEVEL,
-          targetIsGpt56Model: TARGET_IS_GPT56_MODEL,
           powerSliderTrace,
           modelButton: describeNode(modelBtn),
           composerButtons: composerButtons.slice(0, 12).map(describeNode),
@@ -455,12 +523,15 @@ export function buildThinkingTimeExpression(
       // 'intelligen' matches both "Intelligence" and German "Intelligenz".
       return normalize(label?.textContent ?? '').includes('intelligen');
     };
-    const failure = (status, extra = {}) => ({
-      status,
-      modelKind: effectiveTargetModelKind(),
-      ...extra,
-      diagnostic: collectPickerDiagnostic(),
-    });
+    const failure = (status, extra = {}) => {
+      failureStage = status;
+      return {
+        status,
+        modelKind: effectiveTargetModelKind(),
+        ...extra,
+        diagnostic: collectPickerDiagnostic(),
+      };
+    };
     const findOptionInMenu = (menu, modelKindOverride = null) => {
       // Container controls reveal other controls; they are not tiers you can pick.
       // Two shapes exist and both can collide with a tier label: a submenu opener
@@ -755,9 +826,15 @@ export function buildThinkingTimeExpression(
     // ChatGPT can expose the effort tiers only as an accessible slider. The current
     // UI reports states such as "Extra High, 4 of 5" and expects ArrowLeft/
     // ArrowRight on its Power row; no static Pro option exists in the menu DOM.
-    // Move only an explicit GPT-5.6 Pro request, verify every observed step, and
-    // fail closed after any unverified key dispatch.
+    // Eligibility comes from the verified five-position control shape plus an
+    // explicit Pro request, never from one model family or one locale's ordinal.
     const SIMPLE_VIEW_SELECTOR = '[data-testid="composer-model-picker-slider-simple-view"]';
+    const readIntegerAttribute = (node, name) => {
+      const raw = String(node?.getAttribute?.(name) ?? '').trim();
+      if (!/^-?\\d+$/.test(raw)) return null;
+      const value = Number(raw);
+      return Number.isSafeInteger(value) ? value : null;
+    };
     const readPowerSliderState = (parentMenu) => {
       const simpleView =
         Array.from(document.querySelectorAll(SIMPLE_VIEW_SELECTOR)).find(isVisible) ||
@@ -771,38 +848,66 @@ export function buildThinkingTimeExpression(
         simpleView.querySelector?.('[aria-label="Power"]') ||
         (menuItems.length === 1 ? menuItems[0] : null);
       const control = [powerRow, valueNode].find((node) => node && isVisible(node)) || null;
-      if (!control) return null;
-      const text = String(
-        simpleView.textContent ||
-          control.getAttribute?.('aria-valuetext') ||
-          control.getAttribute?.('aria-label') ||
-          '',
-      ).replace(/\\s+/g, ' ').trim();
-      const ariaCurrent = Number.parseInt(valueNode?.getAttribute?.('aria-valuenow') ?? '', 10);
-      const ariaMinimum = Number.parseInt(valueNode?.getAttribute?.('aria-valuemin') ?? '', 10);
-      const ariaMaximum = Number.parseInt(valueNode?.getAttribute?.('aria-valuemax') ?? '', 10);
-      if (
-        !Number.isSafeInteger(ariaCurrent) ||
-        !Number.isSafeInteger(ariaMinimum) ||
-        !Number.isSafeInteger(ariaMaximum)
-      ) return null;
-      // The observed component has five positions. Refuse a differently shaped
-      // control instead of assuming its maximum still means GPT-5.6 Pro.
-      if (
-        ariaCurrent < ariaMinimum ||
-        ariaCurrent > ariaMaximum ||
-        ariaMaximum - ariaMinimum !== 4
-      ) {
-        return null;
-      }
-      const label = text.split(',')[0]?.trim() || null;
+      const current = readIntegerAttribute(valueNode, 'aria-valuenow');
+      const minimum = readIntegerAttribute(valueNode, 'aria-valuemin');
+      const maximum = readIntegerAttribute(valueNode, 'aria-valuemax');
+      const interactive = Boolean(
+        control &&
+          control instanceof EventTarget &&
+          control.getAttribute?.('aria-disabled') !== 'true' &&
+          control.getAttribute?.('data-disabled') !== 'true' &&
+          !control.hasAttribute?.('disabled'),
+      );
+      const shapeValid = Boolean(
+        interactive &&
+          Number.isSafeInteger(current) &&
+          Number.isSafeInteger(minimum) &&
+          Number.isSafeInteger(maximum) &&
+          current >= minimum &&
+          current <= maximum &&
+          maximum - minimum === 4,
+      );
+      const selectedLabel = [
+        valueNode?.getAttribute?.('aria-valuetext'),
+        control?.getAttribute?.('aria-valuetext'),
+        simpleView.textContent,
+        valueNode?.getAttribute?.('aria-label'),
+      ]
+        .map((value) => String(value ?? '').replace(/\\s+/g, ' ').trim())
+        .find(Boolean) || null;
+      const exactProLabel = selectedLabel && hasExactProPrefix(selectedLabel)
+        ? selectedLabel
+        : null;
+      const atMaximum = shapeValid && current === maximum;
+      const semanticContradiction = Boolean(
+        selectedLabel && ((exactProLabel !== null) !== atMaximum),
+      );
       return {
         control,
-        current: ariaCurrent,
-        minimum: ariaMinimum,
-        maximum: ariaMaximum,
-        label,
-        text,
+        current,
+        minimum,
+        maximum,
+        shapeValid,
+        selectedLabel,
+        exactProLabel,
+        semanticContradiction,
+      };
+    };
+    const updatePowerSliderTrace = (state, extra = {}) => {
+      powerSliderTrace = {
+        ...powerSliderTrace,
+        ...extra,
+        state: state
+          ? {
+              minimum: state.minimum,
+              maximum: state.maximum,
+              current: state.current,
+              shapeValid: state.shapeValid,
+              selectedLabel: redactDiagnosticText(state.selectedLabel, 80) || null,
+              exactProLabel: redactDiagnosticText(state.exactProLabel, 80) || null,
+              semanticContradiction: state.semanticContradiction,
+            }
+          : null,
       };
     };
     const dispatchPowerArrowRight = (control) => {
@@ -830,39 +935,50 @@ export function buildThinkingTimeExpression(
       return true;
     };
     const selectProFromPowerSlider = async (parentMenu, modelKindOverride = null) => {
+      let state = readPowerSliderState(parentMenu);
+      const eligible = TARGET_LEVEL === 'pro' && state?.shapeValid === true;
       powerSliderTrace = {
         attempted: true,
-        eligible: TARGET_IS_GPT56_MODEL && TARGET_LEVEL === 'pro',
+        eligible,
+        state: null,
       };
-      if (!TARGET_IS_GPT56_MODEL || TARGET_LEVEL !== 'pro') return null;
-      let state = readPowerSliderState(parentMenu);
-      powerSliderTrace = {
-        ...powerSliderTrace,
-        state: state
-          ? {
-              current: state.current,
-              maximum: state.maximum,
-              label: redactDiagnosticText(state.label),
-            }
-          : null,
-      };
-      if (!state) return null;
-      const confirmsPro = () => {
-        const current = readPowerSliderState(parentMenu);
-        if (!current || current.current !== current.maximum) return false;
-        const pill = freshComposerTrigger(modelBtn) || findComposerEffortPill() || findModelButton();
-        const pillText = normalize(
-          (pill?.textContent ?? '') + ' ' + (pill?.getAttribute?.('aria-label') ?? ''),
-        );
-        return hasPhrase(current.label ?? current.text, 'pro') || hasPhrase(pillText, 'pro');
-      };
-      if (state.current === state.maximum) {
-        if (!confirmsPro()) return null;
+      updatePowerSliderTrace(state);
+      if (TARGET_LEVEL !== 'pro' || !state) return null;
+      if (!state.shapeValid || state.semanticContradiction) {
+        const result = failure('selection-unverified', { modelKind: modelKindOverride });
         closeOpenMenus();
-        return { status: 'already-selected', label: state.label || 'Pro' };
+        return result;
+      }
+      const exactEffortPillLabel = () => {
+        const pill = freshComposerTrigger(modelBtn) || findComposerEffortPill();
+        if (!pill || pill.getAttribute?.('data-testid') === 'model-switcher-dropdown-button') {
+          return null;
+        }
+        const candidates = [pill.getAttribute?.('aria-label'), pill.textContent]
+          .map((value) => String(value ?? '').replace(/\\s+/g, ' ').trim())
+          .filter(Boolean);
+        return candidates.find(hasExactProPrefix) || null;
+      };
+      const confirmsPro = (candidate) =>
+        Boolean(
+          candidate?.shapeValid &&
+            !candidate.semanticContradiction &&
+            candidate.current === candidate.maximum &&
+            (candidate.exactProLabel || exactEffortPillLabel()),
+        );
+      if (state.current === state.maximum) {
+        if (!confirmsPro(state)) {
+          const result = failure('selection-unverified', { modelKind: modelKindOverride });
+          closeOpenMenus();
+          return result;
+        }
+        closeOpenMenus();
+        return { status: 'already-selected', label: 'Pro' };
       }
 
-      for (let step = 0; step < state.maximum && state.current < state.maximum; step += 1) {
+      const expectedMinimum = state.minimum;
+      const expectedMaximum = state.maximum;
+      for (let step = 0; step < 4 && state.current < state.maximum; step += 1) {
         const previousPosition = state.current;
         if (!dispatchPowerArrowRight(state.control)) {
           const result = failure('selection-unverified', { modelKind: modelKindOverride });
@@ -871,23 +987,32 @@ export function buildThinkingTimeExpression(
         }
         await sleep(STEP_WAIT_MS);
         state = readPowerSliderState(parentMenu);
-        if (!state || state.current <= previousPosition) {
+        updatePowerSliderTrace(state);
+        if (
+          !state ||
+          !state.shapeValid ||
+          state.minimum !== expectedMinimum ||
+          state.maximum !== expectedMaximum ||
+          state.current <= previousPosition ||
+          state.semanticContradiction
+        ) {
           const result = failure('selection-unverified', { modelKind: modelKindOverride });
           closeOpenMenus();
           return result;
         }
       }
 
-      if (!confirmsPro()) {
+      const finalState = readPowerSliderState(parentMenu);
+      updatePowerSliderTrace(finalState);
+      if (!confirmsPro(finalState)) {
         const result = failure('selection-unverified', { modelKind: modelKindOverride });
         closeOpenMenus();
         return result;
       }
-      const finalState = readPowerSliderState(parentMenu);
       closeOpenMenus();
       return {
         status: 'switched',
-        label: finalState?.label || 'Pro',
+        label: 'Pro',
       };
     };
 
@@ -1017,7 +1142,8 @@ export function buildThinkingTimeExpression(
     ];
     const findComposerEffortPill = () => {
       const seen = new Set();
-      let gpt56Fallback = null;
+      let exactProFallback = null;
+      const structuralProFallbacks = [];
       for (const selector of COMPOSER_EFFORT_PILL_SELECTORS) {
         for (const button of document.querySelectorAll(selector)) {
           if (seen.has(button) || !isVisible(button)) continue;
@@ -1036,16 +1162,24 @@ export function buildThinkingTimeExpression(
           ) {
             return button;
           }
-          if (
-            TARGET_IS_GPT56_MODEL &&
-            button.matches?.('button.__composer-pill') &&
-            normalize(button.textContent ?? '') === 'pro'
-          ) {
-            gpt56Fallback ||= button;
+          if ((TARGET_IS_GPT56_MODEL || TARGET_LEVEL === 'pro') && button.matches?.('button.__composer-pill')) {
+            if (
+              hasExactProPrefix(
+                (button.getAttribute?.('aria-label') ?? '') + ' ' + (button.textContent ?? ''),
+              )
+            ) {
+              exactProFallback ||= button;
+            } else if (
+              TARGET_LEVEL === 'pro' &&
+              isVisible(document.querySelector(SIMPLE_VIEW_SELECTOR))
+            ) {
+              structuralProFallbacks.push(button);
+            }
           }
         }
       }
-      return gpt56Fallback;
+      return exactProFallback ||
+        (structuralProFallbacks.length === 1 ? structuralProFallbacks[0] : null);
     };
     let composerEffortPill = findComposerEffortPill();
     let modelBtn = findModelButton();
@@ -1108,17 +1242,21 @@ export function buildThinkingTimeExpression(
           ' ' +
           (composerEffortPill.textContent ?? ''),
       );
-      // Once the GPT-5.6 model picker has been verified, a bare Pro composer pill
-      // is the selected Intelligence tier, not a model label. Accept that exact
-      // state without reopening the slider/Advanced submenu: doing so is both
-      // stronger evidence and avoids racing a portal that is still mounting.
+      const visiblePowerSlider = Array.from(
+        document.querySelectorAll(SIMPLE_VIEW_SELECTOR),
+      ).find(isVisible);
       if (
-        TARGET_IS_GPT56_MODEL &&
         TARGET_LEVEL === 'pro' &&
-        currentComposerEffortLabel === 'pro'
+        hasExactProPrefix(
+          (composerEffortPill.getAttribute?.('aria-label') ?? '') +
+            ' ' +
+            (composerEffortPill.textContent ?? ''),
+        ) &&
+        !visiblePowerSlider &&
+        isVisible(document.querySelector(INTELLIGENCE_MENU_SELECTOR))
       ) {
         closeOpenMenus();
-        return { status: 'already-selected', label: composerEffortPill.textContent?.trim?.() || 'Pro' };
+        return { status: 'already-selected', label: 'Pro' };
       }
       // In the unified Intelligence picker the composer pill shows the current
       // EFFORT ("Pro", "High"), not the model. Reading a Pro *model* out of it would
@@ -1366,8 +1504,9 @@ export function buildThinkingTimeExpression(
 export function buildThinkingTimeExpressionForTest(
   level: ThinkingTimeLevel = "extended",
   desiredModel?: string | null,
+  modelSelectionEvidence?: BrowserModelSelectionEvidence,
 ): string {
-  return buildThinkingTimeExpression(level, desiredModel);
+  return buildThinkingTimeExpression(level, desiredModel, modelSelectionEvidence);
 }
 
 function inferThinkingTargetModelKind(

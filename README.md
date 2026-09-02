@@ -88,6 +88,8 @@ Oracle 会记录已提交 turn 的 identity 与 timing evidence，并把 durable
 
 Legacy direct-CDP 提交会先激活并重新验证 exact owned target，再从新鲜 DOM 计算可信 Send 坐标；click 与 Enter 共用同一条 exact-user-turn 验证。只有 text-only draft 的 baseline、document token、target owner、composer identity 和“尚无外部效果”证据全部一致时，才允许一次相反方法的 bounded recovery。非空但无法证明归属的 composer、attachment ambiguity 或 cleared-but-unobserved commit 都会 fail closed 并保留 exact tab；先用 `oracle session <session-id> --render` 检查，不要直接重跑。
 
+Strict `Pro` effort 的 slider 路径由可见、可交互、合法五档的 ARIA 结构决定，不再绑定某个 model family。Model identity 仍单独验证；slider 到达 maximum 后还必须读到 exact `Pro` semantic label 或 effort pill，支持 Unicode 空白/标点但拒绝 position-only、`Professional`、畸形 range 和 numeric/label contradiction。
+
 <!-- readme-sync:broker-candidate -->
 
 ## Oracle v2 broker 候选路径

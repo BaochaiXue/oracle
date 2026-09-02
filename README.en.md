@@ -88,6 +88,8 @@ Oracle records the committed turn identity and timing evidence and freezes the d
 
 Legacy direct-CDP submission activates and revalidates the exact owned target before measuring a fresh trusted Send point; clicks and Enter share one exact-user-turn verification path. One opposite-method bounded recovery is allowed only for a text-only retained draft whose baseline, document token, target owner, composer identity, and absence of external effects all still agree. Unowned non-empty composer content, attachment ambiguity, and cleared-but-unobserved commits fail closed and preserve the exact tab; inspect it with `oracle session <session-id> --render` instead of rerunning the prompt.
 
+The strict `Pro` effort slider path is selected by a visible, interactive, valid five-position ARIA structure rather than a model family. Model identity remains independently verified; reaching the maximum must also agree with an exact `Pro` semantic label or effort pill. Unicode whitespace and punctuation are accepted, while position-only, `Professional`, malformed ranges, and numeric/label contradictions fail closed.
+
 <!-- readme-sync:broker-candidate -->
 
 ## Oracle v2 broker candidate

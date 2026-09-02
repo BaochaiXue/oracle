@@ -1702,17 +1702,27 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     if (thinkingTime && !deepResearch) {
       const thinkingTargetModel = modelStrategy === "select" ? config.desiredModel : null;
       await raceWithDisconnect(
-        withRetries(() => ensureThinkingTime(Runtime, thinkingTime, logger, thinkingTargetModel), {
-          retries: 2,
-          delayMs: 300,
-          onRetry: (attempt, error) => {
-            if (options.verbose) {
-              logger(
-                `[retry] Thinking time (${thinkingTime}) attempt ${attempt + 1}: ${error instanceof Error ? error.message : error}`,
-              );
-            }
+        withRetries(
+          () =>
+            ensureThinkingTime(
+              Runtime,
+              thinkingTime,
+              logger,
+              thinkingTargetModel,
+              modelSelectionEvidence,
+            ),
+          {
+            retries: 2,
+            delayMs: 300,
+            onRetry: (attempt, error) => {
+              if (options.verbose) {
+                logger(
+                  `[retry] Thinking time (${thinkingTime}) attempt ${attempt + 1}: ${error instanceof Error ? error.message : error}`,
+                );
+              }
+            },
           },
-        }),
+        ),
       );
     }
     const profileLockTimeoutMs = manualLogin ? (config.profileLockTimeoutMs ?? 0) : 0;
@@ -3517,7 +3527,14 @@ async function runRemoteBrowserMode(
     if (thinkingTime && !deepResearch) {
       const thinkingTargetModel = modelStrategy === "select" ? config.desiredModel : null;
       await withRetries(
-        () => ensureThinkingTime(Runtime, thinkingTime, logger, thinkingTargetModel),
+        () =>
+          ensureThinkingTime(
+            Runtime,
+            thinkingTime,
+            logger,
+            thinkingTargetModel,
+            modelSelectionEvidence,
+          ),
         {
           retries: 2,
           delayMs: 300,
