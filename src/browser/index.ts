@@ -222,9 +222,11 @@ function isAmbiguousCommitError(error: unknown): error is BrowserAutomationError
   if (!(error instanceof BrowserAutomationError)) return false;
   const details = error.details as { code?: string; submissionCommitted?: boolean } | undefined;
   return (
-    ["commit-ambiguous-composer-cleared", "commit-ambiguous-multiple-user-turns"].includes(
-      details?.code ?? "",
-    ) && details?.submissionCommitted === false
+    [
+      "commit-ambiguous-composer-cleared",
+      "commit-ambiguous-multiple-user-turns",
+      "commit-indeterminate-after-dispatch",
+    ].includes(details?.code ?? "") && details?.submissionCommitted === false
   );
 }
 
@@ -536,13 +538,20 @@ async function createChatGptUiWarningError(params: {
 
   params.logger(`[browser] ChatGPT UI warning detected (${uiWarning.type}): ${uiWarning.message}`);
   const submissionBlocked = params.submissionCommitted === false;
+  const dispatchIndeterminate = submissionBlocked && params.dispatchAttempted === true;
   return new BrowserAutomationError(
-    submissionBlocked
-      ? `ChatGPT blocked the request before submission with a ${formatChatGptUiWarningType(uiWarning.type)} warning. No prompt was committed; retrying after the page gate clears is safe. Page warning: ${uiWarning.message}`
-      : `ChatGPT displayed a ${formatChatGptUiWarningType(uiWarning.type)} warning while waiting for ${params.waitTarget}: ${uiWarning.message}`,
+    dispatchIndeterminate
+      ? `ChatGPT displayed a ${formatChatGptUiWarningType(uiWarning.type)} warning after Oracle emitted a potentially submitting input event. Exact commit is indeterminate; preserve this tab and do not resend. Page warning: ${uiWarning.message}`
+      : submissionBlocked
+        ? `ChatGPT blocked the request before submission with a ${formatChatGptUiWarningType(uiWarning.type)} warning. No prompt was committed; retrying after the page gate clears is safe. Page warning: ${uiWarning.message}`
+        : `ChatGPT displayed a ${formatChatGptUiWarningType(uiWarning.type)} warning while waiting for ${params.waitTarget}: ${uiWarning.message}`,
     {
       stage: params.stage,
-      code: submissionBlocked ? "chatgpt-submission-gate" : "chatgpt-ui-warning",
+      code: dispatchIndeterminate
+        ? "commit-indeterminate-after-dispatch"
+        : submissionBlocked
+          ? "chatgpt-submission-gate"
+          : "chatgpt-ui-warning",
       uiWarning,
       runtime: params.runtime,
       diagnostics: params.diagnostics,
@@ -550,8 +559,18 @@ async function createChatGptUiWarningError(params: {
         ? {
             submissionCommitted: false,
             dispatchAttempted: params.dispatchAttempted === true,
-            retrySafe: true,
-            retryGuidance: "wait-for-page-gate-to-clear",
+            ...(dispatchIndeterminate
+              ? {
+                  outcome: "indeterminate",
+                  commitVerification: "indeterminate",
+                  retrySafe: false,
+                  recoverable: true,
+                  retryGuidance: "reattach-exact-tab-do-not-resend",
+                }
+              : {
+                  retrySafe: true,
+                  retryGuidance: "wait-for-page-gate-to-clear",
+                }),
           }
         : {}),
     },

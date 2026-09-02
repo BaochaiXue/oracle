@@ -86,7 +86,7 @@ oracle --followup <session-id> \
 
 Oracle 会记录已提交 turn 的 identity 与 timing evidence，并把 durable conversation ID 冻结为 capture authority；同一 tab 后来跳到别的 conversation 时不会复制或接纳那边的答案。恢复必须回到原 conversation；只有 durable receipt 明确证明 prompt 尚未提交、尚未 commit 且 `retrySafe:true` 时，显式 resume 才能创建新 attempt。
 
-Legacy direct-CDP 提交会先激活并重新验证 exact owned target，再从新鲜 DOM 计算可信 Send 坐标；click 与 Enter 共用同一条 exact-user-turn 验证。只有 text-only draft 的 baseline、document token、target owner、composer identity 和“尚无外部效果”证据全部一致时，才允许一次相反方法的 bounded recovery。非空但无法证明归属的 composer、attachment ambiguity 或 cleared-but-unobserved commit 都会 fail closed 并保留 exact tab；先用 `oracle session <session-id> --render` 检查，不要直接重跑。
+Legacy direct-CDP 提交会先激活并重新验证 exact owned target，再从新鲜 DOM 计算可信 Send 坐标；click 与 Enter 共用同一条 exact-user-turn 验证。只有在尚未发出任何可能触发提交的 input event 时，Oracle 才能从不可用的 trusted-click 路径改用 Enter；一旦发出 `mousePressed` 或 Enter `keyDown`，就绝不自动换方法或再次 dispatch。若 exact commit 无法验证，结果会标记为 indeterminate/recoverable、`retrySafe:false` 并保留 exact tab；先用 `oracle session <session-id> --render` 检查，不要直接重跑。
 
 Strict `Pro` effort 的 slider 路径由可见、可交互、合法五档的 ARIA 结构决定，不再绑定某个 model family。Model identity 仍单独验证；slider 到达 maximum 后还必须读到 exact `Pro` semantic label 或 effort pill，支持 Unicode 空白/标点但拒绝 position-only、`Professional`、畸形 range 和 numeric/label contradiction。
 

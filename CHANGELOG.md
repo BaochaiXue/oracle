@@ -121,13 +121,13 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   publication grace.
 - Direct CDP submission: activate and revalidate the exact Oracle-owned target
   before measuring a trusted Send point, then verify coordinate-click and Enter
-  dispatches through one exact user-turn contract. A text-only retained draft
-  may use the opposite method once only while the original turn baseline,
-  document token, target owner, exact composer, and absence of external effects
-  all still agree; attachment-bearing, mutated, pre-existing, cleared-but-
-  unobserved, or otherwise ambiguous states fail closed. Bounded diagnostics
-  retain the exact tab for inspection without recording prompt text or allowing
-  a later run to append to an unowned draft.
+  dispatches through one exact user-turn contract. Enter is an alternate only
+  while trusted-click has emitted no potentially submitting input event. Once
+  `mousePressed` or Enter `keyDown` has been emitted, Oracle never changes
+  methods or dispatches again automatically. An unverifiable exact commit is
+  indeterminate/recoverable with `retrySafe:false`; bounded diagnostics retain
+  the exact tab for inspection without recording prompt text or allowing a
+  later run to append to an unowned draft.
 - Direct CDP lifecycle: separate persistent profile identity from browser
   process lifetime. Dedicated Chrome now defaults to `while-needed`, releases
   tab leases before final drain, rechecks under the profile lock, and closes

@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { ChromeClient, BrowserLogger } from "../types.js";
 import {
   INPUT_SELECTORS,
@@ -24,10 +23,7 @@ const ENTER_KEY_EVENT = {
   nativeVirtualKeyCode: 13,
 } as const;
 const ENTER_KEY_TEXT = "\r";
-const RETAINED_DRAFT_RETRY_DELAY_MS = 2_000;
-const POST_ALTERNATE_OBSERVATION_MS = RETAINED_DRAFT_RETRY_DELAY_MS;
 const TARGET_COMPOSITING_SETTLE_MS = 150;
-const SUBMISSION_DOCUMENT_TOKEN_PROPERTY = "__oracleSubmissionDocumentToken";
 
 // Input.insertText gives ProseMirror plain text, but ProseMirror renders each
 // line as a direct block. HTMLElement.innerText inserts an extra newline
@@ -67,14 +63,7 @@ export interface AttachmentReadyExpectation {
 type AttachmentReadyInput = string | AttachmentReadyExpectation;
 
 type SubmissionDispatchMethod = "trusted-click" | "enter";
-
-type RetainedDraftRetryStatus = "eligible" | "dispatched" | "blocked" | "unavailable";
-
-interface RetainedDraftRetryResult {
-  status: RetainedDraftRetryStatus;
-  reason?: string;
-  gate?: Record<string, unknown>;
-}
+type PotentiallySubmittingEvent = "mousePressed" | "enterKeyDown";
 
 interface SubmissionDiagnostic {
   initialDispatchMethod: SubmissionDispatchMethod | null;
@@ -94,7 +83,8 @@ interface SubmissionDiagnostic {
   alternateDispatchMethod: SubmissionDispatchMethod | null;
   finalCommitClassification: string | null;
   ownershipVerified: boolean;
-  documentTokenVerified: boolean;
+  potentiallySubmittingEventEmitted: boolean;
+  potentiallySubmittingEvent: PotentiallySubmittingEvent | null;
 }
 
 interface SubmitPromptDependencies {
@@ -136,7 +126,8 @@ function createSubmissionDiagnostic(baselineTurns?: number | null): SubmissionDi
     alternateDispatchMethod: null,
     finalCommitClassification: null,
     ownershipVerified: false,
-    documentTokenVerified: false,
+    potentiallySubmittingEventEmitted: false,
+    potentiallySubmittingEvent: null,
   };
 }
 
@@ -300,24 +291,6 @@ async function submitPromptInternal(
       ? Math.floor(deps.baselineTurns)
       : null;
   diagnostic.preDispatchBaseline = preDispatchBaseline;
-  const retainedDraftRecoveryEligible =
-    preDispatchBaseline !== null &&
-    !deps.attachmentNames?.length &&
-    prompt.length < 50_000 &&
-    Boolean(deps.page) &&
-    typeof deps.isSubmissionOwner === "function";
-  if (!retainedDraftRecoveryEligible) {
-    diagnostic.retryBlockedReason = deps.attachmentNames?.length
-      ? "attachment-commit-identity-unavailable"
-      : preDispatchBaseline === null
-        ? "pre-dispatch-baseline-unavailable"
-        : prompt.length >= 50_000
-          ? "prompt-too-large-for-alternate-dispatch"
-          : !deps.page || typeof deps.isSubmissionOwner !== "function"
-            ? "target-ownership-proof-unavailable"
-            : null;
-  }
-  const submissionDocumentToken = retainedDraftRecoveryEligible ? randomUUID() : null;
   const promptLength = prompt.length;
   await activateExactSubmissionTarget({
     Page: deps.page,
@@ -326,16 +299,6 @@ async function submitPromptInternal(
   });
   const postVerification = await runtime.evaluate({
     expression: `(() => {
-      const submissionDocumentToken = ${JSON.stringify(submissionDocumentToken)};
-      const submissionDocumentTokenProperty = ${JSON.stringify(SUBMISSION_DOCUMENT_TOKEN_PROPERTY)};
-      if (submissionDocumentToken) {
-        Object.defineProperty(document, submissionDocumentTokenProperty, {
-          configurable: true,
-          enumerable: false,
-          value: submissionDocumentToken,
-          writable: true,
-        });
-      }
       const editor = document.querySelector(${primarySelectorLiteral});
       const fallback = document.querySelector(${fallbackSelectorLiteral});
       const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
@@ -353,10 +316,6 @@ async function submitPromptInternal(
         editorText: readComposerValue(editor),
         fallbackValue: fallback?.value ?? '',
         activeValue: readComposerValue(active),
-        href: typeof location === 'object' && location.href ? location.href : '',
-        documentTokenStored:
-          !submissionDocumentToken ||
-          document[submissionDocumentTokenProperty] === submissionDocumentToken,
       };
     })()`,
     returnByValue: true,
@@ -364,17 +323,6 @@ async function submitPromptInternal(
   const observedEditor = postVerification.result?.value?.editorText ?? "";
   const observedFallback = postVerification.result?.value?.fallbackValue ?? "";
   const observedActive = postVerification.result?.value?.activeValue ?? "";
-  const submissionOwnerHref = postVerification.result?.value?.href ?? "";
-  const submissionDocumentTokenStored =
-    postVerification.result?.value?.documentTokenStored === true;
-  diagnostic.documentTokenVerified = Boolean(
-    submissionDocumentToken && submissionDocumentTokenStored,
-  );
-  if (retainedDraftRecoveryEligible && !submissionOwnerHref) {
-    diagnostic.retryBlockedReason = "target-url-unavailable";
-  } else if (retainedDraftRecoveryEligible && !submissionDocumentTokenStored) {
-    diagnostic.retryBlockedReason = "document-token-unavailable";
-  }
   const observedComposer = observedActive || observedEditor || observedFallback;
   const observedLength = Math.max(
     observedEditor.length,
@@ -414,54 +362,76 @@ async function submitPromptInternal(
     );
   }
 
-  const clicked = await attemptSendButton(
-    runtime,
-    input,
-    logger,
-    deps?.attachmentNames,
-    deps?.attachmentTimeoutMs,
-    prompt,
-  );
-  const initialDispatchMethod: SubmissionDispatchMethod = clicked ? "trusted-click" : "enter";
-  diagnostic.initialDispatchMethod = initialDispatchMethod;
-  if (!clicked) {
-    await assertComposerUnchanged(runtime, prompt);
-    await dispatchEnterKey(input);
-    logger("Submitted prompt via Enter key");
-  } else {
-    logger("Clicked send button");
+  const markPotentiallySubmittingEvent = async (
+    method: SubmissionDispatchMethod,
+    event: PotentiallySubmittingEvent,
+  ): Promise<void> => {
+    if (diagnostic.potentiallySubmittingEventEmitted) return;
+    // Persist the at-risk boundary before issuing the input. If persistence
+    // fails, the event is never sent. Once this returns, any dispatch error is
+    // conservatively indeterminate and can never authorize another method.
+    await deps.onPromptDispatched?.();
+    diagnostic.initialDispatchMethod = method;
+    diagnostic.potentiallySubmittingEventEmitted = true;
+    diagnostic.potentiallySubmittingEvent = event;
+    diagnostic.retryEligible = false;
+    diagnostic.retryBlockedReason = "potentially-submitting-event-emitted";
+  };
+
+  try {
+    const clicked = await attemptSendButton(
+      runtime,
+      input,
+      logger,
+      deps?.attachmentNames,
+      deps?.attachmentTimeoutMs,
+      prompt,
+      () => markPotentiallySubmittingEvent("trusted-click", "mousePressed"),
+    );
+    if (!clicked) {
+      await assertComposerUnchanged(runtime, prompt);
+      await dispatchEnterKey(input, () => markPotentiallySubmittingEvent("enter", "enterKeyDown"));
+      logger("Submitted prompt via Enter key");
+    } else {
+      logger("Clicked send button");
+    }
+  } catch (error) {
+    if (!diagnostic.potentiallySubmittingEventEmitted) throw error;
+    diagnostic.finalCommitClassification = "commit-indeterminate-after-dispatch";
+    throw buildIndeterminateCommitError({
+      prompt,
+      diagnostic,
+      cause: error,
+    });
   }
-  await deps.onPromptDispatched?.();
 
   const commitTimeoutMs = Math.max(60_000, deps.inputTimeoutMs ?? 0);
   // Learned: the send button can succeed but the turn doesn't appear immediately; verify commit via turns/stop button.
-  const committed = await verifyPromptCommitted(
-    runtime,
-    prompt,
-    commitTimeoutMs,
-    logger,
-    preDispatchBaseline ?? undefined,
-    deps.onPromptCommitPending,
-    retainedDraftRecoveryEligible &&
-      submissionOwnerHref &&
-      submissionDocumentToken &&
-      submissionDocumentTokenStored
-      ? () =>
-          attemptAlternateDispatch({
-            Runtime: runtime,
-            Input: input,
-            Page: deps.page,
-            prompt,
-            baseline: preDispatchBaseline,
-            submissionOwnerHref,
-            submissionDocumentToken,
-            isSubmissionOwner: deps.isSubmissionOwner!,
-            initialDispatchMethod,
-            diagnostic,
-          })
-      : undefined,
-    diagnostic,
-  );
+  let committed: { turnsCount: number | null; userTurnIndex: number | null };
+  try {
+    committed = await verifyPromptCommitted(
+      runtime,
+      prompt,
+      commitTimeoutMs,
+      logger,
+      preDispatchBaseline ?? undefined,
+      deps.onPromptCommitPending,
+      diagnostic,
+    );
+  } catch (error) {
+    const alreadyIndeterminate =
+      error instanceof BrowserAutomationError && error.details?.retrySafe === false;
+    if (diagnostic.potentiallySubmittingEventEmitted && !alreadyIndeterminate) {
+      diagnostic.finalCommitClassification = "commit-indeterminate-after-dispatch";
+      throw buildIndeterminateCommitError({
+        prompt,
+        diagnostic,
+        timeoutMs: commitTimeoutMs,
+        cause: error,
+      });
+    }
+    throw error;
+  }
   diagnostic.finalCommitClassification = "verified-single-user-turn";
   await deps.onPromptCommitted?.(committed.turnsCount, committed.userTurnIndex);
   return committed.turnsCount;
@@ -530,7 +500,11 @@ async function assertPromptComposerEmptyForSubmission(
   );
 }
 
-async function dispatchEnterKey(Input: ChromeClient["Input"]): Promise<void> {
+async function dispatchEnterKey(
+  Input: ChromeClient["Input"],
+  onPotentiallySubmittingEvent?: () => Promise<void> | void,
+): Promise<void> {
+  await onPotentiallySubmittingEvent?.();
   await Input.dispatchKeyEvent({
     type: "keyDown",
     ...ENTER_KEY_EVENT,
@@ -547,17 +521,15 @@ async function activateExactSubmissionTarget({
   Page,
   isSubmissionOwner,
   diagnostic,
-  retry = false,
 }: {
   Page?: ChromeClient["Page"];
   isSubmissionOwner?: () => Promise<boolean> | boolean;
   diagnostic: SubmissionDiagnostic;
-  retry?: boolean;
 }): Promise<void> {
   if (!Page || typeof Page.bringToFront !== "function") return;
   diagnostic.targetActivationAttempted = true;
 
-  const ownershipCode = retry ? "ownership-changed-before-retry" : "ownership-changed-before-send";
+  const ownershipCode = "ownership-changed-before-send";
   const verifyOwner = async (): Promise<boolean> => {
     if (typeof isSubmissionOwner !== "function") return false;
     try {
@@ -568,11 +540,8 @@ async function activateExactSubmissionTarget({
   };
   if (!(await verifyOwner())) {
     diagnostic.ownershipVerified = false;
-    diagnostic.retryBlockedReason = retry ? ownershipCode : diagnostic.retryBlockedReason;
     throw new BrowserAutomationError(
-      retry
-        ? "The exact Oracle-owned browser target changed before the bounded retry; no second dispatch was attempted."
-        : "The exact Oracle-owned browser target could not be verified before dispatch.",
+      "The exact Oracle-owned browser target could not be verified before dispatch.",
       {
         stage: "submit-prompt",
         code: ownershipCode,
@@ -601,11 +570,8 @@ async function activateExactSubmissionTarget({
 
   if (!(await verifyOwner())) {
     diagnostic.ownershipVerified = false;
-    diagnostic.retryBlockedReason = retry ? ownershipCode : diagnostic.retryBlockedReason;
     throw new BrowserAutomationError(
-      retry
-        ? "The exact Oracle-owned browser target changed during retry activation; no second dispatch was attempted."
-        : "The exact Oracle-owned browser target changed during activation; refusing to dispatch.",
+      "The exact Oracle-owned browser target changed during activation; refusing to dispatch.",
       {
         stage: "submit-prompt",
         code: ownershipCode,
@@ -1022,6 +988,7 @@ async function attemptSendButton(
   attachmentNames?: AttachmentReadyInput[],
   attachmentTimeoutMs?: number | null,
   expectedPrompt?: string,
+  onPotentiallySubmittingEvent?: () => Promise<void> | void,
 ): Promise<boolean> {
   const needAttachment = Array.isArray(attachmentNames) && attachmentNames.length > 0;
   const expectedPromptLiteral = JSON.stringify(expectedPrompt ?? null);
@@ -1135,10 +1102,13 @@ async function attemptSendButton(
       typeof value.x === "number" &&
       typeof value.y === "number"
     ) {
-      if (await clickTrustedPoint(Input, value.x, value.y)) return true;
+      if (await clickTrustedPoint(Input, value.x, value.y, onPotentiallySubmittingEvent)) {
+        return true;
+      }
       break;
     }
     if (status === "clicked") {
+      await onPotentiallySubmittingEvent?.();
       return true;
     }
     if (status === "missing") {
@@ -1160,264 +1130,6 @@ async function attemptSendButton(
     );
   }
   return false;
-}
-
-async function attemptAlternateDispatch({
-  Runtime,
-  Input,
-  Page,
-  prompt,
-  baseline,
-  submissionOwnerHref,
-  submissionDocumentToken,
-  isSubmissionOwner,
-  initialDispatchMethod,
-  diagnostic,
-}: {
-  Runtime: ChromeClient["Runtime"];
-  Input: ChromeClient["Input"];
-  Page?: ChromeClient["Page"];
-  prompt: string;
-  baseline: number;
-  submissionOwnerHref: string;
-  submissionDocumentToken: string;
-  isSubmissionOwner: () => Promise<boolean> | boolean;
-  initialDispatchMethod: SubmissionDispatchMethod;
-  diagnostic: SubmissionDiagnostic;
-}): Promise<RetainedDraftRetryResult> {
-  try {
-    await activateExactSubmissionTarget({
-      Page,
-      isSubmissionOwner,
-      diagnostic,
-      retry: true,
-    });
-  } catch (error) {
-    if (error instanceof BrowserAutomationError) {
-      const reason =
-        typeof error.details?.code === "string"
-          ? error.details.code
-          : "ownership-changed-before-retry";
-      diagnostic.retryEligible = false;
-      diagnostic.retryBlockedReason = reason;
-      return { status: "blocked", reason };
-    }
-    diagnostic.retryEligible = false;
-    diagnostic.retryBlockedReason = "target-activation-failed";
-    return { status: "blocked", reason: "target-activation-failed" };
-  }
-
-  const gateResult = await attemptRetainedDraftPageRetry({
-    Runtime,
-    prompt,
-    baseline,
-    submissionOwnerHref,
-    submissionDocumentToken,
-    isSubmissionOwner,
-  });
-  const gate = gateResult.gate ?? {};
-  diagnostic.documentTokenVerified = gate.documentTokenMatched === true;
-  diagnostic.ownershipVerified = gate.ownerMatched === true;
-  diagnostic.composerCleared = gate.draftRetained === false;
-  diagnostic.draftRetained = gate.draftRetained === true;
-  diagnostic.newUserTurnObserved = gate.hasNewTurn === true;
-  diagnostic.matchingUserTurnObserved = gate.userMatched === true;
-  diagnostic.assistantObserved = gate.assistantVisible === true;
-  diagnostic.generationControlObserved = gate.stopVisible === true;
-  if (gateResult.status !== "eligible") {
-    const reason = classifyRetryBlockedReason(gateResult);
-    diagnostic.retryEligible = false;
-    diagnostic.retryBlockedReason = reason;
-    return { ...gateResult, reason };
-  }
-
-  diagnostic.retryEligible = true;
-  diagnostic.retryBlockedReason = null;
-  const alternateMethod: SubmissionDispatchMethod =
-    initialDispatchMethod === "trusted-click" ? "enter" : "trusted-click";
-  diagnostic.alternateDispatchMethod = alternateMethod;
-
-  if (alternateMethod === "enter") {
-    diagnostic.alternateDispatchAttempted = true;
-    await dispatchEnterKey(Input);
-    return { status: "dispatched", gate };
-  }
-
-  const clicked = await attemptSendButton(Runtime, Input, undefined, undefined, undefined, prompt);
-  if (!clicked) {
-    diagnostic.retryBlockedReason = "send-control-unavailable";
-    return { status: "unavailable", reason: "send-control-unavailable", gate };
-  }
-  diagnostic.alternateDispatchAttempted = true;
-  return { status: "dispatched", gate };
-}
-
-function classifyRetryBlockedReason(result: RetainedDraftRetryResult): string {
-  if (result.reason && result.reason !== "gate-closed") return result.reason;
-  const gate = result.gate ?? {};
-  if (gate.ownerMatched === false) return "ownership-changed-before-retry";
-  if (gate.documentTokenMatched === false) return "document-changed-before-retry";
-  if (gate.composerMatchesPrompt === false) return "composer-mutated-before-send";
-  if (gate.baselineKnown === false || gate.baselineUnchanged === false) {
-    return "pre-dispatch-baseline-changed";
-  }
-  if (
-    gate.hasNewTurn === true ||
-    gate.userMatched === true ||
-    gate.stopVisible === true ||
-    gate.assistantVisible === true ||
-    gate.draftRetained === false
-  ) {
-    return "external-effect-observed-before-retry";
-  }
-  return "retry-evidence-unavailable";
-}
-
-async function attemptRetainedDraftPageRetry({
-  Runtime,
-  prompt,
-  baseline,
-  submissionOwnerHref,
-  submissionDocumentToken,
-  isSubmissionOwner,
-}: {
-  Runtime: ChromeClient["Runtime"];
-  prompt: string;
-  baseline: number;
-  submissionOwnerHref: string;
-  submissionDocumentToken: string;
-  isSubmissionOwner: () => Promise<boolean> | boolean;
-}): Promise<RetainedDraftRetryResult> {
-  let ownerConfirmed = false;
-  try {
-    ownerConfirmed = (await isSubmissionOwner()) === true;
-  } catch {
-    return { status: "blocked", reason: "target-owner-check-failed" };
-  }
-  if (!ownerConfirmed) {
-    return { status: "blocked", reason: "target-owner-mismatch" };
-  }
-
-  const script = `(() => {
-    const expectedPrompt = ${JSON.stringify(prompt)};
-    const expectedOwnerHref = ${JSON.stringify(submissionOwnerHref)};
-    const expectedDocumentToken = ${JSON.stringify(submissionDocumentToken)};
-    const submissionDocumentTokenProperty = ${JSON.stringify(SUBMISSION_DOCUMENT_TOKEN_PROPERTY)};
-    const baseline = ${JSON.stringify(baseline)};
-    const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
-    const stopSelector = ${JSON.stringify(STOP_BUTTON_SELECTOR)};
-    ${COMPOSER_VALUE_READER_SOURCE}
-    const normalizeComposer = (value) => String(value ?? '')
-      .replace(/\\r\\n?/g, '\\n')
-      .replace(/\\u00a0/g, ' ');
-    const normalizeTurn = (value) => {
-      let text = String(value ?? '').toLowerCase();
-      text = text.replace(/\`\`\`[^\\n]*\\n([\\s\\S]*?)\`\`\`/g, ' $1 ');
-      text = text.replace(/\`\`\`/g, ' ');
-      text = text.replace(/\`([^\`]*)\`/g, '$1');
-      return text.replace(/\\s+/g, ' ').trim();
-    };
-    const normalizeOwner = (value) => {
-      try {
-        const url = new URL(String(value ?? ''), location.href);
-        return url.origin + url.pathname.replace(/\\/$/, '');
-      } catch {
-        return '';
-      }
-    };
-    const isVisible = (node) => {
-      if (!(node instanceof HTMLElement)) return false;
-      const rect = node.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return false;
-      const style = window.getComputedStyle(node);
-      return style.display !== 'none' && style.visibility !== 'hidden';
-    };
-    const roleOf = (node) => String(
-      node?.getAttribute?.('data-message-author-role') ||
-      node?.getAttribute?.('data-turn') ||
-      node?.dataset?.turn ||
-      node?.querySelector?.('[data-message-author-role], [data-turn]')?.getAttribute?.(
-        'data-message-author-role',
-      ) ||
-      node?.querySelector?.('[data-message-author-role], [data-turn]')?.getAttribute?.('data-turn') ||
-      '',
-    ).toLowerCase();
-    const articles = ${buildConversationTurnListExpression()};
-    const turnsCount = articles.length;
-    const newArticles = baseline >= 0 ? articles.slice(baseline) : articles;
-    const userMatched = normalizeTurn(expectedPrompt).length > 0 && newArticles.some((node) => {
-      if (roleOf(node) !== 'user') return false;
-      const roleNode = node?.getAttribute?.('data-message-author-role') === 'user' ||
-        node?.getAttribute?.('data-turn') === 'user'
-        ? node
-        : node?.querySelector?.('[data-message-author-role="user"], [data-turn="user"]');
-      const messageNode = roleNode?.querySelector?.('.whitespace-pre-wrap') || roleNode;
-      return normalizeTurn(messageNode?.innerText || messageNode?.textContent || '') ===
-        normalizeTurn(expectedPrompt);
-    });
-    const hasNewTurn = baseline >= 0 && turnsCount > baseline;
-    const submissionCommitted = hasNewTurn && userMatched;
-    const assistantVisible = baseline < 0 || newArticles.some((node) => roleOf(node) === 'assistant');
-    const stopVisible = Array.from(document.querySelectorAll(stopSelector)).some(isVisible);
-    const inputs = inputSelectors
-      .map((selector) => document.querySelector(selector))
-      .filter((node) => Boolean(node));
-    const active = inputs.find((node) => isVisible(node)) || inputs[0] || null;
-    const observed = readComposerValue(active);
-    const composerMatchesPrompt =
-      normalizeComposer(observed) === normalizeComposer(expectedPrompt);
-    const composerCleared = !String(observed).trim();
-    const draftRetained = !composerCleared;
-    const ownerMatched =
-      normalizeOwner(location.href) === normalizeOwner(expectedOwnerHref);
-    const documentTokenMatched =
-      document[submissionDocumentTokenProperty] === expectedDocumentToken;
-    const gate = {
-      submissionCommitted,
-      draftRetained,
-      composerMatchesPrompt,
-      hasNewTurn,
-      userMatched,
-      stopVisible,
-      assistantVisible,
-      baselineKnown: baseline >= 0,
-      baselineUnchanged: baseline >= 0 && turnsCount === baseline,
-      ownerMatched,
-      documentTokenMatched,
-      turnsCount,
-    };
-    const allowed =
-      gate.submissionCommitted === false &&
-      gate.draftRetained === true &&
-      gate.composerMatchesPrompt === true &&
-      gate.hasNewTurn === false &&
-      gate.userMatched === false &&
-      gate.stopVisible === false &&
-      gate.assistantVisible === false &&
-      gate.baselineKnown === true &&
-      gate.baselineUnchanged === true &&
-      gate.ownerMatched === true &&
-      gate.documentTokenMatched === true;
-    if (!allowed) return { status: 'blocked', reason: 'gate-closed', gate };
-    return { status: 'eligible', gate };
-  })()`;
-  const result = await Runtime.evaluate({ expression: script, returnByValue: true }).catch(
-    () => null,
-  );
-  if (!result) {
-    return { status: "blocked", reason: "retry-evidence-unavailable" };
-  }
-  const value = result.result?.value as RetainedDraftRetryResult | undefined;
-  if (
-    !value ||
-    (value.status !== "eligible" &&
-      value.status !== "dispatched" &&
-      value.status !== "blocked" &&
-      value.status !== "unavailable")
-  ) {
-    return { status: "blocked", reason: "retry-evidence-unavailable" };
-  }
-  return value;
 }
 
 async function assertComposerUnchanged(
@@ -1475,9 +1187,11 @@ async function clickTrustedPoint(
   Input: ChromeClient["Input"],
   x: number,
   y: number,
+  onPotentiallySubmittingEvent?: () => Promise<void> | void,
 ): Promise<boolean> {
   if (!Input || typeof Input.dispatchMouseEvent !== "function") return false;
   await Input.dispatchMouseEvent({ type: "mouseMoved", x, y });
+  await onPotentiallySubmittingEvent?.();
   await Input.dispatchMouseEvent({ type: "mousePressed", x, y, button: "left", clickCount: 1 });
   await Input.dispatchMouseEvent({ type: "mouseReleased", x, y, button: "left", clickCount: 1 });
   return true;
@@ -1495,6 +1209,42 @@ function sendButtonTimeoutMs(
     : 45_000;
 }
 
+function buildIndeterminateCommitError({
+  prompt,
+  diagnostic,
+  timeoutMs,
+  probe,
+  cause,
+}: {
+  prompt: string;
+  diagnostic: SubmissionDiagnostic;
+  timeoutMs?: number;
+  probe?: CommitProbeState;
+  cause?: unknown;
+}): BrowserAutomationError {
+  const draftRetained = probe?.composerCleared === false || diagnostic.draftRetained === true;
+  return new BrowserAutomationError(
+    "Oracle emitted one potentially submitting input event but could not verify the exact committed user turn. The exact tab remains recoverable and automatic redispatch is disabled.",
+    {
+      stage: "submit-prompt",
+      code: "commit-indeterminate-after-dispatch",
+      outcome: "indeterminate",
+      submissionCommitted: false,
+      commitVerification: "indeterminate",
+      dispatchAttempted: true,
+      potentiallySubmittingEventEmitted: true,
+      potentiallySubmittingEvent: diagnostic.potentiallySubmittingEvent,
+      retrySafe: false,
+      recoverable: true,
+      draftRetained,
+      promptLength: prompt.trim().length,
+      timeoutMs,
+      commitProbe: probe ? summarizeCommitProbe(probe) : undefined,
+    },
+    cause,
+  );
+}
+
 async function verifyPromptCommitted(
   Runtime: ChromeClient["Runtime"],
   prompt: string,
@@ -1502,11 +1252,9 @@ async function verifyPromptCommitted(
   logger?: BrowserLogger,
   baselineTurns?: number,
   onCommitPending?: () => Promise<void> | void,
-  retryRetainedDraft?: () => Promise<RetainedDraftRetryResult>,
   diagnostic: SubmissionDiagnostic = createSubmissionDiagnostic(baselineTurns),
 ): Promise<{ turnsCount: number | null; userTurnIndex: number | null }> {
   const deadline = Date.now() + timeoutMs;
-  const retainedDraftRetryAt = Date.now() + RETAINED_DRAFT_RETRY_DELAY_MS;
   const encodedPrompt = JSON.stringify(prompt.trim());
   const primarySelectorLiteral = JSON.stringify(PROMPT_PRIMARY_SELECTOR);
   const fallbackSelectorLiteral = JSON.stringify(PROMPT_FALLBACK_SELECTOR);
@@ -1648,8 +1396,6 @@ async function verifyPromptCommitted(
 
   let lastProbe: CommitProbeState | undefined;
   let nextPendingCheckAt = 0;
-  let retainedDraftRetryDecided = false;
-  let alternateDispatchAt: number | null = null;
   while (Date.now() < deadline) {
     const { result } = await Runtime.evaluate({ expression: script, returnByValue: true });
     const info = result.value as CommitProbeState | undefined;
@@ -1678,7 +1424,12 @@ async function verifyPromptCommitted(
         {
           stage: "submit-prompt",
           code: "commit-ambiguous-multiple-user-turns",
+          outcome: "indeterminate",
           submissionCommitted: false,
+          commitVerification: "indeterminate",
+          dispatchAttempted: diagnostic.potentiallySubmittingEventEmitted,
+          retrySafe: false,
+          recoverable: true,
           draftRetained: info?.composerCleared === false,
           commitProbe: summarizeCommitProbe(info),
         },
@@ -1690,13 +1441,6 @@ async function verifyPromptCommitted(
       newUserTurnCount === 1 &&
       matchingUserTurnCount === 1
     ) {
-      if (
-        alternateDispatchAt !== null &&
-        Date.now() - alternateDispatchAt < POST_ALTERNATE_OBSERVATION_MS
-      ) {
-        await delay(100);
-        continue;
-      }
       const userTurnIndex = info?.matchedUserTurnIndex;
       diagnostic.finalCommitClassification = "verified-single-user-turn";
       return {
@@ -1707,19 +1451,6 @@ async function verifyPromptCommitted(
             ? userTurnIndex
             : null,
       };
-    }
-    if (retryRetainedDraft && !retainedDraftRetryDecided && Date.now() >= retainedDraftRetryAt) {
-      retainedDraftRetryDecided = true;
-      const retry = await retryRetainedDraft();
-      if (retry.status === "dispatched") {
-        alternateDispatchAt = Date.now();
-      }
-      logger?.(
-        `Retained-draft Send retry decision: ${retry.status}${
-          retry.reason ? ` (${retry.reason})` : ""
-        }`,
-      );
-      continue;
     }
     if (onCommitPending && Date.now() >= nextPendingCheckAt) {
       nextPendingCheckAt = Date.now() + 500;
@@ -1760,6 +1491,15 @@ async function verifyPromptCommitted(
   );
   diagnostic.draftRetained = draftRetained;
   diagnostic.composerCleared = probe?.composerCleared ?? null;
+  if (diagnostic.potentiallySubmittingEventEmitted) {
+    diagnostic.finalCommitClassification = "commit-indeterminate-after-dispatch";
+    throw buildIndeterminateCommitError({
+      prompt,
+      diagnostic,
+      timeoutMs,
+      probe,
+    });
+  }
   const failureCode = classifyFinalCommitFailure(diagnostic, draftRetained);
   diagnostic.finalCommitClassification = failureCode;
   throw new BrowserAutomationError(
@@ -1822,18 +1562,10 @@ function classifyFinalCommitFailure(
   diagnostic: SubmissionDiagnostic,
   draftRetained: boolean,
 ): string {
+  if (diagnostic.potentiallySubmittingEventEmitted) {
+    return "commit-indeterminate-after-dispatch";
+  }
   if (!draftRetained) return "commit-ambiguous-composer-cleared";
-  if (
-    diagnostic.retryBlockedReason === "ownership-changed-before-retry" ||
-    diagnostic.retryBlockedReason === "document-changed-before-retry" ||
-    diagnostic.retryBlockedReason === "composer-mutated-before-send"
-  ) {
-    return diagnostic.retryBlockedReason;
-  }
-  if (diagnostic.retryBlockedReason === "send-control-unavailable") {
-    return "send-control-unavailable";
-  }
-  if (diagnostic.alternateDispatchAttempted) return "commit-unverified-draft-retained";
   return diagnostic.initialDispatchMethod === "trusted-click" ? "trusted-click-noop" : "enter-noop";
 }
 
@@ -1864,10 +1596,8 @@ function normalizeComposerText(value: string): string {
 
 // biome-ignore lint/style/useNamingConvention: test-only export used in vitest suite
 export const __test__ = {
-  attemptRetainedDraftPageRetry,
   attemptSendButton,
   composerValueReaderSource: COMPOSER_VALUE_READER_SOURCE,
   sendButtonTimeoutMs,
-  submissionDocumentTokenProperty: SUBMISSION_DOCUMENT_TOKEN_PROPERTY,
   verifyPromptCommitted,
 };

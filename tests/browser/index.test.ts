@@ -124,6 +124,19 @@ describe("shouldPreserveBrowserOnErrorForTest", () => {
 
     expect(classifyPreservedBrowserErrorForTest(error, false)).toBe("commit-ambiguous");
   });
+
+  test("preserves an indeterminate post-dispatch tab for recovery", () => {
+    const error = new BrowserAutomationError("Commit could not be verified after input.", {
+      stage: "submit-prompt",
+      code: "commit-indeterminate-after-dispatch",
+      submissionCommitted: false,
+      dispatchAttempted: true,
+      retrySafe: false,
+    });
+
+    expect(classifyPreservedBrowserErrorForTest(error, false)).toBe("commit-ambiguous");
+    expect(shouldPreserveBrowserOnErrorForTest(error, false)).toBe(true);
+  });
 });
 
 describe("authenticated model-selection errors", () => {
@@ -531,7 +544,7 @@ describe("ChatGPT UI warning detection", () => {
     );
   });
 
-  test("records a request-frequency gate as not submitted and retry-safe", async () => {
+  test("records a request-frequency gate after dispatch as indeterminate and not retry-safe", async () => {
     const Runtime = {
       evaluate: vi.fn().mockResolvedValue({
         result: {
@@ -563,15 +576,18 @@ describe("ChatGPT UI warning detection", () => {
       dispatchAttempted: true,
     });
 
-    expect(error?.message).toContain("No prompt was committed");
-    expect(error?.message).toContain("retrying after the page gate clears is safe");
+    expect(error?.message).toContain("Exact commit is indeterminate");
+    expect(error?.message).toContain("do not resend");
     expect(error?.details).toMatchObject({
       stage: "submit-prompt",
-      code: "chatgpt-submission-gate",
+      code: "commit-indeterminate-after-dispatch",
+      outcome: "indeterminate",
       submissionCommitted: false,
       dispatchAttempted: true,
-      retrySafe: true,
-      retryGuidance: "wait-for-page-gate-to-clear",
+      commitVerification: "indeterminate",
+      retrySafe: false,
+      recoverable: true,
+      retryGuidance: "reattach-exact-tab-do-not-resend",
       runtime: {
         browserTransport: "cdp",
         chromePort: 9333,
@@ -581,6 +597,42 @@ describe("ChatGPT UI warning detection", () => {
         type: "rate_limit",
         message: "请求频繁，请稍后再试",
       },
+    });
+  });
+
+  test("keeps a request-frequency gate before input retry-safe", async () => {
+    const Runtime = {
+      evaluate: vi.fn().mockResolvedValue({
+        result: {
+          value: [
+            {
+              text: "请求频繁，请稍后再试",
+              source: "selector",
+              role: "alert",
+              ariaLive: "assertive",
+              selector: '[role="alert"]',
+            },
+          ],
+        },
+      }),
+    };
+
+    const error = await __test__.createChatGptUiWarningError({
+      Runtime: Runtime as never,
+      logger: vi.fn() as never,
+      runtime: { browserTransport: "cdp", chromePort: 9333, promptSubmitted: false },
+      stage: "submit-prompt",
+      waitTarget: "prompt dispatch",
+      submissionCommitted: false,
+      dispatchAttempted: false,
+    });
+
+    expect(error?.details).toMatchObject({
+      code: "chatgpt-submission-gate",
+      submissionCommitted: false,
+      dispatchAttempted: false,
+      retrySafe: true,
+      retryGuidance: "wait-for-page-gate-to-clear",
     });
   });
 

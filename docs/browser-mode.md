@@ -105,9 +105,11 @@ dispatch. Partial active workload and timing markers with no valid elapsed
 value remain unknown and fail closed rather than borrowing initial-turn data.
 
 Direct CDP distinguishes a Send attempt from a committed user turn. A visible
-request-frequency warning before commit produces a terminal, retry-safe receipt
-with `promptSubmitted:false`; Oracle does not automatically retry or wait for a
-response that cannot exist.
+request-frequency warning detected before any potentially submitting input
+event produces a terminal, retry-safe receipt with `promptSubmitted:false`.
+After `mousePressed` or Enter `keyDown`, an unverifiable commit is instead
+indeterminate and recoverable with `retrySafe:false`; Oracle preserves the exact
+tab and does not redispatch or wait for a response whose existence is unknown.
 
 ## OpenCLI Browser Bridge (explicit alternative)
 
@@ -221,8 +223,8 @@ Notes:
    - After Send commits, binds the first durable conversation URL only when the exact committed user-turn digest is present. That conversation ID is immutable capture authority: if the same CDP target later navigates to another conversation, thinking/response/Copy capture stops and the original conversation remains recoverable.
    - Immediately probes the cookie-authenticated `/api/auth/session` endpoint in the ChatGPT tab and checks only whether it contains a user; returned tokens are never logged. If that endpoint is unavailable, Oracle falls back to the legacy `/backend-api/me` probe and a visible composer plus profile or chat-history authentication signals. Auth pages, visible login controls, resolved sessions without a user, composer-only shells, and pages without profile/history signals still fail with login guidance.
    - When `--file` inputs would push the pasted composer content over ~60k characters, we switch to uploading attachments (optionally bundled). Oracle first waits for every expected attachment to settle while the prompt is intentionally empty; ChatGPT may keep Send disabled in that state. It then composes the exact system+user prompt, re-verifies the attachments, and requires an enabled Send button before clicking.
-   - Immediately before dispatch, Oracle activates the exact owned target, rechecks ownership and the visible composer, and measures a fresh trusted Send point. Coordinate clicks and Enter share the same exact-turn verification. A text-only draft may use the opposite method once only when the original turn baseline, document token, target, and composer all still agree and no user/assistant/generation effect has appeared. Attachment-bearing or ambiguous states never enter that recovery path.
-   - Oracle refuses to overwrite or append to non-empty composer content it cannot prove it owns. Uncommitted retained drafts and cleared-but-unobserved commits keep their exact tab recoverable with sanitized submission diagnostics. Preserve that session and inspect it with `oracle session <id> --render`; do not rerun the prompt while commit state is uncertain.
+   - Immediately before dispatch, Oracle activates the exact owned target, rechecks ownership and the visible composer, and measures a fresh trusted Send point. Coordinate clicks and Enter share the same exact-turn verification. Enter is permitted as an alternate only when trusted-click emitted no potentially submitting input event at all. Once `mousePressed` or Enter `keyDown` has been emitted, Oracle never changes methods or dispatches again automatically.
+   - Oracle refuses to overwrite or append to non-empty composer content it cannot prove it owns. After a potentially submitting event, retained drafts and cleared-but-unobserved commits are classified as indeterminate/recoverable with `retrySafe:false` and keep their exact tab with sanitized submission diagnostics. Preserve that session and inspect it with `oracle session <id> --render`; do not rerun the prompt while commit state is uncertain.
    - Dedicated mode treats the persistent profile as a shared browser-scope resource while process lifetime defaults to `while-needed`; each run owns only its exact tab, and the last lease drains Chrome when no recovery hold or unowned meaningful page remains. Ephemeral mode removes its temporary profile unless explicitly retained.
 
 3. **Session integration** – browser sessions use the normal log writer, add `mode: "browser"` plus `browser.config/runtime` metadata, and persist Chrome pid/port or websocket attach metadata plus the Oracle-owned target and committed conversation URL for reattach. A later URL observed in that mutable target cannot replace the committed conversation receipt.

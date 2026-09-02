@@ -9,125 +9,87 @@ import {
   CONVERSATION_TURN_SELECTOR,
 } from "../../src/browser/constants.js";
 
-class RetryGateFakeElement {
-  readonly dataset: Record<string, string> = {};
-  readonly childNodes: RetryGateFakeElement[] = [];
-  readonly children: RetryGateFakeElement[] = [];
-  readonly classList = { contains: () => false };
-  readonly click = vi.fn();
-  innerText = "";
-  textContent = "";
-
-  constructor(readonly attributes: Record<string, string> = {}) {}
-
-  getAttribute(name: string) {
-    return this.attributes[name] ?? null;
-  }
-
-  hasAttribute(name: string) {
-    return name in this.attributes;
-  }
-
-  getBoundingClientRect() {
-    return { width: 10, height: 10 };
-  }
-
-  querySelector(selector: string) {
-    return selector === ".whitespace-pre-wrap" ? this : null;
-  }
-}
-
-class RetryGateFakeTextArea extends RetryGateFakeElement {
-  value = "";
-}
-
-async function runRetainedDraftRetryGate({
-  baseline = 0,
-  composerValue = "hello",
-  currentDocumentToken = "document-token",
-  expectedDocumentToken = "document-token",
-  href = "https://chatgpt.com/",
-  stopVisible = false,
-  turns = [],
-  isSubmissionOwner = () => true,
+function createSubmitDispatchScenario({
+  method,
+  commitAtMs,
 }: {
-  baseline?: number;
-  composerValue?: string;
-  currentDocumentToken?: string | null;
-  expectedDocumentToken?: string;
-  href?: string;
-  stopVisible?: boolean;
-  turns?: Array<{ role: "assistant" | "user"; text: string }>;
-  isSubmissionOwner?: () => boolean | Promise<boolean>;
-} = {}) {
-  const composer = new RetryGateFakeTextArea();
-  composer.value = composerValue;
-  const turnNodes = turns.map(({ role, text }) => {
-    const node = new RetryGateFakeElement({ "data-message-author-role": role });
-    node.innerText = text;
-    node.textContent = text;
-    return node;
-  });
-  const stopButton = new RetryGateFakeElement();
-  const sendButton = new RetryGateFakeElement();
-  const fakeDocument = {
-    querySelector: () => composer,
-    querySelectorAll: (selector: string) => {
-      if (selector === CONVERSATION_TURN_CONTAINER_SELECTOR) return turnNodes;
-      if (selector === CONVERSATION_TURN_SELECTOR) return turnNodes;
-      if (selector === '[data-testid="stop-button"]') return stopVisible ? [stopButton] : [];
-      if (selector.includes("send") || selector.includes('type="submit"')) {
-        return [sendButton];
+  method: "trusted-click" | "enter";
+  commitAtMs: number | null;
+}) {
+  let dispatchCount = 0;
+  const runtime = {
+    evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+      if (expression.includes("document.readyState")) {
+        return { result: { value: { ready: true, composer: true, fileInput: false } } };
       }
-      return [];
-    },
-  };
-  if (currentDocumentToken !== null) {
-    Object.defineProperty(fakeDocument, promptComposer.submissionDocumentTokenProperty, {
-      value: currentDocumentToken,
-    });
-  }
-  const browserWindow = {
-    getComputedStyle: () => ({
-      display: "block",
-      visibility: "visible",
-      pointerEvents: "auto",
+      if (expression.includes("oracle-preexisting-composer-check")) {
+        return { result: { value: { composerLength: 0, composerEmpty: true } } };
+      }
+      if (expression.includes("focused: true")) {
+        return { result: { value: { focused: true } } };
+      }
+      if (expression.includes("editorText")) {
+        return {
+          result: {
+            value: {
+              editorText: "hello",
+              fallbackValue: "",
+              activeValue: "hello",
+            },
+          },
+        };
+      }
+      if (expression.includes("oracle-composer-unchanged-check")) {
+        return { result: { value: { unchanged: true, observedLength: 5 } } };
+      }
+      if (expression.includes("button.scrollIntoView")) {
+        return {
+          result: {
+            value:
+              method === "trusted-click"
+                ? { status: "point", x: 10, y: 20 }
+                : { status: "missing" },
+          },
+        };
+      }
+      const committed = commitAtMs !== null && Date.now() >= commitAtMs;
+      return {
+        result: {
+          value: {
+            baseline: 0,
+            turnsCount: committed ? 1 : 0,
+            newUserTurnCount: committed ? 1 : 0,
+            matchingUserTurnCount: committed ? 1 : 0,
+            userMatched: committed,
+            matchedUserTurnIndex: committed ? 0 : null,
+            lastMatched: committed,
+            hasNewTurn: committed,
+            stopVisible: committed,
+            assistantVisible: false,
+            composerCleared: committed,
+            inConversation: committed,
+            editorValue: committed ? "" : "hello",
+          },
+        },
+      };
     }),
   };
-  const location = { href };
-  const runtime = {
-    evaluate: vi.fn(async ({ expression }: { expression: string }) => ({
-      result: {
-        value: Function(
-          "document",
-          "window",
-          "location",
-          "HTMLElement",
-          "HTMLTextAreaElement",
-          "Node",
-          "URL",
-          `return ${expression}`,
-        )(
-          fakeDocument,
-          browserWindow,
-          location,
-          RetryGateFakeElement,
-          RetryGateFakeTextArea,
-          { TEXT_NODE: 3 },
-          URL,
-        ),
-      },
-    })),
+  const input = {
+    insertText: vi.fn(),
+    dispatchMouseEvent: vi.fn(async ({ type }: { type: string }) => {
+      if (type === "mousePressed") dispatchCount += 1;
+    }),
+    dispatchKeyEvent: vi.fn(async ({ type }: { type: string }) => {
+      if (type === "keyDown") dispatchCount += 1;
+    }),
   };
-  const result = await promptComposer.attemptRetainedDraftPageRetry({
-    Runtime: runtime as never,
-    prompt: "hello",
-    baseline,
-    submissionOwnerHref: href,
-    submissionDocumentToken: expectedDocumentToken,
-    isSubmissionOwner,
-  });
-  return { result, runtime, sendButton };
+  return {
+    runtime,
+    input,
+    page: { bringToFront: vi.fn() },
+    isSubmissionOwner: vi.fn(() => true),
+    dispatchCount: () => dispatchCount,
+  };
 }
 
 describe("promptComposer", () => {
@@ -788,7 +750,7 @@ describe("promptComposer", () => {
           return { result: { value: { focused: true } } };
         }
         if (expression.includes("editorText")) {
-          if (expression.includes("submissionDocumentTokenProperty")) {
+          if (activated) {
             actions.push("final-composer-read");
           }
           return {
@@ -868,240 +830,162 @@ describe("promptComposer", () => {
     expect(actions).not.toContain("measure-inactive");
   });
 
-  test("recovers one trusted-click no-op with one Enter and exactly one new user turn", async () => {
+  test("waits for one delayed first commit without alternate dispatch", async () => {
     vi.useFakeTimers();
     try {
-      let committed = false;
-      const runtime = {
-        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
-          if (expression.includes("document.readyState")) {
-            return { result: { value: { ready: true, composer: true, fileInput: false } } };
-          }
-          if (expression.includes("oracle-preexisting-composer-check")) {
-            return { result: { value: { composerLength: 0, composerEmpty: true } } };
-          }
-          if (expression.includes("focused: true")) {
-            return { result: { value: { focused: true } } };
-          }
-          if (expression.includes("editorText")) {
-            return {
-              result: {
-                value: {
-                  editorText: "hello",
-                  fallbackValue: "",
-                  activeValue: "hello",
-                  href: "https://chatgpt.com/",
-                  documentTokenStored: true,
-                },
-              },
-            };
-          }
-          if (expression.includes("expectedOwnerHref")) {
-            return {
-              result: {
-                value: {
-                  status: "eligible",
-                  gate: {
-                    submissionCommitted: false,
-                    draftRetained: true,
-                    composerMatchesPrompt: true,
-                    hasNewTurn: false,
-                    userMatched: false,
-                    stopVisible: false,
-                    assistantVisible: false,
-                    baselineKnown: true,
-                    baselineUnchanged: true,
-                    ownerMatched: true,
-                    documentTokenMatched: true,
-                  },
-                },
-              },
-            };
-          }
-          if (expression.includes("oracle-composer-unchanged-check")) {
-            return { result: { value: { unchanged: true, observedLength: 5 } } };
-          }
-          if (expression.includes("button.scrollIntoView")) {
-            return { result: { value: { status: "point", x: 10, y: 20 } } };
-          }
-          return {
-            result: {
-              value: {
-                baseline: 0,
-                turnsCount: committed ? 1 : 0,
-                newUserTurnCount: committed ? 1 : 0,
-                matchingUserTurnCount: committed ? 1 : 0,
-                userMatched: committed,
-                matchedUserTurnIndex: committed ? 0 : null,
-                lastMatched: committed,
-                hasNewTurn: committed,
-                stopVisible: committed,
-                assistantVisible: false,
-                composerCleared: committed,
-                inConversation: committed,
-                editorValue: committed ? "" : "hello",
-              },
-            },
-          };
-        }),
-      };
-      const input = {
-        insertText: vi.fn(),
-        dispatchMouseEvent: vi.fn(),
-        dispatchKeyEvent: vi.fn(async ({ type }: { type: string }) => {
-          if (type === "keyUp") committed = true;
-        }),
-      };
-      const page = { bringToFront: vi.fn() };
-      const logger = Object.assign(vi.fn(), { verbose: false });
+      vi.setSystemTime(0);
+      const scenario = createSubmitDispatchScenario({
+        method: "trusted-click",
+        commitAtMs: 3_500,
+      });
+      const onPromptDispatched = vi.fn();
 
       const result = submitPrompt(
         {
-          runtime: runtime as never,
-          input: input as never,
-          page: page as never,
+          runtime: scenario.runtime as never,
+          input: scenario.input as never,
+          page: scenario.page as never,
           baselineTurns: 0,
-          isSubmissionOwner: () => true,
+          isSubmissionOwner: scenario.isSubmissionOwner,
+          onPromptDispatched,
         },
         "hello",
-        logger as never,
+        Object.assign(vi.fn(), { verbose: false }) as never,
       );
       const assertion = expect(result).resolves.toBe(1);
-      await vi.advanceTimersByTimeAsync(61_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       await assertion;
 
-      expect(input.dispatchMouseEvent).toHaveBeenCalledTimes(3);
-      expect(input.dispatchKeyEvent).toHaveBeenCalledTimes(2);
-      expect(input.dispatchKeyEvent).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({ type: "keyDown", key: "Enter" }),
-      );
-      expect(input.dispatchKeyEvent).toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({ type: "keyUp", key: "Enter" }),
-      );
+      expect(scenario.dispatchCount()).toBe(1);
+      expect(onPromptDispatched).toHaveBeenCalledTimes(1);
+      expect(
+        scenario.input.dispatchMouseEvent.mock.calls.filter(
+          ([event]) => event.type === "mousePressed",
+        ),
+      ).toHaveLength(1);
+      expect(
+        scenario.input.dispatchKeyEvent.mock.calls.filter(([event]) => event.type === "keyDown"),
+      ).toHaveLength(0);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  test("recovers one Enter no-op with one revalidated trusted click", async () => {
+  test("keeps a permanently retained draft after click indeterminate with one dispatch", async () => {
     vi.useFakeTimers();
     try {
-      let committed = false;
-      let sendControlProbe = 0;
-      const runtime = {
-        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
-          if (expression.includes("document.readyState")) {
-            return { result: { value: { ready: true, composer: true, fileInput: false } } };
-          }
-          if (expression.includes("oracle-preexisting-composer-check")) {
-            return { result: { value: { composerLength: 0, composerEmpty: true } } };
-          }
-          if (expression.includes("focused: true")) {
-            return { result: { value: { focused: true } } };
-          }
-          if (expression.includes("editorText")) {
-            return {
-              result: {
-                value: {
-                  editorText: "hello",
-                  fallbackValue: "",
-                  activeValue: "hello",
-                  href: "https://chatgpt.com/",
-                  documentTokenStored: true,
-                },
-              },
-            };
-          }
-          if (expression.includes("expectedOwnerHref")) {
-            return {
-              result: {
-                value: {
-                  status: "eligible",
-                  gate: {
-                    submissionCommitted: false,
-                    draftRetained: true,
-                    composerMatchesPrompt: true,
-                    hasNewTurn: false,
-                    userMatched: false,
-                    stopVisible: false,
-                    assistantVisible: false,
-                    baselineKnown: true,
-                    baselineUnchanged: true,
-                    ownerMatched: true,
-                    documentTokenMatched: true,
-                  },
-                },
-              },
-            };
-          }
-          if (expression.includes("oracle-composer-unchanged-check")) {
-            return { result: { value: { unchanged: true, observedLength: 5 } } };
-          }
-          if (expression.includes("button.scrollIntoView")) {
-            sendControlProbe += 1;
-            return {
-              result: {
-                value:
-                  sendControlProbe === 1
-                    ? { status: "missing" }
-                    : { status: "point", x: 30, y: 40 },
-              },
-            };
-          }
-          return {
-            result: {
-              value: {
-                baseline: 0,
-                turnsCount: committed ? 1 : 0,
-                newUserTurnCount: committed ? 1 : 0,
-                matchingUserTurnCount: committed ? 1 : 0,
-                userMatched: committed,
-                matchedUserTurnIndex: committed ? 0 : null,
-                lastMatched: committed,
-                hasNewTurn: committed,
-                stopVisible: committed,
-                assistantVisible: false,
-                composerCleared: committed,
-                inConversation: committed,
-                editorValue: committed ? "" : "hello",
-              },
-            },
-          };
-        }),
-      };
-      let enterKeyUps = 0;
-      const input = {
-        insertText: vi.fn(),
-        dispatchKeyEvent: vi.fn(async ({ type }: { type: string }) => {
-          if (type === "keyUp") enterKeyUps += 1;
-        }),
-        dispatchMouseEvent: vi.fn(async ({ type }: { type: string }) => {
-          if (type === "mouseReleased") committed = true;
-        }),
-      };
-      const page = { bringToFront: vi.fn() };
-      const logger = Object.assign(vi.fn(), { verbose: false });
+      const scenario = createSubmitDispatchScenario({
+        method: "trusted-click",
+        commitAtMs: null,
+      });
 
       const result = submitPrompt(
         {
-          runtime: runtime as never,
-          input: input as never,
-          page: page as never,
+          runtime: scenario.runtime as never,
+          input: scenario.input as never,
+          page: scenario.page as never,
           baselineTurns: 0,
-          isSubmissionOwner: () => true,
+          isSubmissionOwner: scenario.isSubmissionOwner,
         },
         "hello",
-        logger as never,
+        Object.assign(vi.fn(), { verbose: false }) as never,
       );
-      const assertion = expect(result).resolves.toBe(1);
-      await vi.advanceTimersByTimeAsync(61_000);
+      const assertion = expect(result).rejects.toMatchObject({
+        details: expect.objectContaining({
+          code: "commit-indeterminate-after-dispatch",
+          outcome: "indeterminate",
+          submissionCommitted: false,
+          commitVerification: "indeterminate",
+          dispatchAttempted: true,
+          potentiallySubmittingEventEmitted: true,
+          potentiallySubmittingEvent: "mousePressed",
+          retrySafe: false,
+          recoverable: true,
+          draftRetained: true,
+          submissionDiagnostic: expect.objectContaining({
+            initialDispatchMethod: "trusted-click",
+            retryEligible: false,
+            retryBlockedReason: "potentially-submitting-event-emitted",
+            alternateDispatchAttempted: false,
+            alternateDispatchMethod: null,
+            finalCommitClassification: "commit-indeterminate-after-dispatch",
+            potentiallySubmittingEventEmitted: true,
+            potentiallySubmittingEvent: "mousePressed",
+          }),
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(62_000);
       await assertion;
 
-      expect(enterKeyUps).toBe(1);
-      expect(input.dispatchMouseEvent).toHaveBeenCalledTimes(3);
-      expect(page.bringToFront).toHaveBeenCalledTimes(2);
+      expect(scenario.dispatchCount()).toBe(1);
+      expect(
+        scenario.input.dispatchMouseEvent.mock.calls.filter(
+          ([event]) => event.type === "mousePressed",
+        ),
+      ).toHaveLength(1);
+      expect(
+        scenario.input.dispatchKeyEvent.mock.calls.filter(([event]) => event.type === "keyDown"),
+      ).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("keeps a permanently retained draft after Enter indeterminate with one dispatch", async () => {
+    vi.useFakeTimers();
+    try {
+      const scenario = createSubmitDispatchScenario({
+        method: "enter",
+        commitAtMs: null,
+      });
+
+      const result = submitPrompt(
+        {
+          runtime: scenario.runtime as never,
+          input: scenario.input as never,
+          page: scenario.page as never,
+          baselineTurns: 0,
+          isSubmissionOwner: scenario.isSubmissionOwner,
+        },
+        "hello",
+        Object.assign(vi.fn(), { verbose: false }) as never,
+      );
+      const assertion = expect(result).rejects.toMatchObject({
+        details: expect.objectContaining({
+          code: "commit-indeterminate-after-dispatch",
+          outcome: "indeterminate",
+          submissionCommitted: false,
+          commitVerification: "indeterminate",
+          dispatchAttempted: true,
+          potentiallySubmittingEventEmitted: true,
+          potentiallySubmittingEvent: "enterKeyDown",
+          retrySafe: false,
+          recoverable: true,
+          draftRetained: true,
+          submissionDiagnostic: expect.objectContaining({
+            initialDispatchMethod: "enter",
+            retryEligible: false,
+            retryBlockedReason: "potentially-submitting-event-emitted",
+            alternateDispatchAttempted: false,
+            alternateDispatchMethod: null,
+            finalCommitClassification: "commit-indeterminate-after-dispatch",
+            potentiallySubmittingEventEmitted: true,
+            potentiallySubmittingEvent: "enterKeyDown",
+          }),
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(62_000);
+      await assertion;
+
+      expect(scenario.dispatchCount()).toBe(1);
+      expect(
+        scenario.input.dispatchKeyEvent.mock.calls.filter(([event]) => event.type === "keyDown"),
+      ).toHaveLength(1);
+      expect(
+        scenario.input.dispatchMouseEvent.mock.calls.filter(
+          ([event]) => event.type === "mousePressed",
+        ),
+      ).toHaveLength(0);
     } finally {
       vi.useRealTimers();
     }
@@ -1156,68 +1040,7 @@ describe("promptComposer", () => {
     expect(evaluate).toHaveBeenCalledTimes(1);
   });
 
-  test("never certifies a delayed first click that would create two user turns", async () => {
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(0);
-      let alternateDispatched = false;
-      const runtime = {
-        evaluate: vi.fn(async () => {
-          const now = Date.now();
-          const newUserTurnCount = !alternateDispatched ? 0 : now < 3_500 ? 1 : 2;
-          return {
-            result: {
-              value: {
-                baseline: 0,
-                turnsCount: newUserTurnCount,
-                newUserTurnCount,
-                matchingUserTurnCount: newUserTurnCount,
-                userMatched: newUserTurnCount > 0,
-                matchedUserTurnIndex: newUserTurnCount > 0 ? 0 : null,
-                lastMatched: newUserTurnCount > 0,
-                hasNewTurn: newUserTurnCount > 0,
-                stopVisible: newUserTurnCount > 0,
-                assistantVisible: false,
-                composerCleared: newUserTurnCount > 0,
-                editorValue: newUserTurnCount > 0 ? "" : "hello",
-              },
-            },
-          };
-        }),
-      };
-      const retry = vi.fn(async () => {
-        alternateDispatched = true;
-        return { status: "dispatched" as const };
-      });
-
-      const result = promptComposer.verifyPromptCommitted(
-        runtime as never,
-        "hello",
-        5_000,
-        undefined,
-        0,
-        undefined,
-        retry,
-      );
-      const assertion = expect(result).rejects.toMatchObject({
-        details: expect.objectContaining({
-          code: "commit-ambiguous-multiple-user-turns",
-          submissionCommitted: false,
-          commitProbe: expect.objectContaining({
-            newUserTurnCount: 2,
-            matchingUserTurnCount: 2,
-          }),
-        }),
-      });
-      await vi.advanceTimersByTimeAsync(6_000);
-      await assertion;
-      expect(retry).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("keeps attachment-bearing click no-ops fail-closed without alternate dispatch", async () => {
+  test("keeps an attachment-bearing click indeterminate without alternate dispatch", async () => {
     vi.useFakeTimers();
     try {
       const runtime = {
@@ -1293,9 +1116,11 @@ describe("promptComposer", () => {
       );
       const assertion = expect(result).rejects.toMatchObject({
         details: expect.objectContaining({
-          code: "trusted-click-noop",
+          code: "commit-indeterminate-after-dispatch",
+          outcome: "indeterminate",
+          retrySafe: false,
           draftRetained: true,
-          submissionDiagnostic: {
+          submissionDiagnostic: expect.objectContaining({
             initialDispatchMethod: "trusted-click",
             targetActivationAttempted: true,
             targetActivationVerified: true,
@@ -1308,13 +1133,14 @@ describe("promptComposer", () => {
             assistantObserved: false,
             generationControlObserved: false,
             retryEligible: false,
-            retryBlockedReason: "attachment-commit-identity-unavailable",
+            retryBlockedReason: "potentially-submitting-event-emitted",
             alternateDispatchAttempted: false,
             alternateDispatchMethod: null,
-            finalCommitClassification: "trusted-click-noop",
+            finalCommitClassification: "commit-indeterminate-after-dispatch",
             ownershipVerified: true,
-            documentTokenVerified: false,
-          },
+            potentiallySubmittingEventEmitted: true,
+            potentiallySubmittingEvent: "mousePressed",
+          }),
         }),
       });
       await vi.advanceTimersByTimeAsync(61_000);
@@ -1322,117 +1148,6 @@ describe("promptComposer", () => {
 
       expect(input.dispatchMouseEvent).toHaveBeenCalledTimes(3);
       expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("classifies an unavailable opposite send control without a synthetic dispatch", async () => {
-    vi.useFakeTimers();
-    try {
-      const runtime = {
-        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
-          if (expression.includes("document.readyState")) {
-            return { result: { value: { ready: true, composer: true, fileInput: false } } };
-          }
-          if (expression.includes("oracle-preexisting-composer-check")) {
-            return { result: { value: { composerLength: 0, composerEmpty: true } } };
-          }
-          if (expression.includes("focused: true")) {
-            return { result: { value: { focused: true } } };
-          }
-          if (expression.includes("editorText")) {
-            return {
-              result: {
-                value: {
-                  editorText: "hello",
-                  fallbackValue: "",
-                  activeValue: "hello",
-                  href: "https://chatgpt.com/",
-                  documentTokenStored: true,
-                },
-              },
-            };
-          }
-          if (expression.includes("expectedOwnerHref")) {
-            return {
-              result: {
-                value: {
-                  status: "eligible",
-                  gate: {
-                    submissionCommitted: false,
-                    draftRetained: true,
-                    composerMatchesPrompt: true,
-                    hasNewTurn: false,
-                    userMatched: false,
-                    stopVisible: false,
-                    assistantVisible: false,
-                    baselineKnown: true,
-                    baselineUnchanged: true,
-                    ownerMatched: true,
-                    documentTokenMatched: true,
-                  },
-                },
-              },
-            };
-          }
-          if (expression.includes("button.scrollIntoView")) {
-            return { result: { value: { status: "missing" } } };
-          }
-          if (expression.includes("oracle-composer-unchanged-check")) {
-            return { result: { value: { unchanged: true, observedLength: 5 } } };
-          }
-          return {
-            result: {
-              value: {
-                baseline: 0,
-                turnsCount: 0,
-                newUserTurnCount: 0,
-                matchingUserTurnCount: 0,
-                userMatched: false,
-                matchedUserTurnIndex: null,
-                lastMatched: false,
-                hasNewTurn: false,
-                stopVisible: false,
-                assistantVisible: false,
-                composerCleared: false,
-                editorValue: "hello",
-              },
-            },
-          };
-        }),
-      };
-      const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
-      const page = { bringToFront: vi.fn() };
-      const logger = Object.assign(vi.fn(), { verbose: false });
-
-      const result = submitPrompt(
-        {
-          runtime: runtime as never,
-          input: input as never,
-          page: page as never,
-          baselineTurns: 0,
-          isSubmissionOwner: () => true,
-        },
-        "hello",
-        logger as never,
-      );
-      const assertion = expect(result).rejects.toMatchObject({
-        details: expect.objectContaining({
-          code: "send-control-unavailable",
-          submissionDiagnostic: expect.objectContaining({
-            initialDispatchMethod: "enter",
-            retryEligible: true,
-            alternateDispatchMethod: "trusted-click",
-            alternateDispatchAttempted: false,
-            retryBlockedReason: "send-control-unavailable",
-          }),
-        }),
-      });
-      await vi.advanceTimersByTimeAsync(61_000);
-      await assertion;
-
-      expect(input.dispatchKeyEvent).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
@@ -1494,129 +1209,7 @@ describe("promptComposer", () => {
     expect(actions).toEqual(["send-click"]);
   });
 
-  test("retries one retained draft through the verified gate with one alternate Enter", async () => {
-    vi.useFakeTimers();
-    try {
-      let retryDispatched = false;
-      let retryChecks = 0;
-      const isSubmissionOwner = vi.fn(() => true);
-      const runtime = {
-        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
-          if (expression.includes("document.readyState")) {
-            return { result: { value: { ready: true, composer: true, fileInput: false } } };
-          }
-          if (expression.includes("oracle-preexisting-composer-check")) {
-            return { result: { value: { composerLength: 0, composerEmpty: true } } };
-          }
-          if (expression.includes("focused: true")) {
-            return { result: { value: { focused: true } } };
-          }
-          if (expression.includes("editorText")) {
-            return {
-              result: {
-                value: {
-                  editorText: "hello",
-                  fallbackValue: "",
-                  activeValue: "hello",
-                  href: "https://chatgpt.com/",
-                  documentTokenStored: true,
-                },
-              },
-            };
-          }
-          if (expression.includes("expectedOwnerHref")) {
-            retryChecks += 1;
-            return {
-              result: {
-                value: {
-                  status: "eligible",
-                  gate: {
-                    submissionCommitted: false,
-                    draftRetained: true,
-                    composerMatchesPrompt: true,
-                    hasNewTurn: false,
-                    userMatched: false,
-                    stopVisible: false,
-                    assistantVisible: false,
-                    baselineKnown: true,
-                    baselineUnchanged: true,
-                    ownerMatched: true,
-                    documentTokenMatched: true,
-                  },
-                },
-              },
-            };
-          }
-          if (expression.includes("button.scrollIntoView")) {
-            return { result: { value: { status: "clicked" } } };
-          }
-          return {
-            result: {
-              value: retryDispatched
-                ? {
-                    baseline: 0,
-                    turnsCount: 2,
-                    userMatched: true,
-                    matchedUserTurnIndex: 0,
-                    lastMatched: true,
-                    hasNewTurn: true,
-                    stopVisible: true,
-                    assistantVisible: true,
-                    composerCleared: true,
-                    composerMatchesPrompt: false,
-                    inConversation: true,
-                  }
-                : {
-                    baseline: 0,
-                    turnsCount: 0,
-                    userMatched: false,
-                    matchedUserTurnIndex: null,
-                    lastMatched: false,
-                    hasNewTurn: false,
-                    stopVisible: false,
-                    assistantVisible: false,
-                    composerCleared: false,
-                    composerMatchesPrompt: true,
-                    inConversation: false,
-                  },
-            },
-          };
-        }),
-      };
-      const input = {
-        insertText: vi.fn(),
-        dispatchKeyEvent: vi.fn(async ({ type }: { type: string }) => {
-          if (type === "keyUp") retryDispatched = true;
-        }),
-      };
-      const page = { bringToFront: vi.fn() };
-      const logger = Object.assign(vi.fn(), { verbose: false });
-
-      const result = submitPrompt(
-        {
-          runtime: runtime as never,
-          input: input as never,
-          page: page as never,
-          baselineTurns: 0,
-          isSubmissionOwner,
-        },
-        "hello",
-        logger as never,
-      );
-      const assertion = expect(result).resolves.toBe(2);
-      await vi.advanceTimersByTimeAsync(6_000);
-      await assertion;
-
-      expect(isSubmissionOwner).toHaveBeenCalledTimes(5);
-      expect(retryChecks).toBe(1);
-      expect(input.dispatchKeyEvent).toHaveBeenCalledTimes(2);
-      expect(logger).toHaveBeenCalledWith("Retained-draft Send retry decision: dispatched");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("does not let a post-dispatch fallback count authorize retry", async () => {
+  test("uses a fallback baseline without creating a second dispatch", async () => {
     vi.useFakeTimers();
     try {
       let commitProbes = 0;
@@ -1649,7 +1242,7 @@ describe("promptComposer", () => {
           }
           if (expression.includes("button.scrollIntoView")) {
             sendDispatched = true;
-            return { result: { value: { status: "clicked" } } };
+            return { result: { value: { status: "point", x: 10, y: 20 } } };
           }
           if (expression.trimEnd().endsWith(").length")) {
             fallbackCountReads += 1;
@@ -1676,7 +1269,11 @@ describe("promptComposer", () => {
           };
         }),
       };
-      const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
+      const input = {
+        insertText: vi.fn(),
+        dispatchKeyEvent: vi.fn(),
+        dispatchMouseEvent: vi.fn(),
+      };
       const logger = Object.assign(vi.fn(), { verbose: false });
 
       const result = submitPrompt(
@@ -1696,219 +1293,13 @@ describe("promptComposer", () => {
       expect(sendDispatched).toBe(true);
       expect(fallbackCountReads).toBe(1);
       expect(isSubmissionOwner).not.toHaveBeenCalled();
-      expect(runtime.evaluate).not.toHaveBeenCalledWith(
-        expect.objectContaining({ expression: expect.stringContaining("expectedDocumentToken") }),
-      );
+      expect(
+        input.dispatchMouseEvent.mock.calls.filter(([event]) => event.type === "mousePressed"),
+      ).toHaveLength(1);
+      expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  test("excludes attachment submissions from retained-draft recovery", async () => {
-    let postVerificationExpression = "";
-    const isSubmissionOwner = vi.fn(() => true);
-    const runtime = {
-      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
-        if (expression.includes("document.readyState")) {
-          return { result: { value: { ready: true, composer: true, fileInput: false } } };
-        }
-        if (expression.includes("oracle-preexisting-composer-check")) {
-          return { result: { value: { composerLength: 0, composerEmpty: true } } };
-        }
-        if (expression.includes("focused: true")) {
-          return { result: { value: { focused: true } } };
-        }
-        if (expression.includes("editorText")) {
-          postVerificationExpression = expression;
-          return {
-            result: {
-              value: {
-                editorText: "hello",
-                fallbackValue: "",
-                activeValue: "hello",
-                href: "https://chatgpt.com/",
-                documentTokenStored: true,
-              },
-            },
-          };
-        }
-        if (expression.includes("button.scrollIntoView")) {
-          return { result: { value: { status: "clicked" } } };
-        }
-        if (expression.includes("const expected =")) {
-          return { result: { value: true } };
-        }
-        return {
-          result: {
-            value: {
-              baseline: 0,
-              turnsCount: 1,
-              userMatched: true,
-              matchedUserTurnIndex: 0,
-              lastMatched: true,
-              hasNewTurn: true,
-              stopVisible: true,
-              assistantVisible: false,
-              composerCleared: true,
-              inConversation: true,
-            },
-          },
-        };
-      }),
-    };
-    const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
-    const logger = Object.assign(vi.fn(), { verbose: false });
-
-    await expect(
-      submitPrompt(
-        {
-          runtime: runtime as never,
-          input: input as never,
-          attachmentNames: ["oracle-attach-verify.txt"],
-          baselineTurns: 0,
-          isSubmissionOwner,
-        },
-        "hello",
-        logger as never,
-      ),
-    ).resolves.toBe(1);
-
-    expect(postVerificationExpression).toContain("const submissionDocumentToken = null");
-    expect(isSubmissionOwner).not.toHaveBeenCalled();
-    expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
-  });
-
-  test("dispatches at most one retained-draft retry while commit remains absent", async () => {
-    vi.useFakeTimers();
-    try {
-      const runtime = {
-        evaluate: vi.fn(async () => ({
-          result: {
-            value: {
-              baseline: 0,
-              turnsCount: 0,
-              userMatched: false,
-              lastMatched: false,
-              hasNewTurn: false,
-              stopVisible: false,
-              assistantVisible: false,
-              composerCleared: false,
-              inConversation: false,
-              editorValue: "hello",
-            },
-          },
-        })),
-      };
-      const retry = vi.fn(async () => ({ status: "dispatched" as const }));
-
-      const promise = promptComposer.verifyPromptCommitted(
-        runtime as never,
-        "hello",
-        2_250,
-        undefined,
-        0,
-        undefined,
-        retry,
-      );
-      const assertion = expect(promise).rejects.toMatchObject({
-        details: expect.objectContaining({
-          code: "enter-noop",
-          submissionCommitted: false,
-        }),
-      });
-      await vi.advanceTimersByTimeAsync(2_500);
-      await assertion;
-
-      expect(retry).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("cancels the retry when the first click commits during the atomic recheck", async () => {
-    // This DOM is the delayed-first-click state visible at the recovery
-    // boundary: the original user turn and streaming signal have just appeared.
-    const { result, runtime, sendButton } = await runRetainedDraftRetryGate({
-      stopVisible: true,
-      turns: [{ role: "user", text: "hello" }],
-    });
-
-    expect(result).toMatchObject({
-      status: "blocked",
-      reason: "gate-closed",
-      gate: {
-        submissionCommitted: true,
-        hasNewTurn: true,
-        userMatched: true,
-        stopVisible: true,
-      },
-    });
-    expect(runtime.evaluate).toHaveBeenCalledTimes(1);
-    expect(sendButton.click).not.toHaveBeenCalled();
-  });
-
-  test.each([
-    ["unknown pre-dispatch baseline", { baseline: -1 }, "baselineKnown"],
-    [
-      "changed pre-dispatch baseline",
-      { turns: [{ role: "user" as const, text: "different" }] },
-      "baselineUnchanged",
-    ],
-    ["composer mismatch", { composerValue: "changed" }, "composerMatchesPrompt"],
-  ])("blocks retained-draft retry for %s", async (_label, scenario, deniedField) => {
-    const { result, sendButton } = await runRetainedDraftRetryGate(scenario);
-
-    expect(result).toMatchObject({
-      status: "blocked",
-      reason: "gate-closed",
-      gate: { [deniedField]: false },
-    });
-    expect(sendButton.click).not.toHaveBeenCalled();
-  });
-
-  test("blocks a same-target same-href replacement document", async () => {
-    const { result, sendButton } = await runRetainedDraftRetryGate({
-      currentDocumentToken: null,
-    });
-
-    expect(result).toMatchObject({
-      status: "blocked",
-      reason: "gate-closed",
-      gate: {
-        ownerMatched: true,
-        documentTokenMatched: false,
-      },
-    });
-    expect(sendButton.click).not.toHaveBeenCalled();
-  });
-
-  test("fails the retained-draft retry closed when target ownership changes", async () => {
-    const runtime = { evaluate: vi.fn() };
-
-    await expect(
-      promptComposer.attemptRetainedDraftPageRetry({
-        Runtime: runtime as never,
-        prompt: "hello",
-        baseline: 0,
-        submissionOwnerHref: "https://chatgpt.com/",
-        submissionDocumentToken: "document-token",
-        isSubmissionOwner: () => false,
-      }),
-    ).resolves.toEqual({ status: "blocked", reason: "target-owner-mismatch" });
-    expect(runtime.evaluate).not.toHaveBeenCalled();
-  });
-
-  test("fails the retained-draft retry closed when the owner probe errors", async () => {
-    const ownerError = new Error("owner probe unavailable");
-    const { result, runtime, sendButton } = await runRetainedDraftRetryGate({
-      isSubmissionOwner: () => {
-        throw ownerError;
-      },
-    });
-
-    expect(result).toEqual({ status: "blocked", reason: "target-owner-check-failed" });
-    expect(runtime.evaluate).not.toHaveBeenCalled();
-    expect(sendButton.click).not.toHaveBeenCalled();
   });
 
   test("refuses to send when external input mutates the composer", async () => {
@@ -2014,7 +1405,7 @@ describe("promptComposer", () => {
     expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
   });
 
-  test("keeps a gated send attempt uncommitted", async () => {
+  test("keeps a post-dispatch page gate indeterminate", async () => {
     const onPromptDispatched = vi.fn();
     const onPromptCommitted = vi.fn();
     const gateError = new Error("request frequency gate");
@@ -2035,7 +1426,7 @@ describe("promptComposer", () => {
           };
         }
         if (expression.includes("button.scrollIntoView")) {
-          return { result: { value: { status: "clicked" } } };
+          return { result: { value: { status: "point", x: 10, y: 20 } } };
         }
         return {
           result: {
@@ -2055,7 +1446,11 @@ describe("promptComposer", () => {
         };
       }),
     };
-    const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
+    const input = {
+      insertText: vi.fn(),
+      dispatchKeyEvent: vi.fn(),
+      dispatchMouseEvent: vi.fn(),
+    };
     const logger = Object.assign(vi.fn(), { verbose: false });
 
     await expect(
@@ -2073,10 +1468,20 @@ describe("promptComposer", () => {
         "hello",
         logger as never,
       ),
-    ).rejects.toBe(gateError);
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "commit-indeterminate-after-dispatch",
+        outcome: "indeterminate",
+        retrySafe: false,
+      }),
+    });
 
     expect(onPromptDispatched).toHaveBeenCalledTimes(1);
     expect(onPromptCommitted).not.toHaveBeenCalled();
+    expect(
+      input.dispatchMouseEvent.mock.calls.filter(([event]) => event.type === "mousePressed"),
+    ).toHaveLength(1);
+    expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
   });
 
   test("waits for a delayed trusted click without issuing a second send", async () => {
