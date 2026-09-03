@@ -12,6 +12,7 @@ class FakeElement {
     private readonly attributes: Record<string, string> = {},
     children: FakeElement[] = [],
     private readonly ownText = "",
+    private readonly onClick?: () => void,
   ) {
     this.tagName = tagName.toUpperCase();
     this.children = children;
@@ -38,6 +39,7 @@ class FakeElement {
 
   click(): void {
     this.clickCount += 1;
+    this.onClick?.();
   }
 
   closest(selector: string): FakeElement | null {
@@ -68,6 +70,10 @@ class FakeInputElement extends FakeElement {
 
   set value(value: string) {
     if (value === "") this.selectedFiles = [];
+  }
+
+  replaceFiles(files: Array<{ name: string }>): void {
+    this.selectedFiles = files;
   }
 }
 
@@ -316,6 +322,35 @@ describe("prompt composer attachment expressions", () => {
       removeClicks: 1,
     });
     expect(mixedInput.files.map((file) => file.name)).toEqual([ownedName, "user-added.txt"]);
+  });
+
+  test("targeted cleanup revalidates a captured file input after the remove click", () => {
+    const ownedName = "oracle-owned.txt";
+    const ownedInput = new FakeInputElement([{ name: ownedName }]);
+    const ownedRemove = new FakeElement(
+      "button",
+      { "aria-label": `Remove file 1: ${ownedName}` },
+      [],
+      "",
+      () => ownedInput.replaceFiles([{ name: "user-added-after-click.txt" }]),
+    );
+    const document = new FakeDocument([
+      new FakeElement("div", { "data-testid": "unified-composer" }, [
+        ownedInput,
+        new FakeElement("div", { "data-testid": "attachment-chip" }, [
+          new FakeElement("span", {}, [], ownedName),
+          ownedRemove,
+        ]),
+      ]),
+    ]);
+
+    expect(
+      evaluateAttachmentReadyExpression([ownedName], document, true, "snapshot-rerender"),
+    ).toEqual({
+      exactSetMatched: true,
+      removeClicks: 1,
+    });
+    expect(ownedInput.files.map((file) => file.name)).toEqual(["user-added-after-click.txt"]);
   });
 
   test("an exact empty-set probe rejects a newly present attachment", () => {

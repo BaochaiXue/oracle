@@ -1435,13 +1435,12 @@ function buildAttachmentReadyExpression(
       return indexes;
     };
     const removeLabels = removeAffordances.map((node) => collectLabelHaystack(node));
-    const inputNames = attachmentRoots.flatMap((root) =>
-      Array.from(root.querySelectorAll('input[type="file"]')).flatMap((el) =>
-        Array.from((el instanceof HTMLInputElement ? el.files : []) || []).map((file) =>
-          normalize(file?.name),
-        ),
-      ),
-    );
+    const fileInputs = Array.from(new Set(attachmentRoots.flatMap((root) =>
+      Array.from(root.querySelectorAll('input[type="file"]')),
+    ))).filter((input) => input instanceof HTMLInputElement);
+    const readInputNames = (input) =>
+      Array.from(input.files || []).map((file) => normalize(file?.name));
+    const inputNames = fileInputs.flatMap(readInputNames);
     const exactRemoveIndexes = exactDistinctIndexes(removeLabels);
     const exactInputIndexes = exactDistinctIndexes(inputNames);
     const exactSetReady = expected.length === 0
@@ -1453,6 +1452,11 @@ function buildAttachmentReadyExpression(
         return { exactSetMatched: false, removeClicks: 0 };
       }
       const capturedButtons = exactRemoveIndexes.map((index) => removeAffordances[index]);
+      const capturedInputs = exactInputIndexes === null
+        ? []
+        : fileInputs
+            .map((input) => ({ input, signature: readInputNames(input).sort().join('\0') }))
+            .filter(({ signature }) => Boolean(signature));
       for (const button of capturedButtons) {
         button.setAttribute('data-oracle-owned-attachment-cleanup', cleanupMarker);
       }
@@ -1466,15 +1470,12 @@ function buildAttachmentReadyExpression(
       // FileList on its hidden input. Clear only an input set that independently
       // matches this attempt exactly, otherwise the stale DOM value makes a
       // successful targeted removal look incomplete and strands the owned draft.
-      if (exactInputIndexes !== null) {
-        for (const root of attachmentRoots) {
-          for (const input of Array.from(root.querySelectorAll('input[type="file"]'))) {
-            if (!(input instanceof HTMLInputElement) || !input.files?.length) continue;
-            try {
-              input.value = '';
-            } catch {}
-          }
-        }
+      for (const { input, signature } of capturedInputs) {
+        const currentSignature = readInputNames(input).sort().join('\0');
+        if (!currentSignature || currentSignature !== signature) continue;
+        try {
+          input.value = '';
+        } catch {}
       }
       return { exactSetMatched: true, removeClicks: capturedButtons.length };
     }
