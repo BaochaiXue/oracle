@@ -200,6 +200,9 @@ export interface BrowserRunResult {
   browserRepairAttempted?: boolean;
   browserRepairOutcome?: string;
   browserRolloverPending?: boolean;
+  browserPromptSha256?: string;
+  browserPromptBaselineTurns?: number;
+  browserPromptCommittedTurnIndex?: number;
   proDispatchAt?: string;
   proResponseElapsedMs?: number;
   proInputTokens?: number;

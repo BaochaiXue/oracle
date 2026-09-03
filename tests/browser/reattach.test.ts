@@ -170,7 +170,7 @@ describe("resumeBrowserSession", () => {
     expect(waitForAssistantResponse).toHaveBeenCalledWith(expect.anything(), 2_000, logger, 0);
   });
 
-  test("refuses an uncommitted follow-up instead of harvesting the prior answer", async () => {
+  test("refuses a legacy uncommitted follow-up instead of harvesting the prior answer", async () => {
     const runtime = {
       chromePort: 51559,
       chromeHost: "127.0.0.1",
@@ -230,7 +230,141 @@ describe("resumeBrowserSession", () => {
     });
     expect(waitForAssistantResponse).not.toHaveBeenCalled();
     expect(recoverSession).not.toHaveBeenCalled();
-    expect(close).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  test("reconciles an indeterminate Pro follow-up by exact digest before capturing", async () => {
+    const followUp = "current follow-up that committed late";
+    const runtime = {
+      chromePort: 51559,
+      chromeHost: "127.0.0.1",
+      chromeTargetId: "target-1",
+      tabUrl: "https://chatgpt.com/c/late-follow-up",
+      recoveryKind: "awaiting-response" as const,
+      browserPromptSha256: hashProPromptIdentity(followUp),
+      browserPromptBaselineTurns: 2,
+      proDispatchAt: "2026-08-13T00:01:00.000Z",
+      proInputTokens: 4_096,
+      proAttachmentBytes: 0,
+      proTurnIndex: 1,
+      proTurnCommitted: false,
+      proPromptSha256: hashProPromptIdentity(followUp),
+      proResponseTimingReceipts: [
+        {
+          turnIndex: 0,
+          dispatchAt: "2026-08-13T00:00:00.000Z",
+          responseElapsedMs: 90_000,
+          inputTokens: 8,
+          attachmentBytes: 0,
+        },
+      ],
+    };
+    const evaluate = vi.fn(async ({ expression }: { expression: string }) => {
+      if (expression === "location.href") return { result: { value: runtime.tabUrl } };
+      if (expression === "1+1") return { result: { value: 2 } };
+      if (expression.includes("BASELINE_TURNS")) return { result: { value: [2] } };
+      if (expression.includes("expectedTurns")) return { result: { value: true } };
+      return { result: { value: null } };
+    });
+    const close = vi.fn(async () => {});
+    const persistRuntime = vi.fn(async () => {});
+    const waitForAssistantResponse = vi.fn(async () => ({
+      text: "new follow-up answer",
+      html: "",
+      meta: { messageId: "m2", turnId: "conversation-turn-3" },
+    }));
+    const logger = vi.fn() as BrowserLogger;
+
+    const result = await resumeBrowserSession(runtime, { timeoutMs: 2_000 }, logger, {
+      listTargets: async () => [{ targetId: "target-1", type: "page", url: runtime.tabUrl }],
+      connect: async () =>
+        ({
+          Runtime: { enable: vi.fn(), evaluate },
+          DOM: { enable: vi.fn() },
+          close,
+        }) as unknown as ChromeClient,
+      waitForAssistantResponse,
+      captureAssistantMarkdown: vi.fn(async () => "new follow-up answer"),
+      waitForConversationHydration: vi.fn(async () => 4),
+      promptPreview: "the original session prompt",
+      persistRuntime,
+    });
+
+    expect(result.answerMarkdown).toBe("new follow-up answer");
+    expect(waitForAssistantResponse).toHaveBeenCalledWith(expect.anything(), 2_000, logger, 2);
+    expect(persistRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({
+        browserPromptCommittedTurnIndex: 2,
+        proTurnCommitted: true,
+        proCommittedTurnIndex: 2,
+      }),
+    );
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  test("reattaches a manual-intervention target without capturing an earlier answer", async () => {
+    const runtime = {
+      chromePort: 51559,
+      chromeHost: "127.0.0.1",
+      chromeTargetId: "target-1",
+      tabUrl: "https://chatgpt.com/",
+      browserDisposition: "recoverable" as const,
+      recoveryKind: "manual-intervention" as const,
+      promptSubmitted: false,
+    };
+    const close = vi.fn(async () => {});
+    const waitForAssistantResponse = vi.fn(async () => ({
+      text: "prior answer",
+      html: "",
+      meta: { messageId: "m0", turnId: "conversation-turn-0" },
+    }));
+
+    await expect(
+      resumeBrowserSession(runtime, { timeoutMs: 2_000 }, vi.fn() as BrowserLogger, {
+        listTargets: async () => [{ targetId: "target-1", type: "page", url: runtime.tabUrl }],
+        connect: async () =>
+          ({
+            Runtime: {
+              enable: vi.fn(),
+              evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+                if (expression === "location.href") return { result: { value: runtime.tabUrl } };
+                if (expression === "1+1") return { result: { value: 2 } };
+                return { result: { value: null } };
+              }),
+            },
+            DOM: { enable: vi.fn() },
+            close,
+          }) as unknown as ChromeClient,
+        waitForAssistantResponse,
+        waitForConversationHydration: vi.fn(async () => 1),
+      }),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "browser-manual-intervention-required",
+        recoverable: true,
+        retrySafe: false,
+      }),
+    });
+    expect(waitForAssistantResponse).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  test("fails closed when a current prompt digest has no recovery boundary", async () => {
+    const evaluate = vi.fn(async () => ({ result: { value: [0] } }));
+    const Runtime = { evaluate } as unknown as ChromeClient["Runtime"];
+
+    await expect(
+      __test__.reconcileBrowserPromptIdentity(Runtime, {
+        browserPromptSha256: hashProPromptIdentity("current follow-up"),
+      }),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "browser-prompt-baseline-missing",
+        recoverable: true,
+        retrySafe: false,
+      }),
+    });
+    expect(evaluate).not.toHaveBeenCalled();
   });
 
   test("rejects new-format turn markers when the commit flag is absent", async () => {

@@ -1918,6 +1918,59 @@ describe("performSessionRun", () => {
     expect(logLines).toContain("oracle session sess-1 --render");
   });
 
+  test("marks a retained pre-dispatch target incomplete for manual reattach", async () => {
+    const runtime = {
+      browserTransport: "cdp" as const,
+      chromePort: 9222,
+      chromeHost: "127.0.0.1",
+      chromeTargetId: "target-1",
+      tabUrl: "https://chatgpt.com/",
+      promptSubmitted: false,
+      browserDisposition: "recoverable" as const,
+      recoveryKind: "manual-intervention" as const,
+    };
+    vi.mocked(runBrowserSessionExecution).mockRejectedValueOnce(
+      new BrowserAutomationError("Composer already contains unowned text.", {
+        stage: "submit-prompt",
+        code: "preexisting-composer-content",
+        submissionCommitted: false,
+        draftRetained: true,
+        retrySafe: false,
+        runtime,
+      }),
+    );
+
+    await performSessionRun({
+      sessionMeta: baseSessionMeta,
+      runOptions: baseRunOptions,
+      mode: "browser",
+      browserConfig: { chromePath: null },
+      cwd: "/tmp",
+      log,
+      write,
+      version: cliVersion,
+    });
+
+    expect(sessionStoreMock.updateSession.mock.calls.at(-1)?.[1]).toMatchObject({
+      status: "error",
+      response: { status: "incomplete", incompleteReason: "manual-intervention" },
+      browser: expect.objectContaining({ runtime }),
+    });
+    expect(sessionStoreMock.updateModelRun).toHaveBeenCalledWith(
+      baseSessionMeta.id,
+      "gpt-5.2-pro",
+      expect.objectContaining({
+        status: "error",
+        response: { status: "incomplete", incompleteReason: "manual-intervention" },
+      }),
+    );
+    const logLines = log.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(logLines).toContain(
+      "Browser target needs manual inspection; marking session incomplete for exact-tab reattach.",
+    );
+    expect(logLines).toContain("oracle session sess-1 --render");
+  });
+
   test("records runtime and guidance when cloudflare challenge is detected", async () => {
     const automationError = new BrowserAutomationError(
       "Cloudflare challenge detected. Complete the “Just a moment…” check in the open browser, then rerun.",

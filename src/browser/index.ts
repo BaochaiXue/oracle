@@ -155,6 +155,9 @@ export function redactBrowserConfigForDebugLogForTest(
 
 function pickProTimingRuntime(runtime: BrowserRuntimeMetadata): BrowserRuntimeMetadata {
   return {
+    browserPromptSha256: runtime.browserPromptSha256,
+    browserPromptBaselineTurns: runtime.browserPromptBaselineTurns,
+    browserPromptCommittedTurnIndex: runtime.browserPromptCommittedTurnIndex,
     proDispatchAt: runtime.proDispatchAt,
     proResponseElapsedMs: runtime.proResponseElapsedMs,
     proInputTokens: runtime.proInputTokens,
@@ -1140,6 +1143,15 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     committedUserTurnIndex: number | null,
     committedPrompt: string,
   ): Promise<void> => {
+    proTimingRuntime = {
+      ...proTimingRuntime,
+      browserPromptCommittedTurnIndex:
+        typeof committedUserTurnIndex === "number" &&
+        Number.isSafeInteger(committedUserTurnIndex) &&
+        committedUserTurnIndex >= 0
+          ? committedUserTurnIndex
+          : undefined,
+    };
     if (proTimingRequired) {
       proTimingRuntime = markProPromptCommitted(proTimingRuntime, committedUserTurnIndex);
     }
@@ -1803,6 +1815,12 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       await handle.release().catch(() => undefined);
     };
     const submitOnce = async (prompt: string, submissionAttachments: BrowserAttachment[]) => {
+      proTimingRuntime = {
+        ...proTimingRuntime,
+        browserPromptSha256: hashProPromptIdentity(prompt),
+        browserPromptBaselineTurns: undefined,
+        browserPromptCommittedTurnIndex: undefined,
+      };
       if (proTimingRequired) {
         proTimingRuntime = beginProResponseTimingTurn(proTimingRuntime, {
           inputTokens: estimateTokenCount(prompt),
@@ -1872,6 +1890,13 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         );
       }
       let baselineTurns = await readConversationTurnCount(Runtime, logger);
+      proTimingRuntime = {
+        ...proTimingRuntime,
+        browserPromptBaselineTurns:
+          typeof baselineTurns === "number" && Number.isSafeInteger(baselineTurns)
+            ? baselineTurns
+            : undefined,
+      };
       const submissionTargetId = lastTargetId;
       const isSubmissionOwner = async (): Promise<boolean> => {
         if (!submissionTargetId || lastTargetId !== submissionTargetId) return false;
@@ -3345,6 +3370,15 @@ async function runRemoteBrowserMode(
     committedUserTurnIndex: number | null,
     committedPrompt: string,
   ): Promise<void> => {
+    proTimingRuntime = {
+      ...proTimingRuntime,
+      browserPromptCommittedTurnIndex:
+        typeof committedUserTurnIndex === "number" &&
+        Number.isSafeInteger(committedUserTurnIndex) &&
+        committedUserTurnIndex >= 0
+          ? committedUserTurnIndex
+          : undefined,
+    };
     if (proTimingRequired) {
       proTimingRuntime = markProPromptCommitted(proTimingRuntime, committedUserTurnIndex);
     }
@@ -3619,6 +3653,12 @@ async function runRemoteBrowserMode(
       );
     }
     const submitOnce = async (prompt: string, submissionAttachments: BrowserAttachment[]) => {
+      proTimingRuntime = {
+        ...proTimingRuntime,
+        browserPromptSha256: hashProPromptIdentity(prompt),
+        browserPromptBaselineTurns: undefined,
+        browserPromptCommittedTurnIndex: undefined,
+      };
       if (proTimingRequired) {
         proTimingRuntime = beginProResponseTimingTurn(proTimingRuntime, {
           inputTokens: estimateTokenCount(prompt),
@@ -3673,6 +3713,13 @@ async function runRemoteBrowserMode(
         );
       }
       let baselineTurns = await readConversationTurnCount(Runtime, logger);
+      proTimingRuntime = {
+        ...proTimingRuntime,
+        browserPromptBaselineTurns:
+          typeof baselineTurns === "number" && Number.isSafeInteger(baselineTurns)
+            ? baselineTurns
+            : undefined,
+      };
       const submissionTargetId = remoteTargetId;
       const isSubmissionOwner = async (): Promise<boolean> => {
         if (!submissionTargetId || remoteTargetId !== submissionTargetId) return false;

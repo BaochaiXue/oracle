@@ -108,6 +108,17 @@ exact committed user turn, the session is stored as `error` with
 `incompleteReason: "incomplete-capture"`, an exact recoverable browser target,
 and `retrySafe:false`. Use `oracle session <id> --render` to reattach that target;
 do not start a replacement attempt while commit state remains indeterminate.
+The receipt persists the current prompt digest and pre-dispatch turn baseline
+before the event. Reattach must match that digest to exactly one user turn at
+or after the baseline before it can capture the corresponding answer, including
+when the commit became visible only after the original run stopped.
+
+If an exact target is retained before dispatch because a draft is present, or
+the target otherwise requires manual intervention, the session instead records
+`incompleteReason: "manual-intervention"`. `oracle session <id> --render`
+reattaches that exact tab for inspection only: it never captures an earlier
+answer and never submits from the retained state.
+
 This recovery contract does not apply to `--copy-profile`, whose temporary
 profile is always removed, or `--browser-headless`, whose browser process is not
 retained. Ambiguity in either mode is explicitly non-reattachable.

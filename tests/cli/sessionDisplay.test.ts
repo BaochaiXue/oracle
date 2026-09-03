@@ -466,6 +466,36 @@ describe("attachSession rendering", () => {
     expect(resumeBrowserSessionMock).toHaveBeenCalledTimes(1);
   });
 
+  test("reattaches an error session retained for manual intervention", async () => {
+    const metadata: SessionMetadata = {
+      ...baseMeta,
+      status: "error",
+      mode: "browser",
+      model: "gpt-5-pro",
+      response: { status: "incomplete", incompleteReason: "manual-intervention" },
+      browser: {
+        runtime: {
+          controllerPid: 2_147_483_647,
+          promptSubmitted: false,
+          browserDisposition: "recoverable",
+          recoveryKind: "manual-intervention",
+          chromePort: 9222,
+          chromeTargetId: "target-1",
+          tabUrl: "https://chatgpt.com/",
+        },
+      },
+    };
+    readSessionMetadataMock.mockResolvedValue(metadata);
+    readSessionLogMock.mockResolvedValue("manual browser inspection required");
+    readSessionRequestMock.mockResolvedValue({ prompt: "Ordinary prompt" });
+    resumeBrowserSessionMock.mockRejectedValueOnce(new Error("manual inspection remains"));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await attachSession(metadata.id, { renderMarkdown: true });
+
+    expect(resumeBrowserSessionMock).toHaveBeenCalledTimes(1);
+  });
+
   test("propagates a detached worker failure only when requested", async () => {
     const failedMeta: SessionMetadata = {
       ...baseMeta,

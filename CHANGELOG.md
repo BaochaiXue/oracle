@@ -136,12 +136,17 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   proof preserves the exact tab with `retrySafe:false` and leaves unknown
   content untouched.
 - Direct CDP recovery receipts: require strict durable dispatch-boundary
-  persistence before `mousePressed` or Enter `keyDown`, persist ambiguous
-  dedicated-profile submissions as `incomplete-capture` for exact-tab
-  reattach, and label copied-profile ambiguity as non-reattachable. Exact-owned
-  attachment cleanup now revalidates both the current prompt and the complete
-  attachment set before removing anything, then clicks only the controls from
-  that exact snapshot. Headless ambiguity is also explicitly non-reattachable.
+  persistence before `mousePressed` or Enter `keyDown`, together with the
+  current prompt digest and pre-dispatch turn baseline. Ambiguous
+  dedicated-profile submissions persist as `incomplete-capture`; exact-tab
+  reattach must reconcile that digest to one unique post-baseline user turn
+  before capture, including delayed commits, so it cannot harvest a prior
+  answer. Retained pre-dispatch or manual targets persist as
+  `manual-intervention` and reattach for inspection only, without automatic
+  capture or submission. Copied-profile and headless ambiguity remain
+  explicitly non-reattachable. Exact-owned attachment cleanup now revalidates
+  both the current prompt and the complete attachment set before removing
+  anything, then clicks only the controls from that exact snapshot.
 - Direct CDP lifecycle: separate persistent profile identity from browser
   process lifetime. Dedicated Chrome now defaults to `while-needed`, releases
   tab leases before final drain, rechecks under the profile lock, and closes

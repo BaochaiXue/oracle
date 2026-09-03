@@ -96,13 +96,16 @@ elapsed time, input estimate, and uploaded bytes. Oracle admits each turn before
 adding it to a multi-turn transcript. OpenCLI remains single-turn in this
 surface and keeps its existing scalar receipt compatibility.
 
-The active direct-CDP receipt also stores commit state, the exact committed
-user-turn index, and a SHA-256 digest of normalized prompt text. Reattach must
-match that digest at that index before waiting for its assistant successor; an
-uncommitted or mismatched turn is terminal instead of falling back to an older
-answer. Missing attachment sizes are established from the local file before
-dispatch. Partial active workload and timing markers with no valid elapsed
-value remain unknown and fail closed rather than borrowing initial-turn data.
+The active direct-CDP receipt also stores the current prompt's SHA-256 digest,
+the pre-dispatch turn baseline, commit state, and the exact committed user-turn
+index. The digest and baseline are persisted before any potentially submitting
+input event. Reattach must reconcile that digest to exactly one user turn at or
+after the baseline before waiting for its assistant successor; this permits a
+delayed commit to be recovered without ever falling back to an earlier answer.
+An absent or ambiguous match fails closed. Missing attachment sizes are
+established from the local file before dispatch. Partial active workload and
+timing markers with no valid elapsed value remain unknown and fail closed
+rather than borrowing initial-turn data.
 
 Direct CDP distinguishes a Send attempt from a committed user turn. A visible
 request-frequency warning detected before any potentially submitting input
@@ -112,9 +115,12 @@ indeterminate and recoverable with `retrySafe:false`; Oracle preserves the exact
 tab, persists `incomplete-capture` session state for explicit reattach, and does
 not redispatch or wait for a response whose existence is unknown. The durable
 dispatch-boundary marker must be written before either event; persistence
-failure prevents dispatch. Copied-profile and headless runs remain retry-unsafe
-but are explicitly non-reattachable because their temporary profile or browser
-process is not retained.
+failure prevents dispatch. A retained pre-dispatch draft or other
+manual-intervention target is persisted separately and can be reattached only
+for exact-tab inspection; Oracle never captures an earlier answer or submits
+from that state. Copied-profile and headless runs remain retry-unsafe but are
+explicitly non-reattachable because their temporary profile or browser process
+is not retained.
 
 ## OpenCLI Browser Bridge (explicit alternative)
 

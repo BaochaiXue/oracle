@@ -538,15 +538,17 @@ export async function performSessionRun({
       userError?.details as { runtime?: BrowserRuntimeMetadata } | undefined
     )?.runtime;
     const errorCode = (userError?.details as { code?: string } | undefined)?.code;
-    const recoverableAmbiguousSubmission =
+    const recoverableRetainedTarget =
       userError?.category === "browser-automation" &&
-      [
-        "commit-ambiguous-composer-cleared",
-        "commit-ambiguous-multiple-user-turns",
-        "commit-indeterminate-after-dispatch",
-      ].includes(errorCode ?? "") &&
       errorBrowserRuntime?.browserDisposition === "recoverable" &&
-      errorBrowserRuntime.recoveryKind === "awaiting-response";
+      (errorBrowserRuntime.recoveryKind === "draft-retained" ||
+        errorBrowserRuntime.recoveryKind === "manual-intervention" ||
+        (errorBrowserRuntime.recoveryKind === "awaiting-response" &&
+          [
+            "commit-ambiguous-composer-cleared",
+            "commit-ambiguous-multiple-user-turns",
+            "commit-indeterminate-after-dispatch",
+          ].includes(errorCode ?? "")));
     let reattachGuidanceLogged = false;
     const logBrowserReattachGuidance = (
       runtime: BrowserRuntimeMetadata | null | undefined,
@@ -670,15 +672,20 @@ export async function performSessionRun({
       }
       return;
     }
-    if (recoverableAmbiguousSubmission && mode === "browser" && browserCanReattach) {
+    if (recoverableRetainedTarget && mode === "browser" && browserCanReattach) {
+      const manualRecovery = errorBrowserRuntime?.recoveryKind !== "awaiting-response";
       log(
-        dim("Prompt commit is indeterminate; marking capture incomplete for exact-tab reattach."),
+        dim(
+          manualRecovery
+            ? "Browser target needs manual inspection; marking session incomplete for exact-tab reattach."
+            : "Prompt commit is indeterminate; marking capture incomplete for exact-tab reattach.",
+        ),
       );
       const incompleteResponse = {
         status: "incomplete",
-        incompleteReason: "incomplete-capture",
+        incompleteReason: manualRecovery ? "manual-intervention" : "incomplete-capture",
       } as const;
-      const ambiguousError = {
+      const retainedTargetError = {
         category: userError.category,
         message: userError.message,
         details: userError.details,
@@ -688,7 +695,7 @@ export async function performSessionRun({
           status: "error",
           completedAt: new Date().toISOString(),
           response: incompleteResponse,
-          error: ambiguousError,
+          error: retainedTargetError,
         });
       }
       await sessionStore.updateSession(sessionMeta.id, {
@@ -702,7 +709,7 @@ export async function performSessionRun({
           runtime: errorBrowserRuntime,
         },
         response: incompleteResponse,
-        error: ambiguousError,
+        error: retainedTargetError,
       });
       logBrowserReattachGuidance(errorBrowserRuntime);
       return;
