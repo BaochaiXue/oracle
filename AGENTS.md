@@ -60,6 +60,14 @@ or maintainer-only release instructions.
   default-engine switch, or legacy retirement.
 - Keep G1 runtime/login selection, G2 first live Send, G3 default-engine
   cutover, and G4 legacy removal as separate owner decisions.
+- G3 may change the no-API default to `broker` only on a supported, certified
+  macOS GUI worker host. Windows and every other deferred worker platform keep
+  their existing engine default until that platform has its own accepted worker
+  plan and evidence; a platform-agnostic `broker` default is forbidden.
+- R11 remote bridge work is independent of G4. The disposable-attempt trim
+  explicitly supersedes R12's old `R10-R11` dependency: G4 depends on accepted
+  T1-T3 and G3 evidence, a rollback tag, a fresh deletion scan, and its own
+  owner decision, not on remote bridge delivery.
 
 ## Disposable attempt sandbox contract
 

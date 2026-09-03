@@ -440,8 +440,8 @@ Fresh T0 authority-freeze evidence:
 | T1 auth seed and clone proof    | owner-gated     | requires acceptance of T0 map and separate authorization for the real two-clone no-Send gate                                                                 |
 | T2 provider sandbox integration | planned         | cannot begin before T1 proof; legacy remains frozen/default and broker explicit                                                                              |
 | T3 bounded live candidate       | owner-gated     | each live case requires exact owner authorization after fixture/fault evidence                                                                               |
-| G3 default cutover              | owner-gated     | independent decision after T1-T3 and stable-resource evidence                                                                                                |
-| G4 physical legacy deletion     | owner-gated     | independent post-G3 decision plus rollback tag and fresh reference scan                                                                                      |
+| G3 default cutover              | owner-gated     | independent decision after T1-T3 and stable-resource evidence; default changes only on a supported, certified macOS GUI worker host                          |
+| G4 physical legacy deletion     | owner-gated     | independent post-G3 decision plus rollback tag and fresh reference scan; R11 remote bridge is neither a prerequisite nor deletion authority                  |
 
 ## Current stop conditions
 

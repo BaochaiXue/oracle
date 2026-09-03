@@ -129,17 +129,21 @@ ownership code.
 
 ## G3 default cutover map
 
-G3 is a separate owner decision after T1-T3 evidence. It changes
-`src/cli/engine.ts` so the no-API default is `broker`, then reconciles
-`bin/oracle-cli.ts`, `src/config.ts`, CLI/MCP help and docs, root integration
-tests, and packed CLI behavior. Legacy `browser` may remain only as an explicit,
-temporary rollback engine between G3 and G4. G3 does not authorize deletion.
+G3 is a separate owner decision after T1-T3 evidence. On a supported, certified
+macOS GUI worker host, it changes `src/cli/engine.ts` so the no-API default is
+`broker`, then reconciles `bin/oracle-cli.ts`, `src/config.ts`, CLI/MCP help and
+docs, root integration tests, and packed CLI behavior. Windows and other
+deferred worker platforms retain their existing engine default until that
+platform has an accepted worker plan and evidence. Legacy `browser` may remain
+only as an explicit, temporary rollback engine between G3 and G4 on the
+supported cutover platform. G3 does not authorize deletion.
 
 ## G4 physical deletion map
 
 G4 is a second owner decision after accepted G3 evidence and a rollback tag.
-Delete or strip the following executable ownership areas after a fresh reference
-scan:
+R11 remote bridging is independent: its absence neither blocks nor authorizes
+G4. Delete or strip the following executable ownership areas after a fresh
+reference scan:
 
 - `src/browser/lifecycleReconciler.ts`,
   `src/browser/tabLeaseRegistry.ts`, and

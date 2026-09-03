@@ -207,21 +207,21 @@ and cannot complete without attachment evidence on the committed user turn.
 
 ## Programme sequence
 
-| Slice    | Outcome                                                                                                  | Dependencies | Required evidence                                                         | Status      |
-| -------- | -------------------------------------------------------------------------------------------------------- | ------------ | ------------------------------------------------------------------------- | ----------- |
-| R0       | freeze boundary, public architecture authority, progress ledger, workspace skeleton, boundary checker    | baseline     | unchanged legacy tests; boundary check                                    | verified    |
-| R1       | typed JobSpec/events/states/receipts, pure reducer, retry and owner policy, schema upcasting             | R0           | illegal-transition and completion-invariant tests                         | verified    |
-| R2       | SQLite store, migrations, transactional append, explicit idempotency, CAS, projections, integrity/backup | R1           | crash consistency, duplicate admission, projection rebuild                | verified    |
-| R3       | Unix-socket worker, singleton, scheduler, event stream, fake provider, client, restart recovery          | R1-R2        | client/worker kill recovery; bounded 1,000 fake jobs                      | verified    |
-| R4       | provider fixture, Playwright adapter, capability probe, UI fingerprint, test faults                      | R3           | 500 fixture jobs; all fault points; Send count at most one                | verified    |
-| R5 / G1  | certify worker-managed Chrome for Testing over direct CDP after owner login                              | R4           | persistent login, cold restart, model/effort/upload/click stability       | verified    |
-| R6       | real ChatGPT no-Send adapter probe and sanitized fixture capture                                         | G1           | compatibility receipt; no prompt submitted                                | verified    |
-| R7 / G2  | text, bundle, and committed-capture-recovery live canaries                                               | R6           | exact model/effort/turn/bundle/conversation/capture receipts; one Send    | verified    |
-| R8       | CLI and MCP v2 engine/cutover candidate; legacy remains default                                          | G2           | repeated reviews; client reconnect; MCP timeout retrieval                 | verified    |
-| R9       | Batch lane/synthesis jobs preserve sealing, barrier, blind lanes, owner closure                          | R8           | restart/recoverable/accept-missing/synthesis Batch with no duplicate Send | verified    |
-| R10 / G3 | make v2 the default browser engine; move legacy operations to advanced surface                           | R8-R9        | packed CLI, fixture/fault suite, stable-window evidence                   | owner-gated |
-| R11      | remote bridge proxies durable objects/jobs/events/artifacts                                              | R10          | disconnect/idempotency/artifact transfer integration                      | planned     |
-| R12 / G4 | retire legacy canonical execution; keep read-only session compatibility and rollback                     | R10-R11      | no canonical legacy imports; migration/read compatibility; rollback tag   | owner-gated |
+| Slice    | Outcome                                                                                                  | Dependencies  | Required evidence                                                         | Status                     |
+| -------- | -------------------------------------------------------------------------------------------------------- | ------------- | ------------------------------------------------------------------------- | -------------------------- |
+| R0       | freeze boundary, public architecture authority, progress ledger, workspace skeleton, boundary checker    | baseline      | unchanged legacy tests; boundary check                                    | verified                   |
+| R1       | typed JobSpec/events/states/receipts, pure reducer, retry and owner policy, schema upcasting             | R0            | illegal-transition and completion-invariant tests                         | verified                   |
+| R2       | SQLite store, migrations, transactional append, explicit idempotency, CAS, projections, integrity/backup | R1            | crash consistency, duplicate admission, projection rebuild                | verified                   |
+| R3       | Unix-socket worker, singleton, scheduler, event stream, fake provider, client, restart recovery          | R1-R2         | client/worker kill recovery; bounded 1,000 fake jobs                      | verified                   |
+| R4       | provider fixture, Playwright adapter, capability probe, UI fingerprint, test faults                      | R3            | 500 fixture jobs; all fault points; Send count at most one                | verified                   |
+| R5 / G1  | certify worker-managed Chrome for Testing over direct CDP after owner login                              | R4            | persistent login, cold restart, model/effort/upload/click stability       | verified                   |
+| R6       | real ChatGPT no-Send adapter probe and sanitized fixture capture                                         | G1            | compatibility receipt; no prompt submitted                                | verified                   |
+| R7 / G2  | text, bundle, and committed-capture-recovery live canaries                                               | R6            | exact model/effort/turn/bundle/conversation/capture receipts; one Send    | verified                   |
+| R8       | CLI and MCP v2 engine/cutover candidate; legacy remains default                                          | G2            | repeated reviews; client reconnect; MCP timeout retrieval                 | verified                   |
+| R9       | Batch lane/synthesis jobs preserve sealing, barrier, blind lanes, owner closure                          | R8            | restart/recoverable/accept-missing/synthesis Batch with no duplicate Send | verified                   |
+| R10 / G3 | make v2 the default browser engine; move legacy operations to advanced surface                           | R8-R9         | packed CLI, fixture/fault suite, stable-window evidence                   | owner-gated                |
+| R11      | remote bridge proxies durable objects/jobs/events/artifacts                                              | R10           | disconnect/idempotency/artifact transfer integration                      | planned; independent of G4 |
+| R12 / G4 | retire legacy canonical execution; keep read-only session compatibility and rollback                     | T1-T3, R10/G3 | no canonical legacy imports; migration/read compatibility; rollback tag   | owner-gated                |
 
 G1 (runtime/login), G2 (first real Send), G3 (default switch), and G4
 (legacy removal) are separate decisions. Source commits, installed runtime,
@@ -231,20 +231,24 @@ separate facts.
 The disposable-attempt trim is inserted before G3 without reopening the v2
 durable constitution:
 
-| Slice | Outcome                                                                                                                 | Gate                                                                                   | Status                                    |
-| ----- | ----------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------- |
-| T0    | Freeze authority, correct source/dependency mapping, and publish the legacy deletion map                                | owner accepts trim boundary and deletion map                                           | source-complete; owner acceptance pending |
-| T1    | Add login-only auth seed, atomic sandbox clone/cleanup, exact process receipts, and the two-clone no-Send proof         | owner-authorized real no-Send gate passes with unchanged seed and zero residue         | owner-gated                               |
-| T2    | Route each provider purpose through one attempt sandbox/page and isolate cleanup failures by job                        | fixture/fault suite proves at most one Send and later jobs remain schedulable          | planned                                   |
-| T3    | Run bounded text, bundle, pre-Send failure, at-risk interruption, capture-only recovery, and sequential live acceptance | each exact live case is separately owner-authorized and receipts match account history | owner-gated                               |
-| G3    | Make `broker` the default browser route; retain legacy as explicit short-lived rollback only                            | separate owner approval after T1-T3 and stable-resource evidence                       | owner-gated                               |
-| G4    | Physically remove legacy browser execution/ownership while preserving read-only history                                 | separate owner approval after accepted G3 evidence and rollback tag                    | owner-gated                               |
+| Slice | Outcome                                                                                                                                 | Gate                                                                                    | Status                                    |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------- |
+| T0    | Freeze authority, correct source/dependency mapping, and publish the legacy deletion map                                                | owner accepts trim boundary and deletion map                                            | source-complete; owner acceptance pending |
+| T1    | Add login-only auth seed, atomic sandbox clone/cleanup, exact process receipts, and the two-clone no-Send proof                         | owner-authorized real no-Send gate passes with unchanged seed and zero residue          | owner-gated                               |
+| T2    | Route each provider purpose through one attempt sandbox/page and isolate cleanup failures by job                                        | fixture/fault suite proves at most one Send and later jobs remain schedulable           | planned                                   |
+| T3    | Run bounded text, bundle, pre-Send failure, at-risk interruption, capture-only recovery, and sequential live acceptance                 | each exact live case is separately owner-authorized and receipts match account history  | owner-gated                               |
+| G3    | Make `broker` the default browser route on a supported, certified macOS GUI worker; retain legacy as explicit short-lived rollback only | separate owner approval after T1-T3 and stable-resource evidence                        | owner-gated                               |
+| G4    | Physically remove legacy browser execution/ownership while preserving read-only history                                                 | separate owner approval after accepted G3 evidence and rollback tag; R11 is independent | owner-gated                               |
 
 T0-T3 supersede the fixed-profile route to G3. They do not weaken or replace
 R1-R4 kernel/store/worker/adapter authority, R8 client admission, R9 Batch
 ownership, or the independent G3/G4 gates. The complete current ownership and
 deletion reference map lives in
 [`oracle-v2-browser-ownership-map.md`](oracle-v2-browser-ownership-map.md).
+G3 is platform-qualified: Windows and other deferred worker platforms retain
+their existing engine default. R11 remote bridging is no longer a G4
+prerequisite because it uses the durable client protocol and does not own the
+local legacy execution stack.
 
 ## Complete acceptance ledger
 
@@ -341,3 +345,7 @@ fresh sandbox only for committed-capture recovery or probe work.
 Kernel, store, worker ledger authority, bundle, client admission, receipts,
 model/effort requirements, and G3/G4 remain intact. T0 changes documentation
 authority only; no runtime behavior, local profile, or account state changes.
+This delta also platform-qualifies G3 to the supported, certified macOS GUI
+worker and removes R11 remote bridging from the G4 prerequisite chain. Remote
+bridging remains planned after G3, but it neither authorizes nor blocks local
+legacy deletion.
