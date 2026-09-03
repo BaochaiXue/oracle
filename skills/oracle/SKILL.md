@@ -8,8 +8,10 @@ description: "Second-opinion review from ChatGPT GPT-5.6 Pro with real repositor
 Oracle bundles a prompt and selected files for a ChatGPT GPT-5.6 Pro
 second-model review with real repository context. The canonical lane is browser
 mode over direct CDP with Oracle's dedicated profile. A prompt is required;
-attach files only when they add necessary context. Treat responses as advisory
-and verify them against the codebase and tests.
+attach files only when they add necessary context. Treat responses as advisory:
+verify them against the codebase and tests, and argue back in the same
+conversation when they are wrong or over-engineered (see "Arguing with the
+model").
 
 This fork reserves the canonical Oracle lane for ChatGPT GPT-5.6 Pro. Use
 OpenCLI separately for incidental Gemini queries; Oracle never dispatches or
@@ -122,6 +124,73 @@ cannot rely on a detached stale node.
 5. If a run detaches or times out, reattach to the stored session instead of
    starting a duplicate. A host tool timeout is not a failed review; see
    "Long runs and host timeouts".
+6. Read the answer critically. Verify every claim you will act on; where the
+   model is wrong, over-defensive, or answering a different question, push back
+   with evidence in the same conversation through `--followup` rather than
+   accepting it or opening a new one.
+
+## Arguing with the model
+
+GPT-5.6 Pro is a strong reviewer, not an authority. The agent is expected to
+disagree with it, and to keep the disagreement inside one conversation until
+both sides converge.
+
+Never accept an answer on trust. Before acting on a recommendation, check it
+against the code, run the tests or reproduction it implies, and confirm that it
+answers the question actually asked. Push back when the model:
+
+- states something the code or a test contradicts;
+- proposes defensive code for failure modes that cannot occur here, redundant
+  validation, speculative abstractions, or "just in case" fallbacks that hide
+  real errors;
+- hedges into several options where the evidence supports one;
+- answers a neighbouring question, or silently changes the constraints;
+- asserts a library, API, or platform behaviour that a quick check disproves.
+
+A rebuttal is evidence, not opinion. Quote the file and line, the test output,
+the reproduction, or the documentation that contradicts the model, state the
+specific claim being challenged, and ask for a revised answer that engages with
+that evidence. Do not restate the original question and do not soften the
+challenge with a persona. When the model is right and the agent was wrong, say
+so plainly and move on; the point is a correct decision, not winning.
+
+Continue the exchange until consensus: both sides agree on the claim and its
+justification, or the model concedes, or the agent concedes. If evidence on
+both sides is exhausted and positions are stable, record the disagreement
+verbatim in the working notes, state which side the agent is acting on and why,
+and surface it to the operator rather than looping.
+
+### Stay in one conversation
+
+For one agent working one task, the default is a single ChatGPT conversation
+extended turn by turn. Continue it with `--followup` on the stored session:
+
+```bash
+oracle --followup <session-id-or-slug> \
+  -p "You claimed X. src/foo.ts:42 does Y, and the attached test fails as shown. Revise." \
+  --file src/foo.ts --file tests/foo.test.ts
+```
+
+Oracle creates a child session, reopens the parent's exact ChatGPT conversation,
+inherits its browser profile, configuration, and model, bypasses the model
+picker, and submits the new turn there. Pass the latest child, not the root, so
+the lineage in `oracle status` stays linear. New evidence can be attached with
+`--file` on any turn. When the follow-up turns are known in advance, plan them
+in the initial run with repeated `--browser-follow-up "<prompt>"` instead.
+
+Open a new conversation only when the current one cannot continue: browser
+resume fails closed because the saved URL is not a recoverable ChatGPT
+conversation, the browser lands on a different conversation, the account
+raises a challenge, or an earlier error by the model has anchored the thread on
+a false premise that repeated correction does not dislodge. Preference for
+another phrasing, a fresh start, or a cleaner transcript is not a reason. When a
+new conversation is unavoidable, carry the settled conclusions and the open
+disagreement into its opening prompt so nothing already established is
+re-litigated from zero.
+
+Follow-ups keep the parent's evidence authority: a settled GitHub repository
+identity and connector directive need not be repeated unless the repository or
+the local commit changed.
 
 ## GitHub repository context (mandatory)
 
@@ -498,5 +567,6 @@ Oracle starts with zero project knowledge. Include:
 
 For a long investigation, make the prompt restorable: put a 6–30 sentence
 briefing at the top, concrete reproduction and errors in the middle, and attach
-all context files required by a fresh model at the bottom. Oracle runs are
-one-shot; the model does not remember prior runs.
+all context files required by a fresh model at the bottom. A fresh run is
+one-shot; memory of earlier turns exists only inside a conversation continued
+with `--followup`, which is why the same conversation is preferred.

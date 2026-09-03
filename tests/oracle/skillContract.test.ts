@@ -66,4 +66,19 @@ describe("canonical Oracle skill contract", () => {
     // Bundle format choices must match the CLI (auto|text|zip).
     expect(skill).toContain("--browser-bundle-format auto|text|zip");
   });
+
+  test("lets the agent argue with the model and prefers one continued conversation", async () => {
+    const skill = await readSkill();
+
+    expect(skill).toContain("## Arguing with the model");
+    expect(skill).toContain("Never accept an answer on trust.");
+    expect(skill).toContain("A rebuttal is evidence, not opinion.");
+    expect(skill).toContain("Continue the exchange until consensus");
+    // Same-conversation continuation is the default; a new one needs a concrete blocker.
+    expect(skill).toContain("### Stay in one conversation");
+    expect(skill).toContain("oracle --followup <session-id-or-slug>");
+    expect(skill).toContain("Open a new conversation only when the current one cannot continue");
+    expect(skill).toMatch(/Preference for\nanother phrasing, a fresh start, or a cleaner transcript is not a reason\./);
+    expect(skill).not.toContain("Oracle runs are\none-shot; the model does not remember prior runs.");
+  });
 });
