@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ChromeClient, BrowserLogger } from "../types.js";
 import {
   INPUT_SELECTORS,
@@ -104,7 +105,10 @@ interface SubmitPromptDependencies {
   baselineTurns?: number | null;
   inputTimeoutMs?: number | null;
   attachmentTimeoutMs?: number | null;
+  /** Persist the at-risk dispatch boundary before final target/input revalidation. */
   onPromptDispatched?: () => Promise<void> | void;
+  /** Record the dispatch-event timestamp immediately before mousePressed/keyDown. */
+  onPromptDispatchEvent?: () => Promise<void> | void;
   onPromptCommitted?: (
     committedTurns: number | null,
     committedUserTurnIndex: number | null,
@@ -232,10 +236,21 @@ export async function assertPromptComposerEmptyBeforeAttachmentMutation(
 
 export async function clearOwnedPromptAndAttachmentsForFallback(
   Runtime: ChromeClient["Runtime"],
-  logger: BrowserLogger,
+  expectedPrompt: string,
   attachmentNames: AttachmentReadyInput[],
+  observedDraftSha256?: string,
 ): Promise<void> {
   try {
+    const ownedPrompt = await readExactOwnedPromptComposer(Runtime);
+    const expectedDigest = observedDraftSha256?.toLowerCase();
+    const promptMatches = expectedDigest
+      ? /^[a-f0-9]{64}$/.test(expectedDigest) &&
+        composerSha256(ownedPrompt ?? "") === expectedDigest
+      : ownedPrompt !== null &&
+        normalizeComposerText(ownedPrompt) === normalizeComposerText(expectedPrompt);
+    if (!promptMatches || ownedPrompt === null) {
+      throw new Error("exact owned prompt changed before fallback cleanup");
+    }
     const attachmentsMatch =
       attachmentNames.length > 0
         ? await verifyExactOwnedAttachmentSet(Runtime, attachmentNames)
@@ -244,13 +259,12 @@ export async function clearOwnedPromptAndAttachmentsForFallback(
       throw new Error("composer attachment set changed before fallback cleanup");
     }
 
-    await clearPromptComposer(Runtime, logger);
-
     if (attachmentNames.length > 0) {
-      if (!(await verifyExactOwnedAttachmentSet(Runtime, attachmentNames))) {
-        throw new Error("exact owned attachment set changed during fallback cleanup");
-      }
       await clearExactOwnedAttachmentSet(Runtime, attachmentNames);
+    }
+
+    if (!(await clearExactOwnedPromptComposer(Runtime, ownedPrompt))) {
+      throw new Error("exact owned prompt changed during fallback cleanup");
     }
 
     if (!(await verifyComposerCleanupComplete(Runtime))) {
@@ -457,6 +471,7 @@ async function submitPromptInternal(
         draftRetained: true,
         promptLength,
         observedLength,
+        observedDraftSha256: composerSha256(observedComposer),
       },
     );
   }
@@ -491,11 +506,12 @@ async function submitPromptInternal(
       diagnostic,
     });
   };
-  const markPotentiallySubmittingEvent = (
+  const markPotentiallySubmittingEvent = async (
     method: SubmissionDispatchMethod,
     event: PotentiallySubmittingEvent,
-  ): void => {
+  ): Promise<void> => {
     if (diagnostic.potentiallySubmittingEventEmitted) return;
+    await deps.onPromptDispatchEvent?.();
     diagnostic.initialDispatchMethod = method;
     diagnostic.potentiallySubmittingEventEmitted = true;
     diagnostic.potentiallySubmittingEvent = event;
@@ -789,6 +805,45 @@ async function matchesExactOwnedPromptComposer(
     returnByValue: true,
   });
   return result.result?.value?.matches === true;
+}
+
+async function readExactOwnedPromptComposer(
+  Runtime: ChromeClient["Runtime"],
+): Promise<string | null> {
+  const result = await Runtime.evaluate({
+    expression: `(() => {
+      // oracle-owned-draft-read
+      const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
+      ${COMPOSER_VALUE_READER_SOURCE}
+      const normalizeComposer = (value) => String(value ?? '')
+        .replace(/\\r\\n?/g, '\\n')
+        .replace(/\\u00a0/g, ' ');
+      const isVisible = (node) => {
+        if (!node || typeof node.getBoundingClientRect !== 'function') return false;
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+      const nodes = Array.from(new Set(inputSelectors.flatMap((selector) =>
+        Array.from(document.querySelectorAll(selector)))));
+      const active = nodes.find((node) => isVisible(node)) || nodes[0] || null;
+      const observed = readComposerValue(active);
+      const normalizedObserved = normalizeComposer(observed);
+      const nonEmptyNodes = nodes.filter((node) =>
+        normalizeComposer(readComposerValue(node)).trim().length > 0);
+      return {
+        exact:
+          Boolean(active) &&
+          normalizedObserved.trim().length > 0 &&
+          nonEmptyNodes.length > 0 &&
+          nonEmptyNodes.every((node) =>
+            normalizeComposer(readComposerValue(node)) === normalizedObserved),
+        observed,
+      };
+    })()`,
+    returnByValue: true,
+  });
+  const value = result.result?.value as { exact?: boolean; observed?: string } | undefined;
+  return value?.exact === true && typeof value.observed === "string" ? value.observed : null;
 }
 
 async function verifyExactOwnedAttachmentSet(
@@ -1433,13 +1488,12 @@ function buildAttachmentReadyExpression(
       return indexes;
     };
     const removeLabels = removeAffordances.map((node) => collectLabelHaystack(node));
-    const inputNames = attachmentRoots.flatMap((root) =>
-      Array.from(root.querySelectorAll('input[type="file"]')).flatMap((el) =>
-        Array.from((el instanceof HTMLInputElement ? el.files : []) || []).map((file) =>
-          normalize(file?.name),
-        ),
-      ),
-    );
+    const fileInputs = Array.from(new Set(attachmentRoots.flatMap((root) =>
+      Array.from(root.querySelectorAll('input[type="file"]')),
+    ))).filter((input) => input instanceof HTMLInputElement);
+    const readInputNames = (input) =>
+      Array.from(input.files || []).map((file) => normalize(file?.name));
+    const inputNames = fileInputs.flatMap(readInputNames);
     const exactRemoveIndexes = exactDistinctIndexes(removeLabels);
     const exactInputIndexes = exactDistinctIndexes(inputNames);
     const exactSetReady = expected.length === 0
@@ -1451,6 +1505,11 @@ function buildAttachmentReadyExpression(
         return { exactSetMatched: false, removeClicks: 0 };
       }
       const capturedButtons = exactRemoveIndexes.map((index) => removeAffordances[index]);
+      const capturedInputs = exactInputIndexes === null
+        ? []
+        : fileInputs
+            .map((input) => ({ input, signature: readInputNames(input).sort().join('\0') }))
+            .filter(({ signature }) => Boolean(signature));
       for (const button of capturedButtons) {
         button.setAttribute('data-oracle-owned-attachment-cleanup', cleanupMarker);
       }
@@ -1458,6 +1517,17 @@ function buildAttachmentReadyExpression(
         try {
           if (button instanceof HTMLButtonElement) button.type = 'button';
           button.click();
+        } catch {}
+      }
+      // ChatGPT can detach the owned attachment chip while leaving the selected
+      // FileList on its hidden input. Clear only an input set that independently
+      // matches this attempt exactly, otherwise the stale DOM value makes a
+      // successful targeted removal look incomplete and strands the owned draft.
+      for (const { input, signature } of capturedInputs) {
+        const currentSignature = readInputNames(input).sort().join('\0');
+        if (!currentSignature || currentSignature !== signature) continue;
+        try {
+          input.value = '';
         } catch {}
       }
       return { exactSetMatched: true, removeClicks: capturedButtons.length };
@@ -1600,6 +1670,7 @@ async function attemptSendButton(
   };
 
   const deadline = Date.now() + timeoutMs;
+  let dispatchIntentPrepared = false;
   while (Date.now() < deadline) {
     let value = await readSendButtonProbe();
     let status = value.status;
@@ -1609,7 +1680,10 @@ async function attemptSendButton(
     }
     if (status === "point" && typeof value.x === "number" && typeof value.y === "number") {
       if (persistDispatchIntent || revalidateAfterDispatchIntent) {
-        await persistDispatchIntent?.();
+        if (!dispatchIntentPrepared) {
+          await persistDispatchIntent?.();
+          dispatchIntentPrepared = true;
+        }
         await revalidateAfterDispatchIntent?.();
         value = await readSendButtonProbe();
         status = value.status;
@@ -1617,7 +1691,13 @@ async function attemptSendButton(
           await delay(TARGET_COMPOSITING_SETTLE_MS);
           continue;
         }
-        if (status === "missing") break;
+        if (status === "missing") {
+          if (needAttachment) {
+            await delay(150);
+            continue;
+          }
+          break;
+        }
         if (status !== "point" || typeof value.x !== "number" || typeof value.y !== "number") {
           await delay(100);
           continue;
@@ -1632,7 +1712,13 @@ async function attemptSendButton(
         await delay(TARGET_COMPOSITING_SETTLE_MS);
         continue;
       }
-      if (status === "missing") break;
+      if (status === "missing") {
+        if (needAttachment) {
+          await delay(150);
+          continue;
+        }
+        break;
+      }
       if (status !== "point" || typeof value.x !== "number" || typeof value.y !== "number") {
         await delay(100);
         continue;
@@ -1643,6 +1729,10 @@ async function attemptSendButton(
       break;
     }
     if (status === "missing") {
+      if (needAttachment) {
+        await delay(150);
+        continue;
+      }
       break;
     }
     await delay(status === "settling" ? TARGET_COMPOSITING_SETTLE_MS : 100);
@@ -2122,6 +2212,10 @@ function summarizeCommitProbe(probe: CommitProbeState): Record<string, unknown> 
 
 function normalizeComposerText(value: string): string {
   return value.replace(/\r\n?/gu, "\n").replace(/\u00a0/gu, " ");
+}
+
+function composerSha256(value: string): string {
+  return createHash("sha256").update(normalizeComposerText(value), "utf8").digest("hex");
 }
 
 // biome-ignore lint/style/useNamingConvention: test-only export used in vitest suite

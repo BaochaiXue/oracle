@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, test, vi } from "vitest";
 import {
   __test__ as promptComposer,
@@ -786,8 +787,14 @@ describe("promptComposer", () => {
           targetedRemoveClicks += 1;
           return { result: { value: { exactSetMatched: true, removeClicks: 1 } } };
         }
-        if (expression.includes("const dispatchClearEvents")) {
-          return { result: { value: { cleared: true, remaining: [] } } };
+        if (expression.includes("oracle-owned-draft-read")) {
+          return { result: { value: { exact: true, observed: "owned prompt" } } };
+        }
+        if (expression.includes("oracle-owned-draft-cleanup-verify")) {
+          return { result: { value: { composerFound: true, empty: true } } };
+        }
+        if (expression.includes("oracle-owned-draft-cleanup")) {
+          return { result: { value: { cleared: true } } };
         }
         if (expression.includes("evidence.bin")) {
           exactSetChecks += 1;
@@ -800,17 +807,25 @@ describe("promptComposer", () => {
       }),
     };
 
-    await clearOwnedPromptAndAttachmentsForFallback(runtime as never, vi.fn() as never, [
+    await clearOwnedPromptAndAttachmentsForFallback(runtime as never, "owned prompt", [
       { name: "evidence.bin" },
     ]);
 
-    expect(exactSetChecks).toBe(2);
+    expect(exactSetChecks).toBe(1);
     expect(targetedRemoveClicks).toBe(1);
+    expect(
+      runtime.evaluate.mock.calls.some(([call]) =>
+        call.expression.includes("const dispatchClearEvents"),
+      ),
+    ).toBe(false);
   });
 
   test("retains fallback state when the prior attachment set is no longer exact", async () => {
     const runtime = {
       evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("oracle-owned-draft-read")) {
+          return { result: { value: { exact: true, observed: "owned prompt" } } };
+        }
         if (expression.includes("evidence.bin")) {
           return { result: { value: false } };
         }
@@ -819,7 +834,7 @@ describe("promptComposer", () => {
     };
 
     await expect(
-      clearOwnedPromptAndAttachmentsForFallback(runtime as never, vi.fn() as never, [
+      clearOwnedPromptAndAttachmentsForFallback(runtime as never, "owned prompt", [
         { name: "evidence.bin" },
       ]),
     ).rejects.toMatchObject({
@@ -833,6 +848,94 @@ describe("promptComposer", () => {
         cleanupVerified: false,
       }),
     });
+    expect(runtime.evaluate).toHaveBeenCalledTimes(2);
+  });
+
+  test("retains fallback state when the exact owned prompt changed", async () => {
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        expect(expression).toContain("oracle-owned-draft-read");
+        return { result: { value: { exact: true, observed: "changed prompt" } } };
+      }),
+    };
+
+    await expect(
+      clearOwnedPromptAndAttachmentsForFallback(runtime as never, "owned prompt", [
+        { name: "evidence.bin" },
+      ]),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "fallback-cleanup-unverified",
+        potentiallySubmittingEventEmitted: false,
+        retrySafe: false,
+      }),
+    });
+    expect(runtime.evaluate).toHaveBeenCalledTimes(1);
+  });
+
+  test("clears an exact digest-owned truncated draft for file fallback", async () => {
+    const truncatedPrompt = "owned truncated prompt";
+    const observedDraftSha256 = createHash("sha256").update(truncatedPrompt).digest("hex");
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("oracle-owned-draft-cleanup-final-verify")) {
+          return {
+            result: {
+              value: { composerFound: true, composerEmpty: true, attachmentSetEmpty: true },
+            },
+          };
+        }
+        if (expression.includes("oracle-owned-draft-read")) {
+          return { result: { value: { exact: true, observed: truncatedPrompt } } };
+        }
+        if (expression.includes("oracle-owned-draft-cleanup-verify")) {
+          return { result: { value: { composerFound: true, empty: true } } };
+        }
+        if (expression.includes("oracle-owned-draft-cleanup")) {
+          expect(expression).toContain(JSON.stringify(truncatedPrompt));
+          return { result: { value: { cleared: true } } };
+        }
+        if (expression.includes("const expected = []")) {
+          return { result: { value: true } };
+        }
+        throw new Error("unexpected truncated fallback cleanup probe");
+      }),
+    };
+
+    await expect(
+      clearOwnedPromptAndAttachmentsForFallback(
+        runtime as never,
+        `${truncatedPrompt} plus unavailable tail`,
+        [],
+        observedDraftSha256,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  test("retains a truncated fallback draft when its observed digest changed", async () => {
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        expect(expression).toContain("oracle-owned-draft-read");
+        return { result: { value: { exact: true, observed: "changed truncated prompt" } } };
+      }),
+    };
+
+    await expect(
+      clearOwnedPromptAndAttachmentsForFallback(
+        runtime as never,
+        "full prompt with unavailable tail",
+        [],
+        createHash("sha256").update("original truncated prompt").digest("hex"),
+      ),
+    ).rejects.toMatchObject({
+      details: {
+        code: "fallback-cleanup-unverified",
+        draftRetained: true,
+        retrySafe: false,
+        cleanupVerified: false,
+      },
+    });
+
     expect(runtime.evaluate).toHaveBeenCalledTimes(1);
   });
 
@@ -1030,6 +1133,7 @@ describe("promptComposer", () => {
         draftRetained: true,
         potentiallySubmittingEventEmitted: false,
         retrySafe: false,
+        observedDraftSha256: createHash("sha256").update(truncatedPrompt).digest("hex"),
       }),
     });
 
@@ -1141,6 +1245,7 @@ describe("promptComposer", () => {
         commitAtMs: 3_500,
       });
       const onPromptDispatched = vi.fn();
+      const onPromptDispatchEvent = vi.fn();
 
       const result = submitPrompt(
         {
@@ -1150,6 +1255,7 @@ describe("promptComposer", () => {
           baselineTurns: 0,
           isSubmissionOwner: scenario.isSubmissionOwner,
           onPromptDispatched,
+          onPromptDispatchEvent,
         },
         "hello",
         Object.assign(vi.fn(), { verbose: false }) as never,
@@ -1160,6 +1266,7 @@ describe("promptComposer", () => {
 
       expect(scenario.dispatchCount()).toBe(1);
       expect(onPromptDispatched).toHaveBeenCalledTimes(1);
+      expect(onPromptDispatchEvent).toHaveBeenCalledTimes(1);
       expect(
         scenario.input.dispatchMouseEvent.mock.calls.filter(
           ([event]) => event.type === "mousePressed",
@@ -1396,6 +1503,7 @@ describe("promptComposer", () => {
         method: "enter",
         commitAtMs: null,
       });
+      const onPromptDispatchEvent = vi.fn();
 
       const result = submitPrompt(
         {
@@ -1404,6 +1512,7 @@ describe("promptComposer", () => {
           page: scenario.page as never,
           baselineTurns: 0,
           isSubmissionOwner: scenario.isSubmissionOwner,
+          onPromptDispatchEvent,
         },
         "hello",
         Object.assign(vi.fn(), { verbose: false }) as never,
@@ -1436,6 +1545,7 @@ describe("promptComposer", () => {
       await assertion;
 
       expect(scenario.dispatchCount()).toBe(1);
+      expect(onPromptDispatchEvent).toHaveBeenCalledTimes(1);
       expect(
         scenario.input.dispatchKeyEvent.mock.calls.filter(([event]) => event.type === "keyDown"),
       ).toHaveLength(1);
@@ -1512,6 +1622,109 @@ describe("promptComposer", () => {
       2,
       expect.objectContaining({ type: "mousePressed", x: 50, y: 60 }),
     );
+  });
+
+  test("records the dispatch event after a transient post-intent attachment wait", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(0);
+      let sendProbeCount = 0;
+      const timeline: Array<{ event: string; at: number }> = [];
+      const evaluate = vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("const expected =")) {
+          return { result: { value: true } };
+        }
+        if (expression.includes("button.scrollIntoView")) {
+          sendProbeCount += 1;
+          return {
+            result: {
+              value:
+                sendProbeCount === 2 ? { status: "missing" } : { status: "point", x: 10, y: 20 },
+            },
+          };
+        }
+        throw new Error("unexpected attachment dispatch probe");
+      });
+      const input = {
+        dispatchMouseEvent: vi.fn(async ({ type }: { type: string }) => {
+          if (type === "mousePressed") timeline.push({ event: "mousePressed", at: Date.now() });
+        }),
+      };
+      const persistDispatchIntent = vi.fn(async () => {
+        timeline.push({ event: "intent", at: Date.now() });
+      });
+      const recordDispatchEvent = vi.fn(async () => {
+        timeline.push({ event: "dispatch-event", at: Date.now() });
+      });
+
+      const result = promptComposer.attemptSendButton(
+        { evaluate } as never,
+        input as never,
+        undefined,
+        ["oracle-owned.txt"],
+        1_000,
+        "hello",
+        recordDispatchEvent,
+        persistDispatchIntent,
+        vi.fn(),
+      );
+      await vi.advanceTimersByTimeAsync(500);
+
+      await expect(result).resolves.toBe(true);
+      expect(persistDispatchIntent).toHaveBeenCalledTimes(1);
+      expect(recordDispatchEvent).toHaveBeenCalledTimes(1);
+      expect(timeline).toEqual([
+        { event: "intent", at: 0 },
+        { event: "dispatch-event", at: 150 },
+        { event: "mousePressed", at: 150 },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("waits through a transient missing send button while an attachment finishes", async () => {
+    vi.useFakeTimers();
+    try {
+      let sendProbeCount = 0;
+      let dispatchCount = 0;
+      const evaluate = vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("const expected =")) {
+          return { result: { value: true } };
+        }
+        if (expression.includes("button.scrollIntoView")) {
+          sendProbeCount += 1;
+          return {
+            result: {
+              value:
+                sendProbeCount === 1 ? { status: "missing" } : { status: "point", x: 10, y: 20 },
+            },
+          };
+        }
+        throw new Error("unexpected attachment send probe");
+      });
+      const input = {
+        dispatchMouseEvent: vi.fn(async ({ type }: { type: string }) => {
+          if (type === "mousePressed") dispatchCount += 1;
+        }),
+      };
+
+      const result = promptComposer.attemptSendButton(
+        { evaluate } as never,
+        input as never,
+        undefined,
+        ["oracle-owned.txt"],
+        1_000,
+        "hello",
+      );
+      await vi.advanceTimersByTimeAsync(500);
+
+      await expect(result).resolves.toBe(true);
+      expect(sendProbeCount).toBeGreaterThanOrEqual(3);
+      expect(dispatchCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("does not press when the composer changes during pointer movement", async () => {

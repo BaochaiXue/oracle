@@ -1224,7 +1224,10 @@ describe("runSubmissionWithRecoveryForTest", () => {
     const submit = vi
       .fn()
       .mockRejectedValueOnce(
-        new BrowserAutomationError("prompt too large", { code: "prompt-too-large" }),
+        new BrowserAutomationError("prompt too large", {
+          code: "prompt-too-large",
+          observedDraftSha256: "a".repeat(64),
+        }),
       )
       .mockResolvedValueOnce({
         baselineTurns: 7,
@@ -1251,7 +1254,13 @@ describe("runSubmissionWithRecoveryForTest", () => {
     });
 
     expect(prepareFallbackSubmission).toHaveBeenCalledTimes(1);
-    expect(prepareFallbackSubmission).toHaveBeenCalledWith([rawAttachment]);
+    expect(prepareFallbackSubmission).toHaveBeenCalledWith(
+      "inline prompt",
+      [rawAttachment],
+      expect.objectContaining({
+        details: expect.objectContaining({ observedDraftSha256: "a".repeat(64) }),
+      }),
+    );
     expect(submit).toHaveBeenNthCalledWith(2, "fallback prompt", [fallbackBundle, rawAttachment]);
   });
 
