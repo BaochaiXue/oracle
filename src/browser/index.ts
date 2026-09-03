@@ -204,6 +204,7 @@ function isRetainedDraftError(error: unknown): error is BrowserAutomationError {
       "target-activation-failed",
       "commit-unverified-draft-retained",
       "attachment-send-not-ready",
+      "prompt-too-large",
     ].includes(details?.code ?? "") &&
     details?.submissionCommitted === false &&
     details.draftRetained === true

@@ -905,6 +905,68 @@ describe("promptComposer", () => {
     expect(input.insertText).not.toHaveBeenCalled();
   });
 
+  test("marks a truncated large pre-dispatch prompt as retained", async () => {
+    const prompt = "x".repeat(50_000);
+    const truncatedPrompt = prompt.slice(0, 1_000);
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("document.readyState")) {
+          return { result: { value: { ready: true, composer: true, fileInput: false } } };
+        }
+        if (expression.includes("oracle-preexisting-composer-check")) {
+          return {
+            result: { value: { composerFound: true, composerLength: 0, composerEmpty: true } },
+          };
+        }
+        if (expression.includes("focused: true")) {
+          return { result: { value: { focused: true } } };
+        }
+        if (expression.includes("editorText")) {
+          return {
+            result: {
+              value: {
+                editorText: truncatedPrompt,
+                fallbackValue: "",
+                activeValue: truncatedPrompt,
+              },
+            },
+          };
+        }
+        throw new Error("send must not be attempted for a truncated prompt");
+      }),
+    };
+    const input = {
+      insertText: vi.fn(),
+      dispatchMouseEvent: vi.fn(),
+      dispatchKeyEvent: vi.fn(),
+    };
+
+    await expect(
+      submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          page: { bringToFront: vi.fn() } as never,
+          baselineTurns: 0,
+          isSubmissionOwner: async () => true,
+        },
+        prompt,
+        Object.assign(vi.fn(), { verbose: false }) as never,
+      ),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "prompt-too-large",
+        submissionCommitted: false,
+        draftRetained: true,
+        potentiallySubmittingEventEmitted: false,
+        retrySafe: false,
+      }),
+    });
+
+    expect(input.dispatchMouseEvent).not.toHaveBeenCalled();
+    expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
+  });
+
   test("activates the exact owned target before final composer identity and point measurement", async () => {
     const actions: string[] = [];
     let activated = false;

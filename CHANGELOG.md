@@ -132,9 +132,11 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   bounded, read-only profile/SPA settling state before failing closed. When
   attachment Send readiness fails before any submitting event, clear only the
   current attempt's attachments and exact prompt after re-verifying target
-  ownership and prompt identity, then record `retrySafe:true`. Any incomplete
+  ownership and prompt identity; one final DOM snapshot must prove both prompt
+  text and attachments empty before recording `retrySafe:true`. Any incomplete
   proof preserves the exact tab with `retrySafe:false` and leaves unknown
-  content untouched.
+  content untouched. A large prompt truncated before dispatch without a usable
+  file fallback is likewise retained for exact-tab inspection.
 - Direct CDP recovery receipts: require strict durable dispatch-boundary
   persistence before `mousePressed` or Enter `keyDown`, together with the
   current prompt digest and pre-dispatch turn baseline; a missing baseline now

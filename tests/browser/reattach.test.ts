@@ -346,6 +346,45 @@ describe("resumeBrowserSession", () => {
     expect(recoverSession).not.toHaveBeenCalled();
   });
 
+  test("requires the exact target for a persisted non-Pro dispatch intent", async () => {
+    const runtime = {
+      chromePort: 51559,
+      chromeHost: "127.0.0.1",
+      chromeTargetId: "target-1",
+      tabUrl: "https://chatgpt.com/c/interrupted-dispatch",
+      promptSubmitted: false,
+      browserPromptSha256: hashProPromptIdentity("current non-Pro prompt"),
+      browserPromptBaselineTurns: 1,
+    };
+    const connect = vi.fn();
+    const recoverSession = vi.fn(async () => ({
+      answerText: "must not recover",
+      answerMarkdown: "must not recover",
+    }));
+
+    await expect(
+      resumeBrowserSession(runtime, { timeoutMs: 2_000 }, vi.fn() as BrowserLogger, {
+        listTargets: async () => [
+          {
+            targetId: "target-2",
+            type: "page",
+            url: runtime.tabUrl,
+          },
+        ],
+        connect,
+        recoverSession,
+      }),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "browser-exact-target-unavailable",
+        recoverable: true,
+        retrySafe: false,
+      }),
+    });
+    expect(connect).not.toHaveBeenCalled();
+    expect(recoverSession).not.toHaveBeenCalled();
+  });
+
   test("reattaches a manual-intervention target without capturing an earlier answer", async () => {
     const runtime = {
       chromePort: 51559,

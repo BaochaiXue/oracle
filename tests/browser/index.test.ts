@@ -96,6 +96,17 @@ describe("shouldPreserveBrowserOnErrorForTest", () => {
     expect(classifyPreservedBrowserErrorForTest(error, false)).toBe("draft-retained");
   });
 
+  test("preserves a truncated pre-dispatch prompt for manual recovery", () => {
+    const error = new BrowserAutomationError("Prompt was truncated in the composer.", {
+      stage: "submit-prompt",
+      code: "prompt-too-large",
+      submissionCommitted: false,
+      draftRetained: true,
+    });
+
+    expect(classifyPreservedBrowserErrorForTest(error, false)).toBe("draft-retained");
+  });
+
   test("does not retain a failed uncommitted send when no draft remains", () => {
     const error = new BrowserAutomationError("Prompt did not commit.", {
       stage: "submit-prompt",

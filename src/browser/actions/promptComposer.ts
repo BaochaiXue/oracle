@@ -408,6 +408,8 @@ async function submitPromptInternal(
       {
         stage: "submit-prompt",
         code: "prompt-too-large",
+        submissionCommitted: false,
+        draftRetained: true,
         promptLength,
         observedLength,
       },

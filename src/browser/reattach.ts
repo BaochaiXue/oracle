@@ -757,10 +757,7 @@ function requiresExactRecoveryTarget(runtime: BrowserRuntimeMetadata): boolean {
         Number.isSafeInteger(runtime.browserPromptCommittedTurnIndex) &&
         runtime.browserPromptCommittedTurnIndex >= 0
       ));
-  return (
-    isManualInspectionRecovery(runtime) ||
-    (runtime.recoveryKind === "awaiting-response" && currentPromptCommitUnverified)
-  );
+  return isManualInspectionRecovery(runtime) || currentPromptCommitUnverified;
 }
 
 function throwExactRecoveryTargetUnavailable(runtime: BrowserRuntimeMetadata): never {
