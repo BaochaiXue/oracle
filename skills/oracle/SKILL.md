@@ -7,10 +7,12 @@ description: "Second-opinion review from ChatGPT GPT-5.6 Pro with real repositor
 
 Oracle bundles a prompt and selected files for a ChatGPT GPT-5.6 Pro
 second-model review with real repository context. GPT-5.6 Pro is multimodal:
-plots, screenshots, diagrams, videos, and PDFs attached with `--file` are
-uploaded and read as images, not as text (see "Showing the model visual
-evidence"). The canonical lane is browser mode over direct CDP with Oracle's
-dedicated profile. A prompt is required;
+plots, screenshots, and diagrams attached with `--file` are uploaded as native
+image attachments and read visually (see "Showing the model visual evidence").
+Oracle guarantees only the upload; whether ChatGPT interprets a video or the
+figures inside a PDF visually depends on the account tier, so render such
+material to PNG first. The canonical lane is browser mode over direct CDP with
+Oracle's dedicated profile. A prompt is required;
 attach files only when they add necessary context. Treat responses as advisory:
 verify them against the codebase and tests, and argue back in the same
 conversation when they are wrong or over-engineered (see "Arguing with the
@@ -26,7 +28,8 @@ Use browser mode with GPT-5.6 when the ChatGPT account exposes it. Base Sol and
 Sol Pro are two execution tiers of the same model row, not two model rows: base
 Sol tops out at the Extra High effort setting, while Pro is the top tier of the
 same Intelligence picker, reserved for difficult or long-running work. Without a
-`--browser-thinking-time` value Oracle leaves ChatGPT's default tier untouched.
+`--browser-thinking-time` value, base aliases leave ChatGPT's current tier
+untouched, while the Pro alias `gpt-5-pro` defaults the tier to Pro.
 
 This skill supports exactly one target: GPT-5.6 Sol Pro. GPT-5.5 and GPT-5.5
 Pro are no longer supported here. The CLI still parses their legacy aliases for
@@ -215,15 +218,19 @@ Resolve the identity from Git metadata before writing the prompt:
 
 ```bash
 git -C <repo> rev-parse --abbrev-ref --symbolic-full-name '@{u}'  # tracked remote
-git -C <repo> remote -v                                           # all remotes
+git -C <repo> remote                                              # remote names only
+git -C <repo> remote get-url <name> \
+  | sed -E 's#^.*github\.com[:/]([^/]+/[^/]+?)(\.git)?$#\1#'     # emits owner/repo only
 git -C <repo> rev-parse --short HEAD                              # commit
 git -C <repo> status --porcelain                                  # dirty state
 ```
 
-Reduce the remote URL to a bare `owner/repository` slug: drop
-`git@github.com:`, `https://github.com/`, any embedded credentials, and a
-trailing `.git`. `git@github.com:BaochaiXue/oracle.git` becomes
-`BaochaiXue/oracle`.
+Never print the raw remote URL (`git remote -v`, bare `git remote get-url`):
+an HTTPS remote can carry an embedded token, and anything printed lands in the
+agent transcript before any later sanitizing. The `sed` above reduces the URL to
+the bare `owner/repository` slug without echoing it; `git@github.com:BaochaiXue/oracle.git`
+becomes `BaochaiXue/oracle`. If the pattern does not match, the remote is not
+GitHub: omit the block.
 
 Then decide:
 
@@ -285,10 +292,13 @@ profile to a recoverable backup and creating a fresh owner-only profile before
 sign-in; restored tabs from an old profile are not login-persistence evidence.
 After the human confirms sign-in, verify that the setup PID belongs to Oracle's
 Chrome for Testing executable, names the dedicated user-data directory, and
-carries the expected password-store flag. Keep that Chrome process running and
-close only the exact setup tab through its verified CDP target when it is no
-longer needed. Never send `WM_DELETE_WINDOW`, use a broad `pkill`, or signal the
-Chrome process merely to clean up a consultation. Run the account-safe
+carries the expected password-store flag. The setup browser is the one
+exception to tab-level cleanup: it exposes no CDP endpoint, and `oracle browser
+setup` returns only after the human closes the whole sign-in window, so waiting
+for a setup tab to close over CDP hangs forever. Every later consultation runs
+in the shared CDP Chrome, where a run closes only its exact owned tab. Never
+send `WM_DELETE_WINDOW`, use a broad `pkill`, or signal the Chrome process
+merely to clean up a consultation. Run the account-safe
 two-cold-start smoke after first setup or a concrete browser-contract change;
 it submits no prompt.
 
@@ -391,19 +401,23 @@ a single shell call far below that; Claude Code's Bash tool tops out at ten
 minutes.
 
 The canonical lane survives this. A browser run on a Pro-tier alias such as
-`gpt-5-pro` starts in a detached worker, so the consultation keeps running and
-still persists its answer after the foreground stream is cut. A host tool timeout
-is therefore not evidence that the review failed, and it is never grounds for a
-duplicate dispatch.
+`gpt-5-pro` requests a detached worker, so the consultation keeps running and
+still persists its answer after the foreground stream is cut. The request can
+fall back to inline execution when the worker fails to launch (the CLI prints
+"Unable to detach session runner ... Running inline"), so confirm before
+relying on it: `lifecycle.detached` in the session's `meta.json` must be `true`.
+With that confirmed, a host tool timeout is not evidence that the review failed,
+and it is never grounds for a duplicate dispatch.
 
 When the foreground call is cut off:
 
 1. `oracle status --hours 72` to locate the session.
 2. `oracle session <id> --render` to read the stored answer. `--render` targets
    a rich TTY; from a non-interactive shell read the session directory
-   directly: `~/.oracle/sessions/<id>/` holds `meta.json` (status, error,
-   `browser.runtime`), the run log, and `transcript.md` once the answer is
-   captured. Do not use `oracle session <id> --path`: the root-level
+   directly: `~/.oracle/sessions/<id>/meta.json` holds status, error, and
+   `browser.runtime`; `output.log` is the run log; the answer is
+   `~/.oracle/sessions/<id>/artifacts/transcript.md` once captured. Do not use
+   `oracle session <id> --path`: the root-level
    `--path <paths...>` alias for `--file` shadows the subcommand flag and the
    CLI rejects it with "argument missing".
 3. Create another attempt only after a durable receipt proves the prompt was
@@ -548,10 +562,11 @@ the axis scale at once; a paragraph of numbers loses all three.
 Media goes through the same `--file` flag. Oracle recognizes it by extension,
 never inlines it, and uploads the raw bytes as a ChatGPT attachment:
 
-- Images: `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.svg`, `.heic`
+- Images: `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.svg`, `.heic`, `.heif`
 - Video: `.mp4`, `.mov`, `.webm`, `.mkv`, `.m4v`, `.avi`
 - Audio: `.mp3`, `.wav`, `.flac`, `.ogg`, `.m4a`, `.aac`
-- Documents: `.pdf`
+- Documents: `.pdf` (uploaded as a file; figures inside it are not guaranteed to
+  be read visually on a Pro account, so export the pages you need as PNG)
 
 ```bash
 oracle --engine browser --browser-transport cdp --model gpt-5-pro \
@@ -583,21 +598,27 @@ Rules that make visual evidence useful rather than decorative:
 
 Constraints that apply to media in this fork:
 
-- The 1 MB default file cap applies to uploads too. Most plots fit; screenshots
-  and videos often do not. Raise it for the run with `--max-file-size-bytes
-  <bytes>` or `ORACLE_MAX_FILE_SIZE_BYTES`; do not leave it raised in config.
-- One browser turn accepts at most 10 attachments before bundling is required,
-  and media cannot be bundled into a text bundle. Keep the figure set small or
-  use `--browser-bundle-format zip` for the text files so the images stay
-  separate uploads.
+- The 1 MB default file cap applies to text files only. Raw media and archive
+  uploads are uncapped unless a limit is set explicitly, so a 40 MB screen
+  recording is uploaded without complaint. Set a deliberate per-run
+  `--max-file-size-bytes <bytes>` when attaching large or sensitive media; do
+  not rely on a default that does not exist for these files.
+- One browser turn accepts at most 10 attachments. When source files must be
+  bundled alongside figures, use `--browser-bundle-files --browser-bundle-format
+  text`: the text bundle becomes one attachment and every image stays a separate
+  native upload, so `1 + number of figures` must be at most 10. Do not use
+  `zip` or leave the format on `auto` with media present: both pack the images
+  into the archive, and GPT receives one ZIP instead of pictures it can look at.
 - `--browser-attachments never` and `--browser-inline-files` fail on media,
   because media has no inline form. Leave attachments on `auto` or `always`.
-- `.gitignore` filtering applies to every `--file` input, including a literal
-  path. A plot under an ignored `outputs/` directory is silently dropped, not
-  attached. Copy the figures to a non-ignored path inside the working
-  directory, or run Oracle from a scratch directory that holds them, and confirm
-  with `--dry-run summary --files-report` that each image is listed as an upload
-  before the real run.
+- `.gitignore` filtering depends on how `--file` is used. Literal paths alone
+  bypass it: `--file outputs/plot.png` attaches the plot even though `outputs/`
+  is ignored. Add any glob, exclusion, or directory to the same command and every
+  input, the literal included, goes through `.gitignore`, so `--file
+  outputs/plot.png --file "src/**"` silently drops the plot. Either pass figures
+  in a literal-only invocation, or copy them to a non-ignored path when globs
+  are needed, and confirm with `--dry-run summary --files-report` that each image
+  is listed as an upload before the real run.
 - Follow-ups accept `--file`, so a plot can be introduced mid-conversation as
   evidence in a rebuttal (see "Arguing with the model").
 
@@ -621,8 +642,11 @@ Images the model returns are downloaded as session artifacts; pass
   conversation, or `--followup <sessionId|responseId>` for a stored run.
 - Use `--browser-research deep` only when Deep Research is explicitly wanted.
 
-## API preflight
+## API preflight (operator-only CLI reference)
 
+This section is outside the skill's supported workflow: the skill dispatches
+only GPT-5.6 Sol Pro. It is kept as operator reference for deliberate API runs
+and must not be read as permission to route an agent consult to another model.
 Before an API run, check provider readiness without printing secrets:
 
 ```bash
