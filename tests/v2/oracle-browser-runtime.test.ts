@@ -46,7 +46,7 @@ describe("Oracle v2 certified browser runtime", () => {
     const context = {
       pages() {
         observations += 1;
-        return observations < 3 ? [] : restoredPages;
+        return observations < 2 ? [] : restoredPages;
       },
       newCDPSession: fakeRecoveryMarkerSession,
     } as unknown as Pick<BrowserContext, "newCDPSession" | "pages">;

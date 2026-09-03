@@ -256,6 +256,23 @@ describe("prompt composer attachment expressions", () => {
     expect(ownedRemove.getAttribute("data-oracle-owned-attachment-cleanup")).toBe("snapshot-2");
   });
 
+  test("an exact empty-set probe rejects a newly present attachment", () => {
+    const emptyDocument = new FakeDocument([
+      new FakeElement("div", { "data-testid": "unified-composer" }),
+    ]);
+    const attachedDocument = new FakeDocument([
+      new FakeElement("div", { "data-testid": "unified-composer" }, [
+        new FakeElement("div", { "data-testid": "attachment-chip" }, [
+          new FakeElement("span", {}, [], "new-user-file.txt"),
+          new FakeElement("button", { "aria-label": "Remove file 1: new-user-file.txt" }),
+        ]),
+      ]),
+    ]);
+
+    expect(evaluateAttachmentReadyExpression([], emptyDocument, true)).toBe(true);
+    expect(evaluateAttachmentReadyExpression([], attachedDocument, true)).toBe(false);
+  });
+
   test("attachment ready check prefers composer roots over unrelated forms", () => {
     const fileName = "oracle-diagnostic-unique-20260521.txt";
     const document = new FakeDocument([

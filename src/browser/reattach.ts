@@ -104,8 +104,8 @@ export async function resumeBrowserSession(
   };
 
   if (!runtime.chromePort && !runtime.chromeBrowserWSEndpoint) {
-    if (isManualInspectionRecovery(runtime)) {
-      throwManualInspectionTargetUnavailable(runtime);
+    if (requiresExactRecoveryTarget(runtime)) {
+      throwExactRecoveryTargetUnavailable(runtime);
     }
     logger("No running Chrome detected; reopening browser to locate the session.");
     return recoverSession(runtime, config);
@@ -128,11 +128,11 @@ export async function resumeBrowserSession(
     const targetList = (await listTargets()) as TargetInfoLite[];
     const target = pickTarget(targetList, liveRuntime);
     if (
-      isManualInspectionRecovery(liveRuntime) &&
+      requiresExactRecoveryTarget(liveRuntime) &&
       (!liveRuntime.chromeTargetId ||
         (target?.targetId ?? target?.id) !== liveRuntime.chromeTargetId)
     ) {
-      throwManualInspectionTargetUnavailable(liveRuntime);
+      throwExactRecoveryTargetUnavailable(liveRuntime);
     }
     const connection =
       browserWSEndpoint && !deps.connect
@@ -305,7 +305,7 @@ export async function resumeBrowserSession(
     if (
       isResponseTimingError(error) ||
       isPromptIdentityError(error) ||
-      isManualInspectionRecovery(runtime)
+      requiresExactRecoveryTarget(runtime)
     ) {
       throw error;
     }
@@ -748,12 +748,24 @@ function isManualInspectionRecovery(runtime: BrowserRuntimeMetadata): boolean {
   );
 }
 
-function throwManualInspectionTargetUnavailable(runtime: BrowserRuntimeMetadata): never {
+function requiresExactRecoveryTarget(runtime: BrowserRuntimeMetadata): boolean {
+  return (
+    isManualInspectionRecovery(runtime) ||
+    (runtime.recoveryKind === "awaiting-response" && runtime.promptSubmitted !== true)
+  );
+}
+
+function throwExactRecoveryTargetUnavailable(runtime: BrowserRuntimeMetadata): never {
+  const manualInspection = isManualInspectionRecovery(runtime);
   throw new BrowserAutomationError(
-    "Oracle could not reattach the exact browser target retained for manual inspection and will not open or inspect another tab.",
+    manualInspection
+      ? "Oracle could not reattach the exact browser target retained for manual inspection and will not open or inspect another tab."
+      : "Oracle could not reattach the exact browser target retained after an indeterminate commit and will not open or inspect another tab.",
     {
-      stage: "browser-manual-recovery",
-      code: "browser-manual-target-unavailable",
+      stage: manualInspection ? "browser-manual-recovery" : "browser-prompt-identity",
+      code: manualInspection
+        ? "browser-manual-target-unavailable"
+        : "browser-exact-target-unavailable",
       runtime,
       retrySafe: false,
       recoverable: true,

@@ -108,6 +108,8 @@ exact committed user turn, the session is stored as `error` with
 `incompleteReason: "incomplete-capture"`, an exact recoverable browser target,
 and `retrySafe:false`. Use `oracle session <id> --render` to reattach that target;
 do not start a replacement attempt while commit state remains indeterminate.
+If the stored exact target ID no longer exists, recovery fails closed rather
+than opening another tab or browser for the same conversation.
 The receipt persists the current prompt digest and pre-dispatch turn baseline
 before the event; Oracle emits no submitting event when it cannot establish the
 baseline. Reattach must match that digest to exactly one user turn at

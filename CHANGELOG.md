@@ -147,9 +147,13 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   capture or submission. Copied-profile and locally launched headless
   ambiguous, retained-draft, and manual outcomes remain explicitly
   non-reattachable, while remote Chrome ignores the local headless launch flag
-  and retains its exact-target recovery. Exact-owned attachment cleanup now revalidates
-  both the current prompt and the complete attachment set before removing
-  anything, then clicks only the controls from that exact snapshot.
+  and retains its exact-target recovery. Ambiguous commit recovery now requires
+  that stored exact target ID and never falls back to another tab or browser.
+  Exact-owned attachment cleanup now revalidates both the current prompt and
+  the complete attachment set before removing anything, clicks only the
+  controls from that exact snapshot, and proves the current attachment set is
+  empty before clearing the draft. Undispatched failures with no retained draft
+  are explicitly retry-safe and no longer advertise a nonexistent reattach path.
 - Direct CDP lifecycle: separate persistent profile identity from browser
   process lifetime. Dedicated Chrome now defaults to `while-needed`, releases
   tab leases before final drain, rechecks under the profile lock, and closes

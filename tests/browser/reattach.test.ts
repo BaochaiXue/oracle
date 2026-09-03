@@ -302,6 +302,47 @@ describe("resumeBrowserSession", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  test("does not fall back to another tab when an indeterminate commit target is gone", async () => {
+    const runtime = {
+      chromePort: 51559,
+      chromeHost: "127.0.0.1",
+      chromeTargetId: "target-1",
+      tabUrl: "https://chatgpt.com/c/ambiguous-follow-up",
+      browserDisposition: "recoverable" as const,
+      recoveryKind: "awaiting-response" as const,
+      promptSubmitted: false,
+      browserPromptSha256: hashProPromptIdentity("ambiguous follow-up"),
+      browserPromptBaselineTurns: 2,
+    };
+    const connect = vi.fn();
+    const recoverSession = vi.fn(async () => ({
+      answerText: "must not recover",
+      answerMarkdown: "must not recover",
+    }));
+
+    await expect(
+      resumeBrowserSession(runtime, { timeoutMs: 2_000 }, vi.fn() as BrowserLogger, {
+        listTargets: async () => [
+          {
+            targetId: "target-2",
+            type: "page",
+            url: "https://chatgpt.com/c/ambiguous-follow-up",
+          },
+        ],
+        connect,
+        recoverSession,
+      }),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "browser-exact-target-unavailable",
+        recoverable: true,
+        retrySafe: false,
+      }),
+    });
+    expect(connect).not.toHaveBeenCalled();
+    expect(recoverSession).not.toHaveBeenCalled();
+  });
+
   test("reattaches a manual-intervention target without capturing an earlier answer", async () => {
     const runtime = {
       chromePort: 51559,

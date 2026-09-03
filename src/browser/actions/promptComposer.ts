@@ -148,16 +148,33 @@ function createSubmissionDiagnostic(baselineTurns?: number | null): SubmissionDi
 
 function enrichSubmissionError(error: unknown, diagnostic: SubmissionDiagnostic): Error {
   if (error instanceof BrowserAutomationError) {
-    const guidance =
-      error.details?.retrySafe === true
-        ? "Start a new attempt explicitly; Oracle will not resubmit it automatically."
-        : "Keep this session and inspect it with `oracle session <session-id> --render`; do not immediately rerun the prompt.";
+    const noPotentiallySubmittingEvent =
+      diagnostic.potentiallySubmittingEventEmitted === false &&
+      error.details?.potentiallySubmittingEventEmitted !== true &&
+      error.details?.dispatchAttempted !== true;
+    const noRetainedDraft =
+      diagnostic.draftRetained !== true && error.details?.draftRetained === false;
+    const inferredRetrySafe =
+      error.details?.retrySafe !== false &&
+      error.details?.recoverable !== true &&
+      noPotentiallySubmittingEvent &&
+      noRetainedDraft;
+    const retrySafe = error.details?.retrySafe === true || inferredRetrySafe;
+    if (inferredRetrySafe) {
+      diagnostic.retryEligible = true;
+      diagnostic.retryBlockedReason = null;
+      diagnostic.finalCommitClassification ??= "safe-pre-dispatch-failure";
+    }
+    const guidance = retrySafe
+      ? "No potentially submitting event was emitted and no draft was retained; an explicit retry is safe."
+      : "Keep this session and inspect it with `oracle session <session-id> --render`; do not immediately rerun the prompt.";
     return new BrowserAutomationError(
       error.message.includes("oracle session <session-id>")
         ? error.message
         : `${error.message} ${guidance}`,
       {
         ...error.details,
+        retrySafe,
         submissionDiagnostic: { ...diagnostic },
       },
       error,
@@ -721,6 +738,19 @@ async function clearExactOwnedAttachmentSet(
   if (verification.result?.value !== 0) {
     throw new Error("targeted attachment controls did not detach after cleanup");
   }
+  if (!(await verifyComposerAttachmentSetEmpty(Runtime))) {
+    throw new Error("composer attachment set was not empty after targeted cleanup");
+  }
+}
+
+async function verifyComposerAttachmentSetEmpty(
+  Runtime: ChromeClient["Runtime"],
+): Promise<boolean> {
+  const result = await Runtime.evaluate({
+    expression: buildAttachmentReadyExpression([], true),
+    returnByValue: true,
+  });
+  return result.result?.value === true;
 }
 
 async function clearExactOwnedPromptComposer(
@@ -1293,7 +1323,10 @@ function buildAttachmentReadyExpression(
       ),
     );
     const exactRemoveIndexes = exactDistinctIndexes(removeLabels);
-    const exactSetReady = exactRemoveIndexes !== null || exactDistinctIndexes(inputNames) !== null;
+    const exactInputIndexes = exactDistinctIndexes(inputNames);
+    const exactSetReady = expected.length === 0
+      ? exactRemoveIndexes !== null && exactInputIndexes !== null
+      : exactRemoveIndexes !== null || exactInputIndexes !== null;
 
     if (cleanupMode) {
       if (!(chipsReady || inputsReady || countReady) || exactRemoveIndexes === null) {
