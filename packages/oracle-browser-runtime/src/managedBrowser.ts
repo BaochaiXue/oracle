@@ -3,6 +3,7 @@ import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
 import { launch, Launcher, type LaunchedChrome } from "chrome-launcher";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import type { LaunchedManagedBrowser, ManagedBrowserLaunchInput } from "./types.js";
+import { captureManagedBrowserProcessIdentity } from "./processIdentity.js";
 import { closeRestoredBrowserPages, readRecoveryWindowName } from "./reconcile.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
@@ -24,6 +25,15 @@ export async function launchManagedChromeForTesting(
     if (!context) {
       throw new Error("Managed Chrome for Testing did not expose its persistent context");
     }
+    const processIdentity = input.captureProcessIdentity
+      ? await captureManagedBrowserProcessIdentity({
+          browser,
+          executablePath: input.executablePath,
+          profileDir: input.profileDir,
+          debugPort: launcher.port,
+        })
+      : undefined;
+    if (processIdentity) await input.onProcessIdentity?.(processIdentity);
     const preserveWindowNames = new Set(input.preserveWindowNames ?? []);
     const ownedPages = new Set<Page>();
     const pendingMarkers = new Set<string>();
@@ -78,6 +88,7 @@ export async function launchManagedChromeForTesting(
       browserVersion: browser.version(),
       executablePath: input.executablePath,
       restoredPageCount,
+      ...(processIdentity ? { processIdentity } : {}),
       async openPage(url) {
         if (closed || closeAttempt) {
           throw new Error("Managed Chrome for Testing runtime is closing or closed");

@@ -7,13 +7,15 @@ read_when:
 
 # Oracle v2 master plan
 
-Status: accepted architecture; disposable-attempt trim boundary frozen at T0
+Status: accepted architecture; T0 owner-accepted; T1 source candidate complete,
+real auth-seed gate blocked on one fresh login
 
-Repository baseline: `fork/main@39ab7fb35297e45fcf219ab31b7c787b44a69e51`
-(2026-09-04; PR #8 merge)
+Repository baseline: `fork/main@efae6f94714df2f63a2c3afbed817def42421f23`
+(2026-09-04; PR #9 merge)
 
-Integrated source line: `fork/main` (R0-R9 and the legacy post-merge safety
-work through PR #8 are historical source truth)
+Integrated source line: `fork/main` (R0-R9, the legacy post-merge safety work
+through PR #8, and the T0 authority freeze in PR #9 are historical source
+truth)
 
 ## Goal and authority
 
@@ -231,14 +233,14 @@ separate facts.
 The disposable-attempt trim is inserted before G3 without reopening the v2
 durable constitution:
 
-| Slice | Outcome                                                                                                                                 | Gate                                                                                                                                                                      | Status                                    |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| T0    | Freeze authority, correct source/dependency mapping, and publish the legacy deletion map                                                | owner accepts trim boundary and deletion map                                                                                                                              | source-complete; owner acceptance pending |
-| T1    | Add login-only auth seed, atomic sandbox clone/cleanup, exact process receipts, and the two-clone no-Send proof                         | owner-authorized real no-Send gate passes with unchanged seed and zero residue                                                                                            | owner-gated                               |
-| T2    | Route each provider purpose through one attempt sandbox/page and isolate cleanup failures by job                                        | fixture/fault suite proves at most one Send and later jobs remain schedulable                                                                                             | planned                                   |
-| T3    | Run bounded text, bundle, pre-Send failure, at-risk interruption, capture-only recovery, and sequential live acceptance                 | each exact live case is separately owner-authorized and receipts match account history                                                                                    | owner-gated                               |
-| G3    | Make `broker` the default browser route on a supported, certified macOS GUI worker; retain legacy as explicit short-lived rollback only | separate owner approval after T1-T3 and stable-resource evidence                                                                                                          | owner-gated                               |
-| G4    | Physically remove legacy browser execution/ownership while preserving read-only history                                                 | separate owner approval after every supported platform has replacement cutover or explicit support retirement, accepted G3 evidence, and rollback tag; R11 is independent | owner-gated                               |
+| Slice | Outcome                                                                                                                                 | Gate                                                                                                                                                                      | Status                                     |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| T0    | Freeze authority, correct source/dependency mapping, and publish the legacy deletion map                                                | owner accepts trim boundary and deletion map                                                                                                                              | verified                                   |
+| T1    | Add login-only auth seed, atomic sandbox clone/cleanup, exact process receipts, and the two-clone no-Send proof                         | owner-authorized real no-Send gate passes with unchanged seed and zero residue                                                                                            | source-candidate; fresh-login gate blocked |
+| T2    | Route each provider purpose through one attempt sandbox/page and isolate cleanup failures by job                                        | fixture/fault suite proves at most one Send and later jobs remain schedulable                                                                                             | planned                                    |
+| T3    | Run bounded text, bundle, pre-Send failure, at-risk interruption, capture-only recovery, and sequential live acceptance                 | each exact live case is separately owner-authorized and receipts match account history                                                                                    | owner-gated                                |
+| G3    | Make `broker` the default browser route on a supported, certified macOS GUI worker; retain legacy as explicit short-lived rollback only | separate owner approval after T1-T3 and stable-resource evidence                                                                                                          | owner-gated                                |
+| G4    | Physically remove legacy browser execution/ownership while preserving read-only history                                                 | separate owner approval after every supported platform has replacement cutover or explicit support retirement, accepted G3 evidence, and rollback tag; R11 is independent | owner-gated                                |
 
 T0-T3 supersede the fixed-profile route to G3. They do not weaken or replace
 R1-R4 kernel/store/worker/adapter authority, R8 client admission, R9 Batch

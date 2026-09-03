@@ -9,8 +9,10 @@ read_when:
 
 Updated: 2026-09-04
 
-Source integration record: `fork/main@39ab7fb35297e45fcf219ab31b7c787b44a69e51`
-is the verified PR #8 merge baseline for the disposable-attempt trim.
+Source integration record: `fork/main@efae6f94714df2f63a2c3afbed817def42421f23`
+is the verified PR #9 merge and owner-accepted T0 baseline. PR #8 at
+`39ab7fb35297e45fcf219ab31b7c787b44a69e51` remains the implementation-inspection
+baseline used by the T0 map.
 
 Historical pre-v2 legacy safety baseline: `fork/main@e6f170ff`
 
@@ -25,15 +27,18 @@ until G3. R9 continues to map new Batch lane and synthesis attempts to
 Batch-owned v2 jobs while preserving parent manifest, sealing, blind-lane,
 barrier, answer-integrity, and owner-closure authority.
 
-T0 freezes the disposable-attempt plan against current source. The existing v2
+T0 froze and the owner accepted the disposable-attempt plan against current
+source. The existing v2
 fixed-profile runtime is a superseded candidate, not the intended G3 runtime:
 `packages/oracle-browser-runtime/src/runtime.ts` reuses
 `runtimeRoot/browser-profile`; `CertifiedChatGptProvider` retains one runtime
 and adapter; the adapter budgets three pages; startup preserves shared-profile
 recovery markers; and any escaping runner job error currently blocks the whole
-runner. T0 changes documentation only. It does not implement an auth seed,
-create or delete a sandbox, alter engine selection, clean any profile, start a
-worker/browser, or submit a prompt.
+runner. T1 now has a source candidate for auth-seed candidates, immutable
+sandbox/process receipts, atomic clone and exact cleanup, one-page attempt
+runtimes, a two-clone fixture proof, and a separately invoked real no-Send
+proof runner. None of those primitives is connected to provider dispatch;
+legacy remains default and broker remains explicit opt-in.
 
 The accepted replacement keeps the v2 kernel, store, worker ledger, bundle,
 client, Batch, receipts, and adapter page semantics. A fixed profile becomes a
@@ -382,6 +387,37 @@ Fresh T0 authority-freeze evidence:
 - no worker, Chrome for Testing process, browser page, local profile operation,
   no-Send probe, account-side action, or live Send was run.
 
+Fresh T1 source-candidate and live-gate evidence:
+
+- `packages/oracle-browser-runtime` now models accepted/candidate auth seeds,
+  shared clone versus exclusive refresh locking, receipt-validated atomic
+  clones, immutable owner/process identity, exact CDP/TERM/KILL cleanup, and a
+  one-page attempt runtime. The accepted seed cannot be launched as a job
+  profile, arbitrary directories cannot impersonate a seed, and no sandbox
+  copyback exists;
+- process identity capture is opt-in for attempt runtimes only, so the current
+  fixed-profile runtime and `CertifiedChatGptProvider` retain their pre-T1
+  behavior. No provider dispatch integration or T2 runner change is present;
+- the focused suite passes nine tests, including clone failure before atomic
+  publication, immutable receipt rejection, exact-process mismatch, a real
+  fixture browser that destroys dirty clone A, clean clone B, zero Send, an
+  unchanged seed digest, and zero attempt residue;
+- the owner-authorized real gate was attempted once with the stopped worker and
+  unowned fixed profile. Clone A reported inherited browser state before model
+  probing, prompt fill, attachment upload, or any submitting input action. The
+  runner therefore closed and deleted the whole owned clone, rejected and
+  deleted its candidate, left no accepted seed, and stopped without opening
+  clone B;
+- post-failure readback found empty `attempts/` and
+  `auth-seed-candidates/`, no attempt/candidate profile, and no process using
+  either path. The fixed profile was not cleared, adopted, or overwritten;
+- `pnpm check`, `pnpm build`, `pnpm docs:check`, `pnpm public:check`,
+  `pnpm test:packed-cli`, and `git diff --check` passed. The full `pnpm test`
+  suite covered 191 test files with 2,054 passing and 32 skipped tests;
+- the real T1 gate is not certified. It requires one explicit fresh auth-seed
+  login, then the same two-clone no-Send proof. Fixture success is not a
+  substitute, and T2 remains forbidden until that real gate passes.
+
 ## Bounded opt-in dogfood after R9
 
 - the exact R9 repo-local build started one detached, explicitly owned v2
@@ -434,14 +470,14 @@ Fresh T0 authority-freeze evidence:
 
 ## Disposable-attempt trim ledger
 
-| Slice                           | State           | Evidence / blocker                                                                                                                                                                                              |
-| ------------------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| T0 authority freeze             | source-complete | main baseline verified; plan delta, agent contract, and current-code ownership/deletion map prepared; owner acceptance pending; no executable or live action                                                    |
-| T1 auth seed and clone proof    | owner-gated     | requires acceptance of T0 map and separate authorization for the real two-clone no-Send gate                                                                                                                    |
-| T2 provider sandbox integration | planned         | cannot begin before T1 proof; legacy remains frozen/default and broker explicit                                                                                                                                 |
-| T3 bounded live candidate       | owner-gated     | each live case requires exact owner authorization after fixture/fault evidence                                                                                                                                  |
-| G3 default cutover              | owner-gated     | independent decision after T1-T3 and stable-resource evidence; default changes only on a supported, certified macOS GUI worker host                                                                             |
-| G4 physical legacy deletion     | owner-gated     | independent decision only after every supported platform has replacement cutover or explicit support retirement, plus rollback tag and fresh reference scan; R11 is neither prerequisite nor deletion authority |
+| Slice                           | State                          | Evidence / blocker                                                                                                                                                                                              |
+| ------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T0 authority freeze             | verified                       | PR #9 merged at `efae6f94`; owner accepted the boundary and deletion map; no executable or live action entered T0                                                                                               |
+| T1 auth seed and clone proof    | source-candidate; live blocked | primitives, proof runner, and fixture gate pass; first real clone inherited old fixed-profile state and was discarded with zero owned residue; one fresh auth-seed login is required before rerunning the gate  |
+| T2 provider sandbox integration | planned                        | cannot begin before T1 proof; legacy remains frozen/default and broker explicit                                                                                                                                 |
+| T3 bounded live candidate       | owner-gated                    | each live case requires exact owner authorization after fixture/fault evidence                                                                                                                                  |
+| G3 default cutover              | owner-gated                    | independent decision after T1-T3 and stable-resource evidence; default changes only on a supported, certified macOS GUI worker host                                                                             |
+| G4 physical legacy deletion     | owner-gated                    | independent decision only after every supported platform has replacement cutover or explicit support retirement, plus rollback tag and fresh reference scan; R11 is neither prerequisite nor deletion authority |
 
 ## Current stop conditions
 
@@ -465,10 +501,10 @@ Fresh T0 authority-freeze evidence:
 
 Preserve every historical canary, R8 review, bounded-dogfood job, fixed v2
 profile, and legacy dedicated profile without mutation; do not resend or create
-a duplicate. The next action is the owner decision accepting the T0 trim
-boundary and deletion map and authorizing T1 only. T1 may then add auth-seed and
-attempt-sandbox primitives plus fixture coverage, followed by one separately
-authorized real two-clone no-Send proof. Until that decision, do not implement
-the sandbox runtime, run browser smoke, start a live worker/browser, clean or
-archive profiles, submit a prompt, change the default engine, begin T2/T3/R11,
-or remove legacy execution. G3 and G4 remain later independent owner gates.
+a duplicate. T1 source is awaiting review, but its real gate stopped correctly
+because clone A inherited browser state from the old fixed profile. The next
+safe action is one explicit fresh auth-seed login/setup followed by the same
+two-clone no-Send proof. Do not clear or adopt the unknown old state, certify
+from fixture evidence, connect the provider, start a live worker, submit a
+prompt, change the default engine, begin T2/T3/R11, or remove legacy execution.
+G3 and G4 remain later independent owner gates.

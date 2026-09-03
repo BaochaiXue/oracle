@@ -11,7 +11,7 @@ or maintainer-only release instructions.
   durable broker, a certified login-only auth seed, and one disposable
   attempt sandbox/runtime/page. This is an accepted plan, not current runtime
   behavior or a default-engine claim.
-- At `fork/main@39ab7fb3`, legacy `browser` remains the shipped/default
+- At `fork/main@efae6f94`, legacy `browser` remains the shipped/default
   executable route and v2 `broker` remains explicit opt-in. Both fixed-profile
   auto-submit routes are frozen for ordinary owner work until the disposable
   sandbox gates are complete.
@@ -31,9 +31,10 @@ or maintainer-only release instructions.
 
 ## Oracle v2 integration boundary
 
-- `fork/main@39ab7fb35297e45fcf219ab31b7c787b44a69e51` (PR #8 merge) is the
-  disposable-attempt trim baseline. `fork/main@e6f170ff` remains the historical
-  pre-v2 legacy baseline. Until G4, do not add capabilities to or broadly
+- `fork/main@efae6f94714df2f63a2c3afbed817def42421f23` (PR #9 merge) is the
+  accepted T0 authority-freeze baseline; `fork/main@39ab7fb3` (PR #8 merge) is
+  the implementation-inspection baseline, and `fork/main@e6f170ff` remains the
+  historical pre-v2 legacy baseline. Until G4, do not add capabilities to or broadly
   refactor `src/browser/**`; only a bounded data-loss or duplicate-send
   emergency fix may enter the frozen legacy lane.
 - The accepted v2 architecture and complete coverage ledger live in
@@ -109,6 +110,12 @@ or maintainer-only release instructions.
 - Implement one trim slice at a time. T0 is documentation/authority only; T1 is
   auth-seed and clone proof only; T2 integrates the provider router; T3 is
   bounded live acceptance. Do not cross an owner gate implicitly.
+- T1 source primitives may exist without an accepted auth seed. If the
+  owner-authorized two-clone proof finds inherited state in clone A or B, it
+  must close and delete only that owned sandbox, reject the candidate, preserve
+  the fixed profile unchanged, and stop for one explicit fresh auth-seed login.
+  Do not treat fixture evidence as live certification or begin T2 while this
+  gate is blocked.
 
 ## Batch Oracle source and documentation
 
