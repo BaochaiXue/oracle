@@ -262,7 +262,9 @@ describe("resumeBrowserSession", () => {
     const evaluate = vi.fn(async ({ expression }: { expression: string }) => {
       if (expression === "location.href") return { result: { value: runtime.tabUrl } };
       if (expression === "1+1") return { result: { value: 2 } };
-      if (expression.includes("BASELINE_TURNS")) return { result: { value: [2] } };
+      if (expression.includes("BASELINE_TURNS")) {
+        return { result: { value: { matches: [2], userTurnIndices: [2] } } };
+      }
       if (expression.includes("expectedTurns")) return { result: { value: true } };
       return { result: { value: null } };
     });
@@ -407,6 +409,29 @@ describe("resumeBrowserSession", () => {
       }),
     });
     expect(evaluate).not.toHaveBeenCalled();
+  });
+
+  test("rejects recovery when another user turn follows the current prompt baseline", async () => {
+    const Runtime = {
+      evaluate: vi.fn(async () => ({
+        result: { value: { matches: [2], userTurnIndices: [2, 4] } },
+      })),
+    } as unknown as ChromeClient["Runtime"];
+
+    await expect(
+      __test__.reconcileBrowserPromptIdentity(Runtime, {
+        browserPromptSha256: hashProPromptIdentity("current follow-up"),
+        browserPromptBaselineTurns: 2,
+      }),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "browser-prompt-identity-ambiguous",
+        matchingTurnIndices: [2],
+        postBaselineUserTurnIndices: [2, 4],
+        recoverable: true,
+        retrySafe: false,
+      }),
+    });
   });
 
   test("rejects new-format turn markers when the commit flag is absent", async () => {

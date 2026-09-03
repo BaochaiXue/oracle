@@ -37,7 +37,6 @@ import {
   assertPromptComposerEmptyBeforeAttachmentMutation,
   waitForAssistantResponse,
   captureAssistantMarkdown,
-  clearComposerAttachments,
   uploadAttachmentFile,
   waitForAttachmentCompletion,
   waitForUserTurnAttachments,
@@ -1878,7 +1877,6 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         if (!DOM) {
           throw new Error("Chrome DOM domain unavailable while uploading attachments.");
         }
-        await clearComposerAttachments(Runtime, 5_000, logger);
         for (
           let attachmentIndex = 0;
           attachmentIndex < submissionAttachments.length;
@@ -3715,7 +3713,6 @@ async function runRemoteBrowserMode(
         if (!DOM) {
           throw new Error("Chrome DOM domain unavailable while uploading attachments.");
         }
-        await clearComposerAttachments(Runtime, 5_000, logger);
         // Use remote file transfer for remote Chrome (reads local files and injects via CDP)
         for (const attachment of submissionAttachments) {
           logger(`Uploading attachment: ${attachment.displayPath}`);

@@ -737,6 +737,35 @@ describe("promptComposer", () => {
     }
   });
 
+  test("blocks attachment mutation for an attachment-only pre-existing draft", async () => {
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("oracle-preexisting-composer-check")) {
+          return {
+            result: { value: { composerFound: true, composerLength: 0, composerEmpty: true } },
+          };
+        }
+        if (expression.includes("const expected = []")) {
+          return { result: { value: false } };
+        }
+        throw new Error("unexpected composer attachment probe");
+      }),
+    };
+
+    await expect(
+      assertPromptComposerEmptyBeforeAttachmentMutation(runtime as never),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "preexisting-composer-attachments",
+        submissionCommitted: false,
+        draftRetained: true,
+        potentiallySubmittingEventEmitted: false,
+        retrySafe: false,
+      }),
+    });
+    expect(runtime.evaluate).toHaveBeenCalledTimes(2);
+  });
+
   test("waits for transient restored composer content to settle empty before typing", async () => {
     vi.useFakeTimers();
     try {
@@ -1349,6 +1378,49 @@ describe("promptComposer", () => {
       2,
       expect.objectContaining({ type: "mousePressed", x: 30, y: 40 }),
     );
+  });
+
+  test("requires the exact attachment set after dispatch intent persistence", async () => {
+    vi.useFakeTimers();
+    try {
+      let intentPersisted = false;
+      const evaluate = vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("const expected =")) {
+          expect(expression).toContain("const requireExactSet = true");
+          return { result: { value: !intentPersisted } };
+        }
+        if (expression.includes("button.scrollIntoView")) {
+          return { result: { value: { status: "point", x: 10, y: 20 } } };
+        }
+        throw new Error("unexpected attachment dispatch probe");
+      });
+      const input = { dispatchMouseEvent: vi.fn() };
+      const persistDispatchIntent = vi.fn(async () => {
+        intentPersisted = true;
+      });
+
+      const result = promptComposer.attemptSendButton(
+        { evaluate } as never,
+        input as never,
+        undefined,
+        ["oracle-owned.txt"],
+        1_000,
+        "hello",
+        undefined,
+        persistDispatchIntent,
+        vi.fn(),
+      );
+      const assertion = expect(result).rejects.toMatchObject({
+        details: expect.objectContaining({ code: "attachment-send-not-ready" }),
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+      await assertion;
+
+      expect(persistDispatchIntent).toHaveBeenCalledTimes(1);
+      expect(input.dispatchMouseEvent).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("does not replace an unavailable trusted point dispatch with a synthetic DOM click", async () => {

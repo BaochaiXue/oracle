@@ -881,10 +881,12 @@ async function reconcileBrowserPromptIdentity(
       };
       const turns = ${buildConversationTurnListExpression()};
       const matches = [];
+      const userTurnIndices = [];
       for (const [index, node] of turns.entries()) {
-        if (RECORDED_TURN_INDEX !== null) {
-          if (index !== RECORDED_TURN_INDEX) continue;
-        } else if (BASELINE_TURNS !== null && index < BASELINE_TURNS) {
+        const recoveryBoundary = BASELINE_TURNS !== null
+          ? BASELINE_TURNS
+          : RECORDED_TURN_INDEX;
+        if (recoveryBoundary !== null && index < recoveryBoundary) {
           continue;
         }
         const role = String(
@@ -897,6 +899,7 @@ async function reconcileBrowserPromptIdentity(
           ? node
           : node.querySelector?.('[data-message-author-role="user"], [data-turn="user"]');
         if (!roleNode) continue;
+        userTurnIndices.push(index);
         const messageNode = roleNode.querySelector?.('.whitespace-pre-wrap') || roleNode;
         const normalized = normalize(messageNode.innerText || messageNode.textContent || '');
         if (!normalized) continue;
@@ -906,19 +909,32 @@ async function reconcileBrowserPromptIdentity(
           .join('');
         if (actualSha256 === EXPECTED_PROMPT_SHA256) matches.push(index);
       }
-      return matches;
+      return { matches, userTurnIndices };
     })()`,
     returnByValue: true,
     awaitPromise: true,
   });
-  const matches = Array.isArray(result?.value)
-    ? result.value.filter(
+  const promptIdentity = result?.value as
+    | { matches?: unknown; userTurnIndices?: unknown }
+    | undefined;
+  const matches = Array.isArray(promptIdentity?.matches)
+    ? promptIdentity.matches.filter(
         (value): value is number =>
           typeof value === "number" &&
           Number.isSafeInteger(value) &&
           value >= 0 &&
           (recordedTurnIndex === null || value === recordedTurnIndex) &&
           (baselineTurns === null || value >= baselineTurns),
+      )
+    : [];
+  const postBaselineUserTurnIndices = Array.isArray(promptIdentity?.userTurnIndices)
+    ? promptIdentity.userTurnIndices.filter(
+        (value): value is number =>
+          typeof value === "number" &&
+          Number.isSafeInteger(value) &&
+          value >= 0 &&
+          (baselineTurns === null || value >= baselineTurns) &&
+          (baselineTurns !== null || recordedTurnIndex === null || value >= recordedTurnIndex),
       )
     : [];
   if (matches.length === 0) {
@@ -934,7 +950,12 @@ async function reconcileBrowserPromptIdentity(
       },
     );
   }
-  if (matches.length !== 1 || (recordedTurnIndex !== null && matches[0] !== recordedTurnIndex)) {
+  if (
+    matches.length !== 1 ||
+    postBaselineUserTurnIndices.length !== 1 ||
+    postBaselineUserTurnIndices[0] !== matches[0] ||
+    (recordedTurnIndex !== null && matches[0] !== recordedTurnIndex)
+  ) {
     throw new BrowserAutomationError(
       "Oracle refused to capture a response because the current prompt identity did not resolve to one exact user turn.",
       {
@@ -945,6 +966,7 @@ async function reconcileBrowserPromptIdentity(
         recoverable: true,
         baselineTurns,
         matchingTurnIndices: matches,
+        postBaselineUserTurnIndices,
         recordedTurnIndex,
       },
     );

@@ -213,6 +213,18 @@ export async function assertPromptComposerEmptyBeforeAttachmentMutation(
   const diagnostic = createSubmissionDiagnostic();
   try {
     await assertPromptComposerEmptyForSubmission(Runtime, diagnostic);
+    if (!(await verifyComposerAttachmentSetEmpty(Runtime))) {
+      diagnostic.draftRetained = true;
+      throw new BrowserAutomationError(
+        "The ChatGPT composer already contains attachments; refusing to remove or replace them.",
+        {
+          stage: "submit-prompt",
+          code: "preexisting-composer-attachments",
+          submissionCommitted: false,
+          draftRetained: true,
+        },
+      );
+    }
   } catch (error) {
     throw enrichSubmissionError(error, diagnostic);
   }
@@ -1481,7 +1493,7 @@ async function attemptSendButton(
   const readSendButtonProbe = async (): Promise<SendButtonProbe> => {
     if (needAttachment) {
       const ready = await Runtime.evaluate({
-        expression: buildAttachmentReadyExpression(attachmentNames),
+        expression: buildAttachmentReadyExpression(attachmentNames, true),
         returnByValue: true,
       });
       if (!ready?.result?.value) {
