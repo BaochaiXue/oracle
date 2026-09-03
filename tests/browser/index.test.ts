@@ -103,6 +103,32 @@ describe("shouldPreserveBrowserOnErrorForTest", () => {
     expect(classifyPreservedBrowserErrorForTest(error, false)).toBeNull();
   });
 
+  test("retains an attachment-readiness failure when owned cleanup is unverified", () => {
+    const error = new BrowserAutomationError("Attachment send never became ready.", {
+      stage: "submit-prompt",
+      code: "attachment-send-not-ready",
+      submissionCommitted: false,
+      draftRetained: true,
+      retrySafe: false,
+      cleanupVerified: false,
+    });
+
+    expect(classifyPreservedBrowserErrorForTest(error, false)).toBe("draft-retained");
+  });
+
+  test("does not retain an attachment-readiness failure after verified owned cleanup", () => {
+    const error = new BrowserAutomationError("Attachment send never became ready.", {
+      stage: "submit-prompt",
+      code: "attachment-send-not-ready",
+      submissionCommitted: false,
+      draftRetained: false,
+      retrySafe: true,
+      cleanupVerified: true,
+    });
+
+    expect(classifyPreservedBrowserErrorForTest(error, false)).toBeNull();
+  });
+
   test("preserves unowned pre-existing composer content for manual inspection", () => {
     const error = new BrowserAutomationError("Composer already contains text.", {
       stage: "submit-prompt",

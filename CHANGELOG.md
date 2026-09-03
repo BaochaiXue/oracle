@@ -128,6 +128,13 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   indeterminate/recoverable with `retrySafe:false`; bounded diagnostics retain
   the exact tab for inspection without recording prompt text or allowing a
   later run to append to an unowned draft.
+- Direct CDP draft recovery: treat a first non-empty composer observation as a
+  bounded, read-only profile/SPA settling state before failing closed. When
+  attachment Send readiness fails before any submitting event, clear only the
+  current attempt's attachments and exact prompt after re-verifying target
+  ownership and prompt identity, then record `retrySafe:true`. Any incomplete
+  proof preserves the exact tab with `retrySafe:false` and leaves unknown
+  content untouched.
 - Direct CDP lifecycle: separate persistent profile identity from browser
   process lifetime. Dedicated Chrome now defaults to `while-needed`, releases
   tab leases before final drain, rechecks under the profile lock, and closes

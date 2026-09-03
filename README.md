@@ -88,6 +88,8 @@ Oracle 会记录已提交 turn 的 identity 与 timing evidence，并把 durable
 
 Legacy direct-CDP 提交会先激活并重新验证 exact owned target，再从新鲜 DOM 计算可信 Send 坐标；click 与 Enter 共用同一条 exact-user-turn 验证。只有在尚未发出任何可能触发提交的 input event 时，Oracle 才能从不可用的 trusted-click 路径改用 Enter；一旦发出 `mousePressed` 或 Enter `keyDown`，就绝不自动换方法或再次 dispatch。若 exact commit 无法验证，结果会标记为 indeterminate/recoverable、`retrySafe:false` 并保留 exact tab；先用 `oracle session <session-id> --render` 检查，不要直接重跑。
 
+首次发现 composer 非空时，Oracle 会在最多 5 秒的 bounded settle window 内只读复核，避免把 profile/SPA 恢复过程中的瞬时 draft 当成稳定状态；若内容持续存在，仍会保持原样并 fail closed。若 attachment Send readiness 在任何 submitting event 之前失败，且 exact target、ownership 与本 attempt 的完整 prompt 都能重新证明，Oracle 才会清理这次 attempt 自己的 attachments 和 exact draft，并记录 `retrySafe:true`；任一清理证据不足时则保留 exact tab、记录 `retrySafe:false`，绝不清空或覆盖未知内容。
+
 Strict `Pro` effort 的 slider 路径由可见、可交互、合法五档的 ARIA 结构决定，不再绑定某个 model family。Model identity 仍单独验证；slider 到达 maximum 后还必须读到 exact `Pro` semantic label 或 effort pill，支持 Unicode 空白/标点但拒绝 position-only、`Professional`、畸形 range 和 numeric/label contradiction。
 
 <!-- readme-sync:broker-candidate -->

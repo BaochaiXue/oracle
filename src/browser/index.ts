@@ -200,6 +200,7 @@ function isRetainedDraftError(error: unknown): error is BrowserAutomationError {
       "document-changed-before-retry",
       "target-activation-failed",
       "commit-unverified-draft-retained",
+      "attachment-send-not-ready",
     ].includes(details?.code ?? "") &&
     details?.submissionCommitted === false &&
     details.draftRetained === true
@@ -1872,6 +1873,10 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
             dispatchAttempted: true,
           }),
         isSubmissionOwner,
+        cleanupOwnedAttachments:
+          attachmentExpectations.length > 0
+            ? () => clearComposerAttachments(Runtime, 5_000, logger)
+            : undefined,
       };
       const deepResearchTargetBaseline =
         deepResearch && client
@@ -3664,6 +3669,10 @@ async function runRemoteBrowserMode(
             dispatchAttempted: true,
           }),
         isSubmissionOwner,
+        cleanupOwnedAttachments:
+          attachmentExpectations.length > 0
+            ? () => clearComposerAttachments(Runtime, 5_000, logger)
+            : undefined,
       };
       const deepResearchTargetBaseline =
         deepResearch && client

@@ -24,6 +24,9 @@ const ENTER_KEY_EVENT = {
 } as const;
 const ENTER_KEY_TEXT = "\r";
 const TARGET_COMPOSITING_SETTLE_MS = 150;
+const PREEXISTING_COMPOSER_SETTLE_MS = 5_000;
+const PREEXISTING_COMPOSER_POLL_MS = 200;
+const OWNED_DRAFT_CLEAR_SETTLE_MS = 250;
 
 // Input.insertText gives ProseMirror plain text, but ProseMirror renders each
 // line as a direct block. HTMLElement.innerText inserts an extra newline
@@ -83,6 +86,11 @@ interface SubmissionDiagnostic {
   alternateDispatchMethod: SubmissionDispatchMethod | null;
   finalCommitClassification: string | null;
   ownershipVerified: boolean;
+  composerMatchedPromptBeforeDispatch: boolean;
+  ownedAttachmentCleanupAttempted: boolean;
+  ownedAttachmentCleanupSucceeded: boolean;
+  ownedDraftCleanupAttempted: boolean;
+  ownedDraftCleanupSucceeded: boolean;
   potentiallySubmittingEventEmitted: boolean;
   potentiallySubmittingEvent: PotentiallySubmittingEvent | null;
 }
@@ -102,6 +110,7 @@ interface SubmitPromptDependencies {
   ) => Promise<void> | void;
   onPromptCommitPending?: () => Promise<void> | void;
   isSubmissionOwner?: () => Promise<boolean> | boolean;
+  cleanupOwnedAttachments?: () => Promise<void>;
 }
 
 function createSubmissionDiagnostic(baselineTurns?: number | null): SubmissionDiagnostic {
@@ -126,15 +135,22 @@ function createSubmissionDiagnostic(baselineTurns?: number | null): SubmissionDi
     alternateDispatchMethod: null,
     finalCommitClassification: null,
     ownershipVerified: false,
+    composerMatchedPromptBeforeDispatch: false,
+    ownedAttachmentCleanupAttempted: false,
+    ownedAttachmentCleanupSucceeded: false,
+    ownedDraftCleanupAttempted: false,
+    ownedDraftCleanupSucceeded: false,
     potentiallySubmittingEventEmitted: false,
     potentiallySubmittingEvent: null,
   };
 }
 
 function enrichSubmissionError(error: unknown, diagnostic: SubmissionDiagnostic): Error {
-  const guidance =
-    "Keep this session and inspect it with `oracle session <session-id> --render`; do not immediately rerun the prompt.";
   if (error instanceof BrowserAutomationError) {
+    const guidance =
+      error.details?.retrySafe === true
+        ? "Start a new attempt explicitly; Oracle will not resubmit it automatically."
+        : "Keep this session and inspect it with `oracle session <session-id> --render`; do not immediately rerun the prompt.";
     return new BrowserAutomationError(
       error.message.includes("oracle session <session-id>")
         ? error.message
@@ -158,7 +174,13 @@ export async function submitPrompt(
   try {
     return await submitPromptInternal(deps, prompt, logger, diagnostic);
   } catch (error) {
-    throw enrichSubmissionError(error, diagnostic);
+    const finalError = await cleanupOwnedDraftAfterAttachmentReadinessFailure({
+      deps,
+      prompt,
+      diagnostic,
+      error,
+    });
+    throw enrichSubmissionError(finalError, diagnostic);
   }
 }
 
@@ -361,6 +383,7 @@ async function submitPromptInternal(
       },
     );
   }
+  diagnostic.composerMatchedPromptBeforeDispatch = true;
 
   const markPotentiallySubmittingEvent = async (
     method: SubmissionDispatchMethod,
@@ -441,49 +464,56 @@ async function assertPromptComposerEmptyForSubmission(
   Runtime: ChromeClient["Runtime"],
   diagnostic: SubmissionDiagnostic,
 ): Promise<void> {
-  const result = await Runtime.evaluate({
-    expression: `(() => {
-      // oracle-preexisting-composer-check
-      const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
-      ${COMPOSER_VALUE_READER_SOURCE}
-      const isVisible = (node) => {
-        if (!node || typeof node.getBoundingClientRect !== 'function') return false;
-        const rect = node.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
-      };
-      const inputs = inputSelectors
-        .map((selector) => document.querySelector(selector))
-        .filter((node) => Boolean(node));
-      const active = inputs.find((node) => isVisible(node)) || inputs[0] || null;
-      const composerValue = readComposerValue(active);
-      return {
-        composerFound: Boolean(active),
-        composerEmpty: String(composerValue).trim().length === 0,
-        composerLength: String(composerValue).length,
-      };
-    })()`,
-    returnByValue: true,
-  });
-  const value = result.result?.value as
-    | { composerFound?: boolean; composerEmpty?: boolean; composerLength?: number }
-    | undefined;
-  if (value?.composerFound === false || typeof value?.composerEmpty !== "boolean") {
-    throw new BrowserAutomationError(
-      "Oracle could not verify the active ChatGPT composer before typing; refusing to modify the page.",
-      {
-        stage: "submit-prompt",
-        code: "composer-state-unavailable",
-        submissionCommitted: false,
-        draftRetained: false,
-      },
-    );
-  }
-  if (value.composerEmpty) return;
+  const deadline = Date.now() + PREEXISTING_COMPOSER_SETTLE_MS;
+  let composerLength = 0;
+  while (true) {
+    const result = await Runtime.evaluate({
+      expression: `(() => {
+        // oracle-preexisting-composer-check
+        const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
+        ${COMPOSER_VALUE_READER_SOURCE}
+        const isVisible = (node) => {
+          if (!node || typeof node.getBoundingClientRect !== 'function') return false;
+          const rect = node.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        };
+        const inputs = inputSelectors
+          .map((selector) => document.querySelector(selector))
+          .filter((node) => Boolean(node));
+        const active = inputs.find((node) => isVisible(node)) || inputs[0] || null;
+        const composerValue = readComposerValue(active);
+        return {
+          composerFound: Boolean(active),
+          composerEmpty: String(composerValue).trim().length === 0,
+          composerLength: String(composerValue).length,
+        };
+      })()`,
+      returnByValue: true,
+    });
+    const value = result.result?.value as
+      | { composerFound?: boolean; composerEmpty?: boolean; composerLength?: number }
+      | undefined;
+    if (value?.composerFound === false || typeof value?.composerEmpty !== "boolean") {
+      throw new BrowserAutomationError(
+        "Oracle could not verify the active ChatGPT composer before typing; refusing to modify the page.",
+        {
+          stage: "submit-prompt",
+          code: "composer-state-unavailable",
+          submissionCommitted: false,
+          draftRetained: false,
+        },
+      );
+    }
+    if (value.composerEmpty) return;
 
-  const composerLength =
-    typeof value.composerLength === "number" && Number.isFinite(value.composerLength)
-      ? Math.max(0, Math.floor(value.composerLength))
-      : 0;
+    composerLength =
+      typeof value.composerLength === "number" && Number.isFinite(value.composerLength)
+        ? Math.max(0, Math.floor(value.composerLength))
+        : 0;
+    if (Date.now() >= deadline) break;
+    await delay(Math.min(PREEXISTING_COMPOSER_POLL_MS, Math.max(0, deadline - Date.now())));
+  }
+
   diagnostic.composerLengthBeforeDispatch = composerLength;
   diagnostic.composerCleared = false;
   diagnostic.draftRetained = true;
@@ -496,7 +526,172 @@ async function assertPromptComposerEmptyForSubmission(
       submissionCommitted: false,
       draftRetained: true,
       composerLengthBeforeDispatch: composerLength,
+      composerSettleTimeoutMs: PREEXISTING_COMPOSER_SETTLE_MS,
     },
+  );
+}
+
+async function cleanupOwnedDraftAfterAttachmentReadinessFailure({
+  deps,
+  prompt,
+  diagnostic,
+  error,
+}: {
+  deps: SubmitPromptDependencies;
+  prompt: string;
+  diagnostic: SubmissionDiagnostic;
+  error: unknown;
+}): Promise<unknown> {
+  if (
+    !(error instanceof BrowserAutomationError) ||
+    error.details?.code !== "attachment-send-not-ready"
+  ) {
+    return error;
+  }
+
+  diagnostic.finalCommitClassification = "pre-dispatch-attachment-readiness-failed";
+  const canAttemptCleanup =
+    !diagnostic.potentiallySubmittingEventEmitted &&
+    diagnostic.targetActivationVerified &&
+    diagnostic.ownershipVerified &&
+    diagnostic.composerMatchedPromptBeforeDispatch &&
+    Array.isArray(deps.attachmentNames) &&
+    deps.attachmentNames.length > 0 &&
+    typeof deps.isSubmissionOwner === "function" &&
+    typeof deps.cleanupOwnedAttachments === "function";
+
+  if (!canAttemptCleanup) {
+    diagnostic.retryEligible = false;
+    diagnostic.retryBlockedReason = diagnostic.potentiallySubmittingEventEmitted
+      ? "potentially-submitting-event-emitted"
+      : "owned-pre-dispatch-cleanup-not-provable";
+    return new BrowserAutomationError(
+      `${error.message} Oracle could not prove a complete pre-dispatch cleanup, so the exact tab was retained for recovery.`,
+      {
+        ...error.details,
+        submissionCommitted: false,
+        draftRetained: diagnostic.draftRetained !== false,
+        retrySafe: false,
+        recoverable: true,
+        cleanupVerified: false,
+      },
+      error,
+    );
+  }
+
+  try {
+    if (!(await deps.isSubmissionOwner?.())) {
+      throw new Error("submission target ownership changed before cleanup");
+    }
+
+    diagnostic.ownedAttachmentCleanupAttempted = true;
+    await deps.cleanupOwnedAttachments?.();
+    diagnostic.ownedAttachmentCleanupSucceeded = true;
+
+    if (!(await deps.isSubmissionOwner?.())) {
+      throw new Error("submission target ownership changed during cleanup");
+    }
+
+    diagnostic.ownedDraftCleanupAttempted = true;
+    const draftCleared = await clearExactOwnedPromptComposer(deps.runtime, prompt);
+    if (!draftCleared) {
+      throw new Error("exact owned prompt was not present and empty after cleanup");
+    }
+    diagnostic.ownedDraftCleanupSucceeded = true;
+    diagnostic.composerCleared = true;
+    diagnostic.draftRetained = false;
+    diagnostic.retryEligible = true;
+    diagnostic.retryBlockedReason = null;
+    diagnostic.finalCommitClassification = "safe-pre-dispatch-cleanup";
+    return new BrowserAutomationError(
+      `${error.message} Oracle verified that no submitting event was emitted and cleared only this attempt's exact prompt and attachments; an explicit new attempt is safe.`,
+      {
+        ...error.details,
+        submissionCommitted: false,
+        dispatchAttempted: false,
+        potentiallySubmittingEventEmitted: false,
+        draftRetained: false,
+        retrySafe: true,
+        recoverable: false,
+        cleanupVerified: true,
+      },
+      error,
+    );
+  } catch (cleanupError) {
+    diagnostic.retryEligible = false;
+    diagnostic.retryBlockedReason = "owned-pre-dispatch-cleanup-unverified";
+    return new BrowserAutomationError(
+      `${error.message} Oracle could not verify a complete pre-dispatch cleanup, so the exact tab was retained for recovery.`,
+      {
+        ...error.details,
+        submissionCommitted: false,
+        draftRetained: diagnostic.draftRetained !== false,
+        retrySafe: false,
+        recoverable: true,
+        cleanupVerified: false,
+        cleanupFailure: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+      },
+      error,
+    );
+  }
+}
+
+async function clearExactOwnedPromptComposer(
+  Runtime: ChromeClient["Runtime"],
+  expectedPrompt: string,
+): Promise<boolean> {
+  const result = await Runtime.evaluate({
+    expression: `(() => {
+      // oracle-owned-draft-cleanup
+      const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
+      ${COMPOSER_VALUE_READER_SOURCE}
+      const normalizeComposer = (value) => String(value ?? '')
+        .replace(/\\r\\n?/g, '\\n')
+        .replace(/\\u00a0/g, ' ');
+      const expected = normalizeComposer(${JSON.stringify(expectedPrompt)});
+      const nodes = Array.from(new Set(inputSelectors.flatMap((selector) =>
+        Array.from(document.querySelectorAll(selector)))));
+      const nonEmptyNodes = nodes.filter((node) =>
+        normalizeComposer(readComposerValue(node)).trim().length > 0);
+      if (
+        nonEmptyNodes.length === 0 ||
+        nonEmptyNodes.some((node) => normalizeComposer(readComposerValue(node)) !== expected)
+      ) {
+        return { cleared: false };
+      }
+      for (const node of nonEmptyNodes) {
+        if (node instanceof HTMLTextAreaElement || node instanceof HTMLInputElement) {
+          node.value = '';
+          node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }));
+          node.dispatchEvent(new Event('change', { bubbles: true }));
+        } else if (node instanceof HTMLElement) {
+          node.textContent = '';
+          node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }));
+        }
+      }
+      return { cleared: true };
+    })()`,
+    returnByValue: true,
+  });
+  if (result.result?.value?.cleared !== true) return false;
+
+  await delay(OWNED_DRAFT_CLEAR_SETTLE_MS);
+  const verification = await Runtime.evaluate({
+    expression: `(() => {
+      // oracle-owned-draft-cleanup-verify
+      const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
+      ${COMPOSER_VALUE_READER_SOURCE}
+      const nodes = Array.from(new Set(inputSelectors.flatMap((selector) =>
+        Array.from(document.querySelectorAll(selector)))));
+      return {
+        composerFound: nodes.length > 0,
+        empty: nodes.every((node) => String(readComposerValue(node)).trim().length === 0),
+      };
+    })()`,
+    returnByValue: true,
+  });
+  return (
+    verification.result?.value?.composerFound === true && verification.result?.value?.empty === true
   );
 }
 

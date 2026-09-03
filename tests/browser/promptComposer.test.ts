@@ -647,36 +647,27 @@ describe("promptComposer", () => {
   });
 
   test("rejects pre-existing composer content before inserting a new prompt", async () => {
-    const runtime = {
-      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
-        if (expression.includes("document.readyState")) {
-          return { result: { value: { ready: true, composer: true, fileInput: false } } };
-        }
-        if (expression.includes("oracle-preexisting-composer-check")) {
-          return {
-            result: {
-              value: { composerLength: 19, composerEmpty: false },
-            },
-          };
-        }
-        if (expression.includes("focused: true")) {
-          return { result: { value: { focused: true } } };
-        }
-        if (expression.includes("editorText")) {
-          return {
-            result: {
-              value: { editorText: "old draftnew prompt", activeValue: "old draftnew prompt" },
-            },
-          };
-        }
-        return { result: { value: { status: "missing" } } };
-      }),
-    };
-    const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
-    const logger = Object.assign(vi.fn(), { verbose: false });
+    vi.useFakeTimers();
+    try {
+      const runtime = {
+        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+          if (expression.includes("document.readyState")) {
+            return { result: { value: { ready: true, composer: true, fileInput: false } } };
+          }
+          if (expression.includes("oracle-preexisting-composer-check")) {
+            return {
+              result: {
+                value: { composerLength: 19, composerEmpty: false },
+              },
+            };
+          }
+          throw new Error("typing must not start while the old draft remains");
+        }),
+      };
+      const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
+      const logger = Object.assign(vi.fn(), { verbose: false });
 
-    await expect(
-      submitPrompt(
+      const result = submitPrompt(
         {
           runtime: runtime as never,
           input: input as never,
@@ -684,17 +675,110 @@ describe("promptComposer", () => {
         },
         "new prompt",
         logger as never,
-      ),
-    ).rejects.toMatchObject({
-      details: expect.objectContaining({
-        code: "preexisting-composer-content",
-        submissionCommitted: false,
-        draftRetained: true,
-        composerLengthBeforeDispatch: 19,
-      }),
-    });
-    expect(input.insertText).not.toHaveBeenCalled();
-    expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
+      );
+      const assertion = expect(result).rejects.toMatchObject({
+        details: expect.objectContaining({
+          code: "preexisting-composer-content",
+          submissionCommitted: false,
+          draftRetained: true,
+          composerLengthBeforeDispatch: 19,
+          composerSettleTimeoutMs: 5_000,
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(5_500);
+      await assertion;
+
+      expect(input.insertText).not.toHaveBeenCalled();
+      expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("waits for transient restored composer content to settle empty before typing", async () => {
+    vi.useFakeTimers();
+    try {
+      let composerChecks = 0;
+      let dispatchCount = 0;
+      const runtime = {
+        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+          if (expression.includes("document.readyState")) {
+            return { result: { value: { ready: true, composer: true, fileInput: false } } };
+          }
+          if (expression.includes("oracle-preexisting-composer-check")) {
+            composerChecks += 1;
+            return {
+              result: {
+                value:
+                  composerChecks < 3
+                    ? { composerFound: true, composerLength: 19, composerEmpty: false }
+                    : { composerFound: true, composerLength: 0, composerEmpty: true },
+              },
+            };
+          }
+          if (expression.includes("focused: true")) {
+            return { result: { value: { focused: true } } };
+          }
+          if (expression.includes("editorText")) {
+            return {
+              result: {
+                value: { editorText: "new prompt", fallbackValue: "", activeValue: "new prompt" },
+              },
+            };
+          }
+          if (expression.includes("button.scrollIntoView")) {
+            return { result: { value: { status: "point", x: 10, y: 20 } } };
+          }
+          return {
+            result: {
+              value: {
+                baseline: 0,
+                turnsCount: 1,
+                newUserTurnCount: 1,
+                matchingUserTurnCount: 1,
+                userMatched: true,
+                matchedUserTurnIndex: 0,
+                lastMatched: true,
+                hasNewTurn: true,
+                stopVisible: true,
+                assistantVisible: false,
+                composerCleared: true,
+                inConversation: true,
+                editorValue: "",
+              },
+            },
+          };
+        }),
+      };
+      const input = {
+        insertText: vi.fn(),
+        dispatchMouseEvent: vi.fn(async ({ type }: { type: string }) => {
+          if (type === "mousePressed") dispatchCount += 1;
+        }),
+        dispatchKeyEvent: vi.fn(),
+      };
+      const logger = Object.assign(vi.fn(), { verbose: false });
+
+      const result = submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          baselineTurns: 0,
+        },
+        "new prompt",
+        logger as never,
+      );
+      const assertion = expect(result).resolves.toBe(1);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await assertion;
+
+      expect(composerChecks).toBe(3);
+      expect(input.insertText).toHaveBeenCalledTimes(1);
+      expect(dispatchCount).toBe(1);
+      expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("fails closed when the active composer cannot be identified", async () => {
@@ -1101,6 +1185,7 @@ describe("promptComposer", () => {
       };
       const page = { bringToFront: vi.fn() };
       const logger = Object.assign(vi.fn(), { verbose: false });
+      const cleanupOwnedAttachments = vi.fn(async () => undefined);
 
       const result = submitPrompt(
         {
@@ -1110,6 +1195,7 @@ describe("promptComposer", () => {
           attachmentNames: ["evidence.txt"],
           baselineTurns: 0,
           isSubmissionOwner: () => true,
+          cleanupOwnedAttachments,
         },
         "hello",
         logger as never,
@@ -1147,6 +1233,188 @@ describe("promptComposer", () => {
       await assertion;
 
       expect(input.dispatchMouseEvent).toHaveBeenCalledTimes(3);
+      expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
+      expect(cleanupOwnedAttachments).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("clears only the exact owned pre-dispatch draft after attachment readiness fails", async () => {
+    vi.useFakeTimers();
+    try {
+      const cleanupOwnedAttachments = vi.fn(async () => undefined);
+      const isSubmissionOwner = vi.fn(async () => true);
+      const runtime = {
+        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+          if (expression.includes("document.readyState")) {
+            return { result: { value: { ready: true, composer: true, fileInput: true } } };
+          }
+          if (expression.includes("oracle-preexisting-composer-check")) {
+            return {
+              result: { value: { composerFound: true, composerLength: 0, composerEmpty: true } },
+            };
+          }
+          if (expression.includes("oracle-owned-draft-cleanup-verify")) {
+            return { result: { value: { composerFound: true, empty: true } } };
+          }
+          if (expression.includes("oracle-owned-draft-cleanup")) {
+            return { result: { value: { cleared: true } } };
+          }
+          if (expression.includes("focused: true")) {
+            return { result: { value: { focused: true } } };
+          }
+          if (expression.includes("editorText")) {
+            return {
+              result: {
+                value: { editorText: "hello", fallbackValue: "", activeValue: "hello" },
+              },
+            };
+          }
+          if (expression.includes("const expected =")) {
+            return { result: { value: true } };
+          }
+          if (expression.includes("button.scrollIntoView")) {
+            return { result: { value: { status: "settling" } } };
+          }
+          throw new Error("commit verification must not run without a dispatch");
+        }),
+      };
+      const input = {
+        insertText: vi.fn(),
+        dispatchMouseEvent: vi.fn(),
+        dispatchKeyEvent: vi.fn(),
+      };
+      const page = { bringToFront: vi.fn() };
+
+      const result = submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          page: page as never,
+          attachmentNames: ["evidence.txt"],
+          attachmentTimeoutMs: 1_000,
+          baselineTurns: 0,
+          isSubmissionOwner,
+          cleanupOwnedAttachments,
+        },
+        "hello",
+        Object.assign(vi.fn(), { verbose: false }) as never,
+      );
+      const assertion = expect(result).rejects.toMatchObject({
+        details: expect.objectContaining({
+          code: "attachment-send-not-ready",
+          submissionCommitted: false,
+          dispatchAttempted: false,
+          potentiallySubmittingEventEmitted: false,
+          draftRetained: false,
+          retrySafe: true,
+          recoverable: false,
+          cleanupVerified: true,
+          submissionDiagnostic: expect.objectContaining({
+            composerMatchedPromptBeforeDispatch: true,
+            ownedAttachmentCleanupAttempted: true,
+            ownedAttachmentCleanupSucceeded: true,
+            ownedDraftCleanupAttempted: true,
+            ownedDraftCleanupSucceeded: true,
+            potentiallySubmittingEventEmitted: false,
+            retryEligible: true,
+            retryBlockedReason: null,
+            finalCommitClassification: "safe-pre-dispatch-cleanup",
+          }),
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(2_500);
+      await assertion;
+
+      expect(cleanupOwnedAttachments).toHaveBeenCalledTimes(1);
+      expect(input.dispatchMouseEvent).not.toHaveBeenCalled();
+      expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("retains the exact tab when the pre-dispatch draft no longer exactly matches", async () => {
+    vi.useFakeTimers();
+    try {
+      const cleanupOwnedAttachments = vi.fn(async () => undefined);
+      const runtime = {
+        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+          if (expression.includes("document.readyState")) {
+            return { result: { value: { ready: true, composer: true, fileInput: true } } };
+          }
+          if (expression.includes("oracle-preexisting-composer-check")) {
+            return {
+              result: { value: { composerFound: true, composerLength: 0, composerEmpty: true } },
+            };
+          }
+          if (expression.includes("oracle-owned-draft-cleanup")) {
+            return { result: { value: { cleared: false } } };
+          }
+          if (expression.includes("focused: true")) {
+            return { result: { value: { focused: true } } };
+          }
+          if (expression.includes("editorText")) {
+            return {
+              result: {
+                value: { editorText: "hello", fallbackValue: "", activeValue: "hello" },
+              },
+            };
+          }
+          if (expression.includes("const expected =")) {
+            return { result: { value: true } };
+          }
+          if (expression.includes("button.scrollIntoView")) {
+            return { result: { value: { status: "settling" } } };
+          }
+          throw new Error("commit verification must not run without a dispatch");
+        }),
+      };
+      const input = {
+        insertText: vi.fn(),
+        dispatchMouseEvent: vi.fn(),
+        dispatchKeyEvent: vi.fn(),
+      };
+
+      const result = submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          page: { bringToFront: vi.fn() } as never,
+          attachmentNames: ["evidence.txt"],
+          attachmentTimeoutMs: 1_000,
+          baselineTurns: 0,
+          isSubmissionOwner: async () => true,
+          cleanupOwnedAttachments,
+        },
+        "hello",
+        Object.assign(vi.fn(), { verbose: false }) as never,
+      );
+      const assertion = expect(result).rejects.toMatchObject({
+        details: expect.objectContaining({
+          code: "attachment-send-not-ready",
+          submissionCommitted: false,
+          draftRetained: true,
+          retrySafe: false,
+          recoverable: true,
+          cleanupVerified: false,
+          submissionDiagnostic: expect.objectContaining({
+            ownedAttachmentCleanupAttempted: true,
+            ownedAttachmentCleanupSucceeded: true,
+            ownedDraftCleanupAttempted: true,
+            ownedDraftCleanupSucceeded: false,
+            potentiallySubmittingEventEmitted: false,
+            retryEligible: false,
+            retryBlockedReason: "owned-pre-dispatch-cleanup-unverified",
+          }),
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+      await assertion;
+
+      expect(cleanupOwnedAttachments).toHaveBeenCalledTimes(1);
+      expect(input.dispatchMouseEvent).not.toHaveBeenCalled();
       expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
