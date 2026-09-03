@@ -232,10 +232,13 @@ export async function assertPromptComposerEmptyBeforeAttachmentMutation(
 
 export async function clearOwnedPromptAndAttachmentsForFallback(
   Runtime: ChromeClient["Runtime"],
-  logger: BrowserLogger,
+  expectedPrompt: string,
   attachmentNames: AttachmentReadyInput[],
 ): Promise<void> {
   try {
+    if (!(await matchesExactOwnedPromptComposer(Runtime, expectedPrompt))) {
+      throw new Error("exact owned prompt changed before fallback cleanup");
+    }
     const attachmentsMatch =
       attachmentNames.length > 0
         ? await verifyExactOwnedAttachmentSet(Runtime, attachmentNames)
@@ -244,13 +247,12 @@ export async function clearOwnedPromptAndAttachmentsForFallback(
       throw new Error("composer attachment set changed before fallback cleanup");
     }
 
-    await clearPromptComposer(Runtime, logger);
-
     if (attachmentNames.length > 0) {
-      if (!(await verifyExactOwnedAttachmentSet(Runtime, attachmentNames))) {
-        throw new Error("exact owned attachment set changed during fallback cleanup");
-      }
       await clearExactOwnedAttachmentSet(Runtime, attachmentNames);
+    }
+
+    if (!(await clearExactOwnedPromptComposer(Runtime, expectedPrompt))) {
+      throw new Error("exact owned prompt changed during fallback cleanup");
     }
 
     if (!(await verifyComposerCleanupComplete(Runtime))) {
@@ -1460,6 +1462,20 @@ function buildAttachmentReadyExpression(
           button.click();
         } catch {}
       }
+      // ChatGPT can detach the owned attachment chip while leaving the selected
+      // FileList on its hidden input. Clear only an input set that independently
+      // matches this attempt exactly, otherwise the stale DOM value makes a
+      // successful targeted removal look incomplete and strands the owned draft.
+      if (exactInputIndexes !== null) {
+        for (const root of attachmentRoots) {
+          for (const input of Array.from(root.querySelectorAll('input[type="file"]'))) {
+            if (!(input instanceof HTMLInputElement) || !input.files?.length) continue;
+            try {
+              input.value = '';
+            } catch {}
+          }
+        }
+      }
       return { exactSetMatched: true, removeClicks: capturedButtons.length };
     }
 
@@ -1617,7 +1633,13 @@ async function attemptSendButton(
           await delay(TARGET_COMPOSITING_SETTLE_MS);
           continue;
         }
-        if (status === "missing") break;
+        if (status === "missing") {
+          if (needAttachment) {
+            await delay(150);
+            continue;
+          }
+          break;
+        }
         if (status !== "point" || typeof value.x !== "number" || typeof value.y !== "number") {
           await delay(100);
           continue;
@@ -1632,7 +1654,13 @@ async function attemptSendButton(
         await delay(TARGET_COMPOSITING_SETTLE_MS);
         continue;
       }
-      if (status === "missing") break;
+      if (status === "missing") {
+        if (needAttachment) {
+          await delay(150);
+          continue;
+        }
+        break;
+      }
       if (status !== "point" || typeof value.x !== "number" || typeof value.y !== "number") {
         await delay(100);
         continue;
@@ -1643,6 +1671,10 @@ async function attemptSendButton(
       break;
     }
     if (status === "missing") {
+      if (needAttachment) {
+        await delay(150);
+        continue;
+      }
       break;
     }
     await delay(status === "settling" ? TARGET_COMPOSITING_SETTLE_MS : 100);

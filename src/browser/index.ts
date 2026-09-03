@@ -2075,7 +2075,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           await raceWithDisconnect(
             clearOwnedPromptAndAttachmentsForFallback(
               Runtime,
-              logger,
+              promptText,
               currentAttachmentExpectations,
             ),
           );
@@ -3876,7 +3876,7 @@ async function runRemoteBrowserMode(
         }));
         await clearOwnedPromptAndAttachmentsForFallback(
           Runtime,
-          logger,
+          promptText,
           currentAttachmentExpectations,
         );
         await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
