@@ -154,6 +154,10 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   controls from that exact snapshot, and proves the current attachment set is
   empty before clearing the draft. Undispatched failures with no retained draft
   are explicitly retry-safe and no longer advertise a nonexistent reattach path.
+  Attachment-bearing runs now check for unowned composer text before sweeping
+  old attachment UI or uploading files. After durable dispatch-intent
+  persistence, Oracle revalidates target ownership, prompt identity, attachment
+  readiness, and the current trusted Send point before emitting input.
 - Direct CDP lifecycle: separate persistent profile identity from browser
   process lifetime. Dedicated Chrome now defaults to `while-needed`, releases
   tab leases before final drain, rechecks under the profile lock, and closes

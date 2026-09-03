@@ -175,6 +175,11 @@ function enrichSubmissionError(error: unknown, diagnostic: SubmissionDiagnostic)
       {
         ...error.details,
         retrySafe,
+        dispatchAttempted:
+          error.details?.dispatchAttempted ?? diagnostic.potentiallySubmittingEventEmitted,
+        potentiallySubmittingEventEmitted:
+          error.details?.potentiallySubmittingEventEmitted ??
+          diagnostic.potentiallySubmittingEventEmitted,
         submissionDiagnostic: { ...diagnostic },
       },
       error,
@@ -199,6 +204,17 @@ export async function submitPrompt(
       error,
     });
     throw enrichSubmissionError(finalError, diagnostic);
+  }
+}
+
+export async function assertPromptComposerEmptyBeforeAttachmentMutation(
+  Runtime: ChromeClient["Runtime"],
+): Promise<void> {
+  const diagnostic = createSubmissionDiagnostic();
+  try {
+    await assertPromptComposerEmptyForSubmission(Runtime, diagnostic);
+  } catch (error) {
+    throw enrichSubmissionError(error, diagnostic);
   }
 }
 
@@ -403,15 +419,24 @@ async function submitPromptInternal(
   }
   diagnostic.composerMatchedPromptBeforeDispatch = true;
 
-  const markPotentiallySubmittingEvent = async (
+  let dispatchIntentPersisted = false;
+  const persistDispatchIntent = async (): Promise<void> => {
+    if (dispatchIntentPersisted) return;
+    await deps.onPromptDispatched?.();
+    dispatchIntentPersisted = true;
+  };
+  const revalidateAfterDispatchIntent = async (): Promise<void> => {
+    await activateExactSubmissionTarget({
+      Page: deps.page,
+      isSubmissionOwner: deps.isSubmissionOwner,
+      diagnostic,
+    });
+  };
+  const markPotentiallySubmittingEvent = (
     method: SubmissionDispatchMethod,
     event: PotentiallySubmittingEvent,
-  ): Promise<void> => {
+  ): void => {
     if (diagnostic.potentiallySubmittingEventEmitted) return;
-    // Persist the at-risk boundary before issuing the input. If persistence
-    // fails, the event is never sent. Once this returns, any dispatch error is
-    // conservatively indeterminate and can never authorize another method.
-    await deps.onPromptDispatched?.();
     diagnostic.initialDispatchMethod = method;
     diagnostic.potentiallySubmittingEventEmitted = true;
     diagnostic.potentiallySubmittingEvent = event;
@@ -428,8 +453,12 @@ async function submitPromptInternal(
       deps?.attachmentTimeoutMs,
       prompt,
       () => markPotentiallySubmittingEvent("trusted-click", "mousePressed"),
+      persistDispatchIntent,
+      revalidateAfterDispatchIntent,
     );
     if (!clicked) {
+      await persistDispatchIntent();
+      await revalidateAfterDispatchIntent();
       await assertComposerUnchanged(runtime, prompt);
       await dispatchEnterKey(input, () => markPotentiallySubmittingEvent("enter", "enterKeyDown"));
       logger("Submitted prompt via Enter key");
@@ -1365,6 +1394,8 @@ async function attemptSendButton(
   attachmentTimeoutMs?: number | null,
   expectedPrompt?: string,
   onPotentiallySubmittingEvent?: () => Promise<void> | void,
+  persistDispatchIntent?: () => Promise<void> | void,
+  revalidateAfterDispatchIntent?: () => Promise<void> | void,
 ): Promise<boolean> {
   const needAttachment = Array.isArray(attachmentNames) && attachmentNames.length > 0;
   const expectedPromptLiteral = JSON.stringify(expectedPrompt ?? null);
@@ -1441,29 +1472,33 @@ async function attemptSendButton(
   // settle slowly for multi-file uploads, but plain text sends should keep the
   // shorter historical deadline.
   const timeoutMs = sendButtonTimeoutMs(attachmentNames, attachmentTimeoutMs);
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  type SendButtonProbe = {
+    status?: "missing" | "mutated" | "point" | "settling" | "attachments-not-ready";
+    x?: number;
+    y?: number;
+    observedLength?: number;
+  };
+  const readSendButtonProbe = async (): Promise<SendButtonProbe> => {
     if (needAttachment) {
       const ready = await Runtime.evaluate({
         expression: buildAttachmentReadyExpression(attachmentNames),
         returnByValue: true,
       });
       if (!ready?.result?.value) {
-        await delay(150);
-        continue;
+        return { status: "attachments-not-ready" };
       }
     }
     const { result } = await Runtime.evaluate({ expression: script, returnByValue: true });
     const value = result.value as
       | {
-          status?: "clicked" | "missing" | "mutated" | "point" | "settling";
+          status?: "missing" | "mutated" | "point" | "settling";
           x?: number;
           y?: number;
           observedLength?: number;
         }
       | string
       | undefined;
-    const status = typeof value === "string" ? value : value?.status;
+    const status = (typeof value === "string" ? value : value?.status) as SendButtonProbe["status"];
     if (status === "mutated") {
       throwComposerMutationError(
         expectedPrompt ?? "",
@@ -1472,20 +1507,37 @@ async function attemptSendButton(
           : 0,
       );
     }
-    if (
-      status === "point" &&
-      typeof value === "object" &&
-      typeof value.x === "number" &&
-      typeof value.y === "number"
-    ) {
+    return typeof value === "object" && value !== null ? value : { status };
+  };
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    let value = await readSendButtonProbe();
+    let status = value.status;
+    if (status === "attachments-not-ready") {
+      await delay(150);
+      continue;
+    }
+    if (status === "point" && typeof value.x === "number" && typeof value.y === "number") {
+      if (persistDispatchIntent || revalidateAfterDispatchIntent) {
+        await persistDispatchIntent?.();
+        await revalidateAfterDispatchIntent?.();
+        value = await readSendButtonProbe();
+        status = value.status;
+        if (status === "attachments-not-ready" || status === "settling") {
+          await delay(TARGET_COMPOSITING_SETTLE_MS);
+          continue;
+        }
+        if (status === "missing") break;
+        if (status !== "point" || typeof value.x !== "number" || typeof value.y !== "number") {
+          await delay(100);
+          continue;
+        }
+      }
       if (await clickTrustedPoint(Input, value.x, value.y, onPotentiallySubmittingEvent)) {
         return true;
       }
       break;
-    }
-    if (status === "clicked") {
-      await onPotentiallySubmittingEvent?.();
-      return true;
     }
     if (status === "missing") {
       break;

@@ -749,9 +749,17 @@ function isManualInspectionRecovery(runtime: BrowserRuntimeMetadata): boolean {
 }
 
 function requiresExactRecoveryTarget(runtime: BrowserRuntimeMetadata): boolean {
+  const currentPromptCommitUnverified =
+    runtime.proTurnCommitted === false ||
+    (typeof runtime.browserPromptSha256 === "string" &&
+      !(
+        typeof runtime.browserPromptCommittedTurnIndex === "number" &&
+        Number.isSafeInteger(runtime.browserPromptCommittedTurnIndex) &&
+        runtime.browserPromptCommittedTurnIndex >= 0
+      ));
   return (
     isManualInspectionRecovery(runtime) ||
-    (runtime.recoveryKind === "awaiting-response" && runtime.promptSubmitted !== true)
+    (runtime.recoveryKind === "awaiting-response" && currentPromptCommitUnverified)
   );
 }
 

@@ -34,6 +34,7 @@ import {
   installJavaScriptDialogAutoDismissal,
   ensureModelSelection,
   clearPromptComposer,
+  assertPromptComposerEmptyBeforeAttachmentMutation,
   waitForAssistantResponse,
   captureAssistantMarkdown,
   clearComposerAttachments,
@@ -1873,6 +1874,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       let inputOnlyAttachments = false;
       await raceWithDisconnect(ensurePromptReady(Runtime, config.inputTimeoutMs, logger));
       if (submissionAttachments.length > 0) {
+        await raceWithDisconnect(assertPromptComposerEmptyBeforeAttachmentMutation(Runtime));
         if (!DOM) {
           throw new Error("Chrome DOM domain unavailable while uploading attachments.");
         }
@@ -3709,6 +3711,7 @@ async function runRemoteBrowserMode(
       }));
       await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
       if (submissionAttachments.length > 0) {
+        await assertPromptComposerEmptyBeforeAttachmentMutation(Runtime);
         if (!DOM) {
           throw new Error("Chrome DOM domain unavailable while uploading attachments.");
         }

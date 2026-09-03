@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import {
   __test__ as promptComposer,
+  assertPromptComposerEmptyBeforeAttachmentMutation,
   clearPromptComposer,
   submitPrompt,
 } from "../../src/browser/actions/promptComposer.js";
@@ -604,7 +605,7 @@ describe("promptComposer", () => {
           };
         }
         if (expression.includes("button.scrollIntoView")) {
-          return { result: { value: { status: "clicked" } } };
+          return { result: { value: { status: "point", x: 10, y: 20 } } };
         }
         return {
           result: {
@@ -625,7 +626,11 @@ describe("promptComposer", () => {
         };
       }),
     };
-    const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
+    const input = {
+      insertText: vi.fn(),
+      dispatchKeyEvent: vi.fn(),
+      dispatchMouseEvent: vi.fn(),
+    };
     const logger = Object.assign(vi.fn(), { verbose: false });
 
     await submitPrompt(
@@ -690,6 +695,43 @@ describe("promptComposer", () => {
 
       expect(input.insertText).not.toHaveBeenCalled();
       expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("blocks attachment mutation while pre-existing composer content remains", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = {
+        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+          if (expression.includes("oracle-preexisting-composer-check")) {
+            return {
+              result: {
+                value: { composerFound: true, composerLength: 19, composerEmpty: false },
+              },
+            };
+          }
+          throw new Error("attachment mutation must not begin before the composer guard");
+        }),
+      };
+
+      const result = assertPromptComposerEmptyBeforeAttachmentMutation(runtime as never);
+      const assertion = expect(result).rejects.toMatchObject({
+        details: expect.objectContaining({
+          code: "preexisting-composer-content",
+          submissionCommitted: false,
+          draftRetained: true,
+          retrySafe: false,
+          submissionDiagnostic: expect.objectContaining({
+            potentiallySubmittingEventEmitted: false,
+          }),
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(5_500);
+      await assertion;
+
+      expect(runtime.evaluate).toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
@@ -922,7 +964,7 @@ describe("promptComposer", () => {
       ),
     ).resolves.toBe(1);
 
-    expect(page.bringToFront).toHaveBeenCalledTimes(1);
+    expect(page.bringToFront).toHaveBeenCalledTimes(2);
     expect(actions.indexOf("activate")).toBeLessThan(actions.indexOf("final-composer-read"));
     expect(actions).toContain("measure-active");
     expect(actions).toContain("press-30-40");
@@ -1011,6 +1053,120 @@ describe("promptComposer", () => {
       }
     },
   );
+
+  test.each(["trusted-click", "enter"] as const)(
+    "revalidates target ownership after persisting %s dispatch intent",
+    async (method) => {
+      vi.useFakeTimers();
+      try {
+        const scenario = createSubmitDispatchScenario({ method, commitAtMs: null });
+        const onPromptDispatched = vi.fn(async () => {
+          scenario.isSubmissionOwner.mockReturnValue(false);
+        });
+
+        const result = submitPrompt(
+          {
+            runtime: scenario.runtime as never,
+            input: scenario.input as never,
+            page: scenario.page as never,
+            baselineTurns: 0,
+            isSubmissionOwner: scenario.isSubmissionOwner,
+            onPromptDispatched,
+          },
+          "hello",
+          Object.assign(vi.fn(), { verbose: false }) as never,
+        );
+        const assertion = expect(result).rejects.toMatchObject({
+          details: expect.objectContaining({
+            code: "ownership-changed-before-send",
+            submissionCommitted: false,
+            potentiallySubmittingEventEmitted: false,
+            retrySafe: false,
+          }),
+        });
+        await vi.advanceTimersByTimeAsync(2_000);
+        await assertion;
+
+        expect(onPromptDispatched).toHaveBeenCalledTimes(1);
+        expect(scenario.dispatchCount()).toBe(0);
+        expect(
+          scenario.input.dispatchMouseEvent.mock.calls.filter(
+            ([event]) => event.type === "mousePressed",
+          ),
+        ).toHaveLength(0);
+        expect(
+          scenario.input.dispatchKeyEvent.mock.calls.filter(([event]) => event.type === "keyDown"),
+        ).toHaveLength(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  test("does not dispatch when the composer changes while dispatch intent is persisting", async () => {
+    let intentPersisted = false;
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("document.readyState")) {
+          return { result: { value: { ready: true, composer: true, fileInput: false } } };
+        }
+        if (expression.includes("oracle-preexisting-composer-check")) {
+          return { result: { value: { composerLength: 0, composerEmpty: true } } };
+        }
+        if (expression.includes("focused: true")) {
+          return { result: { value: { focused: true } } };
+        }
+        if (expression.includes("editorText")) {
+          return {
+            result: { value: { editorText: "hello", fallbackValue: "", activeValue: "hello" } },
+          };
+        }
+        if (expression.includes("button.scrollIntoView")) {
+          return {
+            result: {
+              value: intentPersisted
+                ? { status: "mutated", observedLength: 6 }
+                : { status: "point", x: 10, y: 20 },
+            },
+          };
+        }
+        throw new Error("commit verification must not run without a dispatch");
+      }),
+    };
+    const input = {
+      insertText: vi.fn(),
+      dispatchMouseEvent: vi.fn(),
+      dispatchKeyEvent: vi.fn(),
+    };
+    const onPromptDispatched = vi.fn(async () => {
+      intentPersisted = true;
+    });
+
+    await expect(
+      submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          page: { bringToFront: vi.fn() } as never,
+          baselineTurns: 0,
+          isSubmissionOwner: async () => true,
+          onPromptDispatched,
+        },
+        "hello",
+        Object.assign(vi.fn(), { verbose: false }) as never,
+      ),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "composer-mutated-before-send",
+        submissionCommitted: false,
+        potentiallySubmittingEventEmitted: false,
+        retrySafe: false,
+      }),
+    });
+    expect(onPromptDispatched).toHaveBeenCalledTimes(1);
+    expect(input.dispatchMouseEvent).not.toHaveBeenCalled();
+    expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
+  });
 
   test("keeps a permanently retained draft after click indeterminate with one dispatch", async () => {
     vi.useFakeTimers();
@@ -1161,6 +1317,38 @@ describe("promptComposer", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test("remeasures the trusted send point after dispatch intent persistence", async () => {
+    const evaluate = vi
+      .fn()
+      .mockResolvedValueOnce({ result: { value: { status: "point", x: 10, y: 20 } } })
+      .mockResolvedValueOnce({ result: { value: { status: "point", x: 30, y: 40 } } });
+    const input = { dispatchMouseEvent: vi.fn() };
+    const persistDispatchIntent = vi.fn();
+    const revalidateAfterDispatchIntent = vi.fn();
+
+    await expect(
+      promptComposer.attemptSendButton(
+        { evaluate } as never,
+        input as never,
+        undefined,
+        undefined,
+        undefined,
+        "hello",
+        undefined,
+        persistDispatchIntent,
+        revalidateAfterDispatchIntent,
+      ),
+    ).resolves.toBe(true);
+
+    expect(persistDispatchIntent).toHaveBeenCalledTimes(1);
+    expect(revalidateAfterDispatchIntent).toHaveBeenCalledTimes(1);
+    expect(evaluate).toHaveBeenCalledTimes(2);
+    expect(input.dispatchMouseEvent).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ type: "mousePressed", x: 30, y: 40 }),
+    );
   });
 
   test("does not replace an unavailable trusted point dispatch with a synthetic DOM click", async () => {
@@ -1599,8 +1787,7 @@ describe("promptComposer", () => {
           };
         }
         if (expression.includes("button.scrollIntoView")) {
-          actions.push("send-click");
-          return { result: { value: { status: "clicked" } } };
+          return { result: { value: { status: "point", x: 10, y: 20 } } };
         }
         return {
           result: {
@@ -1620,7 +1807,13 @@ describe("promptComposer", () => {
         };
       }),
     };
-    const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
+    const input = {
+      insertText: vi.fn(),
+      dispatchKeyEvent: vi.fn(),
+      dispatchMouseEvent: vi.fn(async ({ type }: { type: string }) => {
+        if (type === "mousePressed") actions.push("send-click");
+      }),
+    };
     const logger = Object.assign(vi.fn(), { verbose: false });
 
     await submitPrompt(

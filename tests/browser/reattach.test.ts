@@ -302,7 +302,7 @@ describe("resumeBrowserSession", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
-  test("does not fall back to another tab when an indeterminate commit target is gone", async () => {
+  test("does not fall back to another tab when an indeterminate follow-up target is gone", async () => {
     const runtime = {
       chromePort: 51559,
       chromeHost: "127.0.0.1",
@@ -310,9 +310,10 @@ describe("resumeBrowserSession", () => {
       tabUrl: "https://chatgpt.com/c/ambiguous-follow-up",
       browserDisposition: "recoverable" as const,
       recoveryKind: "awaiting-response" as const,
-      promptSubmitted: false,
+      promptSubmitted: true,
       browserPromptSha256: hashProPromptIdentity("ambiguous follow-up"),
       browserPromptBaselineTurns: 2,
+      proTurnCommitted: false,
     };
     const connect = vi.fn();
     const recoverSession = vi.fn(async () => ({
