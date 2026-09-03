@@ -993,7 +993,7 @@ describe("promptComposer", () => {
       ),
     ).resolves.toBe(1);
 
-    expect(page.bringToFront).toHaveBeenCalledTimes(2);
+    expect(page.bringToFront).toHaveBeenCalledTimes(3);
     expect(actions.indexOf("activate")).toBeLessThan(actions.indexOf("final-composer-read"));
     expect(actions).toContain("measure-active");
     expect(actions).toContain("press-30-40");
@@ -1323,6 +1323,7 @@ describe("promptComposer", () => {
       const evaluate = vi
         .fn()
         .mockResolvedValueOnce({ result: { value: { status: "settling" } } })
+        .mockResolvedValueOnce({ result: { value: { status: "point", x: 30, y: 40 } } })
         .mockResolvedValueOnce({ result: { value: { status: "point", x: 30, y: 40 } } });
       const input = { dispatchMouseEvent: vi.fn() };
 
@@ -1338,7 +1339,7 @@ describe("promptComposer", () => {
       await vi.advanceTimersByTimeAsync(200);
       await assertion;
 
-      expect(evaluate).toHaveBeenCalledTimes(2);
+      expect(evaluate).toHaveBeenCalledTimes(3);
       expect(input.dispatchMouseEvent).toHaveBeenNthCalledWith(
         2,
         expect.objectContaining({ type: "mousePressed", x: 30, y: 40 }),
@@ -1352,7 +1353,8 @@ describe("promptComposer", () => {
     const evaluate = vi
       .fn()
       .mockResolvedValueOnce({ result: { value: { status: "point", x: 10, y: 20 } } })
-      .mockResolvedValueOnce({ result: { value: { status: "point", x: 30, y: 40 } } });
+      .mockResolvedValueOnce({ result: { value: { status: "point", x: 30, y: 40 } } })
+      .mockResolvedValueOnce({ result: { value: { status: "point", x: 50, y: 60 } } });
     const input = { dispatchMouseEvent: vi.fn() };
     const persistDispatchIntent = vi.fn();
     const revalidateAfterDispatchIntent = vi.fn();
@@ -1372,12 +1374,92 @@ describe("promptComposer", () => {
     ).resolves.toBe(true);
 
     expect(persistDispatchIntent).toHaveBeenCalledTimes(1);
-    expect(revalidateAfterDispatchIntent).toHaveBeenCalledTimes(1);
-    expect(evaluate).toHaveBeenCalledTimes(2);
+    expect(revalidateAfterDispatchIntent).toHaveBeenCalledTimes(2);
+    expect(evaluate).toHaveBeenCalledTimes(3);
     expect(input.dispatchMouseEvent).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ type: "mousePressed", x: 30, y: 40 }),
+      expect.objectContaining({ type: "mousePressed", x: 50, y: 60 }),
     );
+  });
+
+  test("does not press when the composer changes during pointer movement", async () => {
+    let pointerMoved = false;
+    const evaluate = vi.fn(async () => ({
+      result: {
+        value: pointerMoved
+          ? { status: "mutated", observedLength: 6 }
+          : { status: "point", x: 10, y: 20 },
+      },
+    }));
+    const input = {
+      dispatchMouseEvent: vi.fn(async ({ type }: { type: string }) => {
+        if (type === "mouseMoved") pointerMoved = true;
+      }),
+    };
+
+    await expect(
+      promptComposer.attemptSendButton(
+        { evaluate } as never,
+        input as never,
+        undefined,
+        undefined,
+        undefined,
+        "hello",
+      ),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "composer-mutated-before-send",
+      }),
+    });
+
+    expect(evaluate).toHaveBeenCalledTimes(2);
+    expect(input.dispatchMouseEvent).toHaveBeenCalledTimes(1);
+    expect(input.dispatchMouseEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "mouseMoved", x: 10, y: 20 }),
+    );
+  });
+
+  test("does not press when the attachment set changes during pointer movement", async () => {
+    vi.useFakeTimers();
+    try {
+      let pointerMoved = false;
+      const evaluate = vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("const expected =")) {
+          expect(expression).toContain("const requireExactSet = true");
+          return { result: { value: !pointerMoved } };
+        }
+        if (expression.includes("button.scrollIntoView")) {
+          return { result: { value: { status: "point", x: 10, y: 20 } } };
+        }
+        throw new Error("unexpected attachment dispatch probe");
+      });
+      const input = {
+        dispatchMouseEvent: vi.fn(async ({ type }: { type: string }) => {
+          if (type === "mouseMoved") pointerMoved = true;
+        }),
+      };
+
+      const result = promptComposer.attemptSendButton(
+        { evaluate } as never,
+        input as never,
+        undefined,
+        ["oracle-owned.txt"],
+        1_000,
+        "hello",
+      );
+      const assertion = expect(result).rejects.toMatchObject({
+        details: expect.objectContaining({ code: "attachment-send-not-ready" }),
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+      await assertion;
+
+      expect(input.dispatchMouseEvent).toHaveBeenCalledTimes(1);
+      expect(input.dispatchMouseEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "mouseMoved", x: 10, y: 20 }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("requires the exact attachment set after dispatch intent persistence", async () => {
@@ -2318,7 +2400,7 @@ describe("promptComposer", () => {
       await vi.advanceTimersByTimeAsync(1_000);
 
       await expect(result).resolves.toBe(true);
-      expect(evaluate).toHaveBeenCalledTimes(1);
+      expect(evaluate).toHaveBeenCalledTimes(2);
       expect(input.dispatchMouseEvent).toHaveBeenCalledTimes(3);
     } finally {
       vi.useRealTimers();

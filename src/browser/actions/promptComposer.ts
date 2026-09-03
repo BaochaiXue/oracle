@@ -1576,6 +1576,20 @@ async function attemptSendButton(
           continue;
         }
       }
+      if (!Input || typeof Input.dispatchMouseEvent !== "function") break;
+      await Input.dispatchMouseEvent({ type: "mouseMoved", x: value.x, y: value.y });
+      await revalidateAfterDispatchIntent?.();
+      value = await readSendButtonProbe();
+      status = value.status;
+      if (status === "attachments-not-ready" || status === "settling") {
+        await delay(TARGET_COMPOSITING_SETTLE_MS);
+        continue;
+      }
+      if (status === "missing") break;
+      if (status !== "point" || typeof value.x !== "number" || typeof value.y !== "number") {
+        await delay(100);
+        continue;
+      }
       if (await clickTrustedPoint(Input, value.x, value.y, onPotentiallySubmittingEvent)) {
         return true;
       }
@@ -1660,7 +1674,6 @@ async function clickTrustedPoint(
   onPotentiallySubmittingEvent?: () => Promise<void> | void,
 ): Promise<boolean> {
   if (!Input || typeof Input.dispatchMouseEvent !== "function") return false;
-  await Input.dispatchMouseEvent({ type: "mouseMoved", x, y });
   await onPotentiallySubmittingEvent?.();
   await Input.dispatchMouseEvent({ type: "mousePressed", x, y, button: "left", clickCount: 1 });
   await Input.dispatchMouseEvent({ type: "mouseReleased", x, y, button: "left", clickCount: 1 });
