@@ -184,6 +184,20 @@ the lineage in `oracle status` stays linear. New evidence can be attached with
 `--file` on any turn. When the follow-up turns are known in advance, plan them
 in the initial run with repeated `--browser-follow-up "<prompt>"` instead.
 
+An Oracle *session* is not a ChatGPT *conversation*. Every turn, including a
+`--followup` turn, gets its own session id and its own row in `oracle status`;
+that is bookkeeping, not a new chat. The conversation identity is
+`browser.runtime.conversationId` in the session's `meta.json` (also the
+`/c/<id>` in its `tabUrl`). Two sessions with the same conversation id are the
+same ChatGPT thread. After every follow-up, confirm that the child's
+conversation id equals the parent's; if it differs, a new conversation was
+opened by mistake and the parent must be resumed instead.
+
+This skill changes. An agent whose context still holds an older copy will act
+on stale rules (an earlier version said runs were one-shot and never mentioned
+follow-ups). Re-invoke the skill at the start of each consultation rather than
+relying on text loaded in a previous task.
+
 Open a new conversation only when the current one cannot continue: browser
 resume fails closed because the saved URL is not a recoverable ChatGPT
 conversation, the browser lands on a different conversation, the account
@@ -217,6 +231,7 @@ different name, the remote still decides.
 Resolve the identity from Git metadata before writing the prompt:
 
 ```bash
+git -C <repo> rev-parse --abbrev-ref HEAD                         # current branch
 git -C <repo> rev-parse --abbrev-ref --symbolic-full-name '@{u}'  # tracked remote
 git -C <repo> remote                                              # remote names only
 git -C <repo> remote get-url <name> \
@@ -243,20 +258,22 @@ Then decide:
   name.
 
 Never place a raw remote URL, embedded credentials, access token, or private
-machine path in the prompt. Include only the sanitized `owner/repository` slug
-and, when useful, the branch and commit. Before dispatch, add this block with
-the placeholders replaced:
+machine path in the prompt. Include the sanitized `owner/repository` slug, the
+branch, and the commit: the connector reads the default branch unless told
+otherwise, so an unnamed feature branch makes the model review the wrong code.
+Before dispatch, add this block with the placeholders replaced:
 
 ```text
 GitHub repository context:
 Use the connected GitHub app/connector to inspect the exact repository
-`OWNER/REPOSITORY` for relevant code, documentation, issues, and pull requests
-before answering. This repository identity comes from Git metadata, not the
-local directory name. Do not substitute a similarly named repository. If the
-GitHub app or this repository is unavailable or unauthorized in this ChatGPT
-surface, state that explicitly and continue only from the prompt and attached
-files. Treat the attached files and stated local commit or dirty diff as
-authoritative wherever they differ from GitHub.
+`OWNER/REPOSITORY` on branch `BRANCH` at commit `COMMIT` for relevant code,
+documentation, issues, and pull requests before answering. Read that branch,
+not the default branch, wherever they differ. This repository identity comes
+from Git metadata, not the local directory name. Do not substitute a similarly
+named repository. If the GitHub app or this repository is unavailable or
+unauthorized in this ChatGPT surface, state that explicitly and continue only
+from the prompt and attached files. Treat the attached files and stated local
+commit or dirty diff as authoritative wherever they differ from GitHub.
 ```
 
 Verify all four before pressing Send:
@@ -264,7 +281,9 @@ Verify all four before pressing Send:
 1. The slug came from Git metadata, not from the directory name.
 2. The slug carries no URL, credential, token, or local path.
 3. Fork and upstream roles are named whenever both remotes exist.
-4. The local commit and dirty state are stated when they affect the answer.
+4. The branch is named, and the commit and dirty state are stated when they
+   affect the answer. Unpushed commits are invisible to the connector: push
+   first, or attach the files that carry the unpushed change.
 
 The connector supplies remote background; it does not replace the minimal
 attachments needed to establish unpushed, dirty, generated, or otherwise

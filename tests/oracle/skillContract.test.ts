@@ -34,6 +34,10 @@ describe("canonical Oracle skill contract", () => {
     expect(skill).not.toContain("git -C <repo> remote -v");
     expect(skill).toContain("emits owner/repo only");
     expect(skill).toContain("The only exemption is a project with no GitHub remote at all.");
+    // Branch and commit travel with the slug; the connector otherwise reads the default branch.
+    expect(skill).toContain("`OWNER/REPOSITORY` on branch `BRANCH` at commit `COMMIT`");
+    expect(skill).toContain("git -C <repo> rev-parse --abbrev-ref HEAD");
+    expect(skill).toContain("Read that branch, not the default branch, wherever they differ.");
     expect(skill).toContain("Never place a raw remote URL, embedded credentials, access token, or private");
   });
 
@@ -78,6 +82,9 @@ describe("canonical Oracle skill contract", () => {
     expect(skill).toContain("Continue the exchange until consensus");
     expect(skill).toContain("### Stay in one conversation");
     expect(skill).toContain("oracle --followup <session-id-or-slug>");
+    expect(skill).toContain("An Oracle *session* is not a ChatGPT *conversation*.");
+    expect(skill).toContain("confirm that the child's conversation id equals the parent's");
+    expect(skill).toContain("Re-invoke the skill at the start of each consultation");
     expect(skill).toContain("Open a new conversation only when the current one cannot continue");
     expect(skill).toContain("Preference for another phrasing, a fresh start, or a cleaner transcript is not a reason.");
     expect(skill).not.toContain("Oracle runs are one-shot; the model does not remember prior runs.");

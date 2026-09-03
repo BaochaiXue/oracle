@@ -741,13 +741,17 @@ async function verifyCommittedProTurnIdentity(
       committedUserTurnIndex: receipt.committedUserTurnIndex as number,
       promptSha256: receipt.promptSha256 as string,
     }));
-  if (!expectedTurns.some((entry) => entry.turnIndex === runtime.proTurnIndex)) {
-    expectedTurns.push({
-      turnIndex: runtime.proTurnIndex as number,
-      committedUserTurnIndex: committedTurnIndex as number,
-      promptSha256: expectedSha256,
-    });
-  }
+  // The active turn's identity comes from the live runtime, never from a stored
+  // receipt that happens to carry the same turn index (a follow-up child can
+  // inherit its parent's receipt 0 while its own turn is also index 0).
+  const currentEntry = {
+    turnIndex: runtime.proTurnIndex as number,
+    committedUserTurnIndex: committedTurnIndex as number,
+    promptSha256: expectedSha256,
+  };
+  const activeIndex = expectedTurns.findIndex((entry) => entry.turnIndex === runtime.proTurnIndex);
+  if (activeIndex >= 0) expectedTurns[activeIndex] = currentEntry;
+  else expectedTurns.push(currentEntry);
 
   const { result } = await Runtime.evaluate({
     expression: `(async () => {
@@ -760,9 +764,8 @@ async function verifyCommittedProTurnIdentity(
         return text.replace(/\\s+/g, ' ').trim();
       };
       const turns = ${buildConversationTurnListExpression()};
-      for (const expected of expectedTurns) {
-        const node = turns[expected.committedUserTurnIndex];
-        if (!node) return false;
+      const userTextSha = async (node) => {
+        if (!node) return null;
         const role = String(
           node.getAttribute?.('data-message-author-role') ||
           node.getAttribute?.('data-turn') ||
@@ -772,14 +775,25 @@ async function verifyCommittedProTurnIdentity(
         const roleNode = role === 'user'
           ? node
           : node.querySelector?.('[data-message-author-role="user"], [data-turn="user"]');
-        if (!roleNode) return false;
+        if (!roleNode) return null;
         const messageNode = roleNode.querySelector?.('.whitespace-pre-wrap') || roleNode;
         const normalized = normalize(messageNode.innerText || messageNode.textContent || '');
         const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
-        const actualSha256 = Array.from(new Uint8Array(digest))
+        return Array.from(new Uint8Array(digest))
           .map((byte) => byte.toString(16).padStart(2, '0'))
           .join('');
-        if (actualSha256 !== expected.promptSha256) return false;
+      };
+      for (const expected of expectedTurns) {
+        // Long conversations are virtualized: ChatGPT keeps only a window of
+        // turns in the DOM, so a stored index can point at a different turn or
+        // at nothing. The prompt digest is the identity; the index is a hint.
+        const direct = await userTextSha(turns[expected.committedUserTurnIndex]);
+        if (direct === expected.promptSha256) continue;
+        let found = false;
+        for (const candidate of turns) {
+          if ((await userTextSha(candidate)) === expected.promptSha256) { found = true; break; }
+        }
+        if (!found) return false;
       }
       return true;
     })()`,

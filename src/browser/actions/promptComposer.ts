@@ -1272,7 +1272,20 @@ async function verifyPromptCommitted(
     }
     const turnsCount = (result.value as { turnsCount?: number } | undefined)?.turnsCount;
     const matchesPrompt = Boolean(info?.lastMatched);
-    if (matchesPrompt && info?.hasNewTurn) {
+    // In a resumed, long conversation ChatGPT virtualizes the transcript: the
+    // new user turn appears while an older turn leaves the DOM, so the rendered
+    // turn count never exceeds the baseline. The prompt is nevertheless
+    // committed when it is the last user turn, the composer has been cleared,
+    // and generation is visibly in progress. This never fires for a historical
+    // match of a resent identical prompt: then the composer still holds the
+    // draft and no generation is running.
+    const committedInVirtualizedThread =
+      matchesPrompt &&
+      typeof info?.baseline === "number" &&
+      info.baseline >= 0 &&
+      info?.composerCleared === true &&
+      info?.stopVisible === true;
+    if (matchesPrompt && (info?.hasNewTurn || committedInVirtualizedThread)) {
       const userTurnIndex = info?.matchedUserTurnIndex;
       return {
         turnsCount:

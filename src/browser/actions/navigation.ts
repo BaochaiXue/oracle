@@ -274,7 +274,18 @@ export async function ensureChatMode(
   Input: ChromeClient["Input"],
   timeoutMs: number,
   logger: BrowserLogger,
-  options: { pollMs?: number; resetWorkConversation?: () => Promise<void> } = {},
+  options: {
+    pollMs?: number;
+    resetWorkConversation?: () => Promise<void>;
+    /**
+     * When resuming a known conversation, the probe can only read Chat/Work
+     * from the sidebar history entry. That entry is absent whenever the
+     * sidebar is collapsed, virtualized, or the conversation was opened by
+     * URL, which made every follow-up fail closed. With this set, an
+     * unresolved probe with no positive Work evidence proceeds as Chat.
+     */
+    assumeChatWhenUnresolved?: boolean;
+  } = {},
 ): Promise<"chat" | "switched" | "unavailable"> {
   const verificationWindowMs = Math.min(Math.max(0, timeoutMs), 10_000);
   let deadline = Date.now() + verificationWindowMs;
@@ -298,6 +309,12 @@ export async function ensureChatMode(
         continue;
       }
       if (changedFromWork) break;
+      if (options.assumeChatWhenUnresolved) {
+        logger(
+          "ChatGPT mode: Chat (assumed; the sidebar entry for this conversation was not found and no Work badge is present)",
+        );
+        return "chat";
+      }
       if (options.resetWorkConversation) {
         logger("ChatGPT conversation mode unresolved; opening a new Chat");
         await options.resetWorkConversation();

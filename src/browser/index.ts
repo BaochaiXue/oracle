@@ -1538,6 +1538,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     }
     const chatMode = await raceWithDisconnect(
       ensureChatMode(Runtime, Input, config.inputTimeoutMs, logger, {
+        assumeChatWhenUnresolved: isResumingConversation,
         resetWorkConversation:
           config.browserTabRef && !isResumingConversation
             ? async () => {
@@ -3412,6 +3413,7 @@ async function runRemoteBrowserMode(
       });
     }
     const chatMode = await ensureChatMode(Runtime, Input, config.inputTimeoutMs, logger, {
+      assumeChatWhenUnresolved: Boolean(config.resumeConversationUrl),
       resetWorkConversation:
         attachedExistingTab && !config.resumeConversationUrl
           ? async () => {

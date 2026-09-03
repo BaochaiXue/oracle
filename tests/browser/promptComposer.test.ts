@@ -458,6 +458,44 @@ describe("promptComposer", () => {
     }
   });
 
+  test("accepts a committed follow-up in a virtualized thread whose rendered turn count did not grow", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = {
+        evaluate: vi
+          .fn()
+          // Baseline read (turn count): the thread already renders 5 turns.
+          .mockResolvedValueOnce({ result: { value: 5 } })
+          // After Send: still 5 rendered turns (one scrolled out), but the
+          // prompt is the last user turn, the composer is empty, and Stop shows.
+          .mockResolvedValue({
+            result: {
+              value: {
+                baseline: 5,
+                turnsCount: 5,
+                userMatched: true,
+                matchedUserTurnIndex: 3,
+                lastMatched: true,
+                hasNewTurn: false,
+                stopVisible: true,
+                assistantVisible: true,
+                composerCleared: true,
+                inConversation: true,
+              },
+            },
+          }),
+      } as unknown as {
+        evaluate: (args: { expression: string; returnByValue?: boolean }) => Promise<unknown>;
+      };
+
+      const promise = promptComposer.verifyPromptCommitted(runtime as never, "rebuttal", 150);
+      await vi.advanceTimersByTimeAsync(50);
+      await expect(promise).resolves.toEqual({ turnsCount: 5, userTurnIndex: 3 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("rejects a matching historical turn when baseline turn count cannot be read", async () => {
     vi.useFakeTimers();
     try {

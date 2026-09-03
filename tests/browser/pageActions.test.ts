@@ -401,6 +401,34 @@ describe("ensureChatMode", () => {
     expect(input.dispatchMouseEvent).not.toHaveBeenCalled();
   });
 
+  test("proceeds as Chat on a resumed conversation whose sidebar entry cannot be resolved", async () => {
+    const runtime = {
+      evaluate: vi
+        .fn()
+        .mockResolvedValue({ result: { value: { status: "conversation-unresolved" } } }),
+    } as unknown as ChromeClient["Runtime"];
+    const input = { dispatchMouseEvent: vi.fn() } as unknown as ChromeClient["Input"];
+
+    await expect(
+      ensureChatMode(runtime, input, 0, logger, { pollMs: 0, assumeChatWhenUnresolved: true }),
+    ).resolves.toBe("chat");
+    expect(logger).toHaveBeenCalledWith(expect.stringContaining("ChatGPT mode: Chat (assumed"));
+    expect(input.dispatchMouseEvent).not.toHaveBeenCalled();
+  });
+
+  test("still fails closed on an unresolved conversation when not resuming", async () => {
+    const runtime = {
+      evaluate: vi
+        .fn()
+        .mockResolvedValue({ result: { value: { status: "conversation-unresolved" } } }),
+    } as unknown as ChromeClient["Runtime"];
+    const input = { dispatchMouseEvent: vi.fn() } as unknown as ChromeClient["Input"];
+
+    await expect(ensureChatMode(runtime, input, 0, logger, { pollMs: 0 })).rejects.toMatchObject({
+      details: expect.objectContaining({ details: { mode: "conversation-unresolved" } }),
+    });
+  });
+
   test("keeps compatibility when the Chat/Work selector is absent", async () => {
     const runtime = {
       evaluate: vi.fn().mockResolvedValue({ result: { value: { status: "controls-absent" } } }),

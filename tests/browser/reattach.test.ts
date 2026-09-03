@@ -248,6 +248,30 @@ describe("resumeBrowserSession", () => {
     expect(evaluate).not.toHaveBeenCalled();
   });
 
+  test("verifies a follow-up turn by prompt digest even when the DOM index has shifted", async () => {
+    // Long conversations are virtualized, so the committed DOM index recorded at
+    // send time may no longer address the same turn on reattach. The in-page
+    // check must fall back to locating the user turn by its digest.
+    const currentSha = hashProPromptIdentity("round two rebuttal");
+    const runtime = {
+      proTurnIndex: 0,
+      proTurnCommitted: true,
+      proCommittedTurnIndex: 10,
+      proPromptSha256: currentSha,
+    };
+    const Runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        expect(expression).toContain(currentSha);
+        expect(expression).toContain('"committedUserTurnIndex":10');
+        // The digest search fallback must be part of the page-side check.
+        expect(expression).toContain("The prompt digest is the identity");
+        return { result: { value: true } };
+      }),
+    } as unknown as ChromeClient["Runtime"];
+
+    await expect(__test__.verifyCommittedProTurnIdentity(Runtime, runtime)).resolves.toBe(10);
+  });
+
   test("rejects recovery when the committed browser turn no longer matches the prompt digest", async () => {
     const runtime = {
       proTurnIndex: 0,
