@@ -7,8 +7,14 @@ or maintainer-only release instructions.
 
 ## Canonical product boundary
 
-- The ordinary canonical consultation lane is ChatGPT GPT-5.6 Pro through the
-  local dedicated Chrome for Testing profile and loopback direct CDP.
+- The target canonical consultation lane is ChatGPT GPT-5.6 Pro through the v2
+  durable broker, a certified login-only auth seed, and one disposable
+  attempt sandbox/runtime/page. This is an accepted plan, not current runtime
+  behavior or a default-engine claim.
+- At `fork/main@39ab7fb3`, legacy `browser` remains the shipped/default
+  executable route and v2 `broker` remains explicit opt-in. Both fixed-profile
+  auto-submit routes are frozen for ordinary owner work until the disposable
+  sandbox gates are complete.
 - OpenCLI is an explicit alternative transport for ordinary consultations. It
   is never an automatic fallback.
 - Batch Oracle v1 preserves its strict manifest, admitted source snapshot,
@@ -25,14 +31,16 @@ or maintainer-only release instructions.
 
 ## Oracle v2 integration boundary
 
-- `fork/main@e6f170ff` is the historical legacy direct-CDP safety baseline from
-  which the integrated v2 candidate was built. Until G4, do not add
-  capabilities to or broadly refactor
-  `src/browser/**`; only bounded P0/P1 safety, data-loss, duplicate-send, or
-  current-user-blocking fixes belong there.
+- `fork/main@39ab7fb35297e45fcf219ab31b7c787b44a69e51` (PR #8 merge) is the
+  disposable-attempt trim baseline. `fork/main@e6f170ff` remains the historical
+  pre-v2 legacy baseline. Until G4, do not add capabilities to or broadly
+  refactor `src/browser/**`; only a bounded data-loss or duplicate-send
+  emergency fix may enter the frozen legacy lane.
 - The accepted v2 architecture and complete coverage ledger live in
   `docs/oracle-v2-master-plan.md`. Current tranche and gate evidence live in
-  `docs/oracle-v2-progress.md`.
+  `docs/oracle-v2-progress.md`. The source dependency, ownership, and G4
+  deletion reference map lives in
+  `docs/oracle-v2-browser-ownership-map.md`.
 - New v2 source lives under `packages/*` and `apps/*`. It must not import the
   legacy browser implementation. ChatGPT page-reading and Playwright
   automation knowledge belongs only in `packages/chatgpt-adapter`. The
@@ -52,6 +60,55 @@ or maintainer-only release instructions.
   default-engine switch, or legacy retirement.
 - Keep G1 runtime/login selection, G2 first live Send, G3 default-engine
   cutover, and G4 legacy removal as separate owner decisions.
+- G3 may change the no-API default to `broker` only on a supported, certified
+  macOS GUI worker host. Windows and every other deferred worker platform keep
+  their existing engine default until that platform has its own accepted worker
+  plan and evidence; a platform-agnostic `broker` default is forbidden.
+- R11 remote bridge work is independent of G4. The disposable-attempt trim
+  explicitly supersedes R12's old `R10-R11` dependency: G4 depends on accepted
+  T1-T3 and G3 evidence, a rollback tag, a fresh deletion scan, and its own
+  owner decision, not on remote bridge delivery.
+- G4 is a repository-wide physical deletion gate, not a macOS-only cleanup.
+  Do not remove the shared legacy implementation while any supported platform
+  still selects it by default. Every such platform must first have an accepted
+  replacement-worker cutover, or its support must be retired by a separate
+  explicit owner decision. Deferred platform work does not itself authorize
+  either outcome.
+
+## Disposable attempt sandbox contract
+
+- The fixed v2 `browser-profile` is a superseded runtime candidate. Treat it as
+  login/auth-seed migration input only after the applicable owner gate; never
+  run an ordinary consultation directly against the seed and never copy a
+  sandbox back into it.
+- Each turn attempt and purpose owns one private disposable sandbox, one exact
+  Chrome for Testing process, one adapter, and at most one page. Preparation,
+  verification, Send, and `dispatch-at-risk` commit observation are one
+  `dispatch` purpose and must reuse the exact same sandbox/key/lifetime; only
+  committed capture recovery and probe use distinct purpose-specific sandboxes.
+  Browser resources are execution evidence, never durable job truth.
+- Before Send, failure closes and removes the whole sandbox. Do not clear,
+  adopt, digest-match, reclaim, or otherwise infer ownership of a composer
+  draft or attachment.
+- After `dispatch-at-risk`, Send authority is permanently absent. Commit may be
+  observed only in the exact dispatch sandbox that emitted the potentially
+  submitting event; if that workspace cannot prove the commit, preserve ledger
+  truth as ambiguous and destroy browser resources.
+- Committed-capture recovery may create a fresh capture-only sandbox and
+  navigate only from the durable submission receipt. It never fills the
+  composer or emits Send.
+- Completion, failed-unsent, ambiguity, and owner closure all end with exact
+  sandbox process/profile cleanup. Cleanup and GC use durable job state, the
+  immutable sandbox owner marker, and exact process identity only; composer DOM
+  is never cleanup authority.
+- Do not create durable draft/tab/target/page/PID/port/profile/sandbox states,
+  profile-wide draft leases, digest adoption, orphan reclaim, sentinel holds,
+  or cross-sandbox lineage. One job-local browser/cleanup/ambiguity failure
+  must not block later jobs unless a distinct global authority or hard-capacity
+  failure is proven.
+- Implement one trim slice at a time. T0 is documentation/authority only; T1 is
+  auth-seed and clone proof only; T2 integrates the provider router; T3 is
+  bounded live acceptance. Do not cross an owner gate implicitly.
 
 ## Batch Oracle source and documentation
 
@@ -100,13 +157,17 @@ pnpm check
 pnpm test
 pnpm build
 pnpm docs:check
+pnpm public:check
 pnpm test:packed-cli
+git diff --check
 ```
 
 Do not relax recovery, prompt-identity, target-ownership, Pro timing, or
 attachment-readiness assertions to make a change pass. Account-side live tests
 are explicit and bounded; run them only when the task authorizes the exact
-submission. `oracle browser smoke` is account-safe and submits no prompt.
+submission. The real two-clone `oracle browser smoke` path submits no prompt,
+but still requires the exact T1 owner authorization because it operates on the
+authenticated seed and disposable local browser state.
 
 Windows-specific browser changes must also update `docs/windows-work.md` when
 its operator truth changes. Public changelog entries describe shipped or

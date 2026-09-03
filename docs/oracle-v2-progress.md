@@ -7,24 +7,44 @@ read_when:
 
 # Oracle v2 progress
 
-Updated: 2026-09-01
+Updated: 2026-09-04
 
-Source integration record: PR #5 targets `fork/main` from `codex/oracle-v2`;
-the PR merge/read-back is the authority for whether integration is complete.
+Source integration record: `fork/main@39ab7fb35297e45fcf219ab31b7c787b44a69e51`
+is the verified PR #8 merge baseline for the disposable-attempt trim.
 
-Legacy safety baseline: `fork/main@e6f170ff`
+Historical pre-v2 legacy safety baseline: `fork/main@e6f170ff`
 
 ## Current state
 
-R0 through R9 are source-complete on the PR #5 integration line. GitHub's merge
-state and the exact `fork/main` head, not this dated note, determine whether
-that line is still a candidate or integrated source. The usable legacy
-execution path and ordinary default remain unchanged. R8 adds an explicit
-opt-in `broker` engine for CLI and MCP, durable job inspection/recovery
-commands, and v2 session projection readback. R9 maps new Batch lane and
-synthesis attempts to Batch-owned durable v2 jobs while preserving the v1
-parent manifest, sealing, blind-lane, barrier, answer-integrity, and
-owner-closure contracts.
+R0 through R9 and the bounded legacy safety work through PR #8 are integrated
+in `fork/main`. The executable legacy `browser` route and its ordinary default
+remain source behavior, but its auto-submit lane is now frozen for owner work:
+no new feature or symptom repair belongs there except a bounded data-loss or
+duplicate-send emergency. R8's durable `broker` engine remains explicit opt-in
+until G3. R9 continues to map new Batch lane and synthesis attempts to
+Batch-owned v2 jobs while preserving parent manifest, sealing, blind-lane,
+barrier, answer-integrity, and owner-closure authority.
+
+T0 freezes the disposable-attempt plan against current source. The existing v2
+fixed-profile runtime is a superseded candidate, not the intended G3 runtime:
+`packages/oracle-browser-runtime/src/runtime.ts` reuses
+`runtimeRoot/browser-profile`; `CertifiedChatGptProvider` retains one runtime
+and adapter; the adapter budgets three pages; startup preserves shared-profile
+recovery markers; and any escaping runner job error currently blocks the whole
+runner. T0 changes documentation only. It does not implement an auth seed,
+create or delete a sandbox, alter engine selection, clean any profile, start a
+worker/browser, or submit a prompt.
+
+The accepted replacement keeps the v2 kernel, store, worker ledger, bundle,
+client, Batch, receipts, and adapter page semantics. A fixed profile becomes a
+login-only auth seed; each job attempt/purpose receives an owner-only disposable
+sandbox, exact process, adapter, and at most one page. Preparation through
+`dispatch-at-risk` observation shares one exact dispatch sandbox/key/lifetime.
+Pre-Send failure, completion, and ambiguity all end by removing that workspace
+after ledger truth is saved; only committed-capture recovery or probe may create
+a fresh purpose-specific sandbox.
+The corrected source/reference and G4 deletion map is
+[`oracle-v2-browser-ownership-map.md`](oracle-v2-browser-ownership-map.md).
 
 The canonical R0-R9 worker remains a macOS GUI-session runtime over an
 owner-only Unix socket. Native Windows fails closed before socket acquisition,
@@ -343,6 +363,25 @@ Fresh PR #5 integration-review evidence:
   passed. The PR merge/read-back and exact hosted checks remain GitHub-owned
   integration evidence.
 
+Fresh T0 authority-freeze evidence:
+
+- the source/dependency scan was performed at exact
+  `fork/main@39ab7fb35297e45fcf219ab31b7c787b44a69e51` and records the fixed
+  runtime profile, singleton provider/runtime/adapter, shared three-page budget,
+  shared recovery binding, global runner-block behavior, legacy ownership
+  callers, and G4 deletion boundary;
+- the master plan and agent contract now define a login-only auth seed,
+  per-attempt disposable sandbox, one-page adapter, same-sandbox at-risk
+  observation, capture-only recovery, ledger/process-marker GC, and job-local
+  cleanup isolation without changing executable source;
+- `pnpm check` passed format, typecheck, lint, and v2 boundaries;
+- `pnpm test` passed 181 test files with 15 skipped, containing 2,126 passing
+  tests and 34 skipped;
+- `pnpm build`, `pnpm docs:check`, `pnpm public:check`,
+  `pnpm test:packed-cli`, and `git diff --check` passed;
+- no worker, Chrome for Testing process, browser page, local profile operation,
+  no-Send probe, account-side action, or live Send was run.
+
 ## Bounded opt-in dogfood after R9
 
 - the exact R9 repo-local build started one detached, explicitly owned v2
@@ -393,11 +432,30 @@ Fresh PR #5 integration-review evidence:
 | R11 remote job bridge          | planned     | not reached                                                                                      |
 | R12 / G4 legacy retirement     | owner-gated | not reached                                                                                      |
 
+## Disposable-attempt trim ledger
+
+| Slice                           | State           | Evidence / blocker                                                                                                                                                                                              |
+| ------------------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T0 authority freeze             | source-complete | main baseline verified; plan delta, agent contract, and current-code ownership/deletion map prepared; owner acceptance pending; no executable or live action                                                    |
+| T1 auth seed and clone proof    | owner-gated     | requires acceptance of T0 map and separate authorization for the real two-clone no-Send gate                                                                                                                    |
+| T2 provider sandbox integration | planned         | cannot begin before T1 proof; legacy remains frozen/default and broker explicit                                                                                                                                 |
+| T3 bounded live candidate       | owner-gated     | each live case requires exact owner authorization after fixture/fault evidence                                                                                                                                  |
+| G3 default cutover              | owner-gated     | independent decision after T1-T3 and stable-resource evidence; default changes only on a supported, certified macOS GUI worker host                                                                             |
+| G4 physical legacy deletion     | owner-gated     | independent decision only after every supported platform has replacement cutover or explicit support retirement, plus rollback tag and fresh reference scan; R11 is neither prerequisite nor deletion authority |
+
 ## Current stop conditions
 
 - Any v2 dependency on `src/browser/**`.
 - Any need to weaken exact model/effort, attachment, retry, Batch, or owner
   authority contracts.
+- Any ordinary job launch against the auth seed or any sandbox copyback to it.
+- Any proposal for durable draft/tab/target/profile ownership, profile-wide
+  draft leases, digest adoption, orphan reclaim, sentinel holds, or
+  cross-sandbox recovery.
+- Any cleanup or garbage-collection decision based on composer DOM.
+- Any post-`dispatch-at-risk` path capable of emitting another Send.
+- Any job-local draft/page/target/cleanup/ambiguity failure that blocks later
+  jobs without a separately proven global capacity or authority failure.
 - Any source change that would alter the current browser engine before G3.
 - Any additional live browser Send without an exact owner-authorized scope and
   a fresh stable attempt identity.
@@ -405,12 +463,12 @@ Fresh PR #5 integration-review evidence:
 
 ## Next safe action
 
-Preserve every historical canary, R8 review, and bounded-dogfood job; do not
-resend or create a duplicate. Continued dogfood may use the exact repo-local
-candidate only under a fresh owner-authorized scope, stable idempotency
-identity, separately owned worker, and the three-page worker ceiling. Collect
-measured D19 stable-window evidence, including process/page/RSS/socket/profile
-settling and orderly shutdown. R10/G3 still requires a separate explicit owner
-decision to make v2 the default ordinary browser engine. Until then, do not
-replace the global install, change the default engine, remove legacy execution,
-start R11, or make a release claim.
+Preserve every historical canary, R8 review, bounded-dogfood job, fixed v2
+profile, and legacy dedicated profile without mutation; do not resend or create
+a duplicate. The next action is the owner decision accepting the T0 trim
+boundary and deletion map and authorizing T1 only. T1 may then add auth-seed and
+attempt-sandbox primitives plus fixture coverage, followed by one separately
+authorized real two-clone no-Send proof. Until that decision, do not implement
+the sandbox runtime, run browser smoke, start a live worker/browser, clean or
+archive profiles, submit a prompt, change the default engine, begin T2/T3/R11,
+or remove legacy execution. G3 and G4 remain later independent owner gates.
