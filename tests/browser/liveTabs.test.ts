@@ -76,6 +76,31 @@ describe("liveTabs helpers", () => {
     ).toBe("detached");
   });
 
+  test("keeps a pending Pro turn running when the last message is the user's and no Stop exists", () => {
+    // Pro background jobs render a progress card without a Stop button; the
+    // previous assistant answer is still on the page, so assistantCount > 0.
+    expect(
+      classifyTabState({
+        authenticated: true,
+        stopExists: false,
+        sendExists: true,
+        promptReady: true,
+        assistantCount: 1,
+        lastMessageRole: "user",
+      }),
+    ).toBe("running");
+    expect(
+      classifyTabState({
+        authenticated: true,
+        stopExists: false,
+        sendExists: true,
+        promptReady: true,
+        assistantCount: 1,
+        lastMessageRole: "assistant",
+      }),
+    ).toBe("completed");
+  });
+
   test("formats the stored state when present", () => {
     expect(formatBrowserTabState(makeTab({ state: "stalled" }))).toBe("stalled");
   });

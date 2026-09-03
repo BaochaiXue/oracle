@@ -49,6 +49,8 @@ describe("canonical Oracle skill contract", () => {
     expect(skill).toContain("~/.oracle/sessions/<id>/artifacts/transcript.md");
     expect(skill).toContain("Do not use `oracle session <id> --path`");
     expect(skill).toContain("ORACLE_NO_DETACH=1");
+    expect(skill).toContain("reloading Claude Code has been observed to kill the worker");
+    expect(skill).toContain("Run `oracle session <id> --live`");
     // gpt-5-pro selects the Sol row and drives the Pro effort tier.
     expect(skill).toContain("There is no separate `Pro` model row to select.");
     expect(skill).not.toContain("`gpt-5-pro` selects ChatGPT's `Pro` target");

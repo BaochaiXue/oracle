@@ -78,6 +78,43 @@ describe("browser tab CLI helpers", () => {
     ).toBe("stalled");
   });
 
+  test("treats a pending Pro answer without a Stop button as running, not completed", () => {
+    const harvested = {
+      stopExists: false,
+      authenticated: true,
+      assistantCount: 1,
+      lastMessageRole: "user",
+    } as ChatGptTabSummary;
+    const ceilingMs = 2 * 60 * 60 * 1000;
+    expect(
+      __test__.deriveLiveTailState({
+        harvested,
+        unchangedMs: 20 * 60 * 1000,
+        elapsedMs: 20 * 60 * 1000,
+        stallThresholdMs: 60_000,
+        proActiveCeilingMs: ceilingMs,
+      }),
+    ).toBe("running");
+    expect(
+      __test__.deriveLiveTailState({
+        harvested,
+        unchangedMs: ceilingMs,
+        elapsedMs: ceilingMs,
+        stallThresholdMs: 60_000,
+        proActiveCeilingMs: ceilingMs,
+      }),
+    ).toBe("stalled");
+    expect(
+      __test__.deriveLiveTailState({
+        harvested: { ...harvested, lastMessageRole: "assistant" } as ChatGptTabSummary,
+        unchangedMs: 0,
+        elapsedMs: 0,
+        stallThresholdMs: 60_000,
+        proActiveCeilingMs: ceilingMs,
+      }),
+    ).toBe("completed");
+  });
+
   test("preserves the ordinary inactive-text stall threshold", () => {
     expect(
       __test__.deriveLiveTailState({

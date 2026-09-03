@@ -423,6 +423,14 @@ When the foreground call is cut off:
 3. Create another attempt only after a durable receipt proves the prompt was
    never submitted. Never re-run a consultation merely to make it look complete.
 
+A detached worker survives a tool timeout, not a restart of the agent harness:
+reloading Claude Code has been observed to kill the worker while the session
+stays `running` in `meta.json`. Do not resend. Run `oracle session <id> --live`;
+it reopens the saved conversation in the shared Chrome and tails it. While
+GPT-5.6 Pro is still working, ChatGPT shows a progress card and no Stop button
+with the last message still being yours; that state is `running`, and the
+answer arrives as a new assistant message.
+
 Detachment is off in two cases: `ORACLE_NO_DETACH=1` in the environment, and
 remote execution through `--remote-host`. Never set the first for a Pro consult
 from an agent harness. Non-Pro aliases do not detach either. Do not request Pro

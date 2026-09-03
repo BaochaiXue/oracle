@@ -50,6 +50,14 @@ function deriveLiveTailState({
     }
     return unchangedMs >= stallThresholdMs ? "stalled" : "running";
   }
+  if (harvested.authenticated && harvested.lastMessageRole === "user") {
+    // Answer pending with no Stop button: a Pro background job. Keep tailing
+    // until the Pro ceiling; never report the previous turn's answer as done.
+    if (proActiveCeilingMs !== null) {
+      return elapsedMs >= proActiveCeilingMs ? "stalled" : "running";
+    }
+    return unchangedMs >= stallThresholdMs ? "stalled" : "running";
+  }
   return harvested.authenticated ? "completed" : "detached";
 }
 

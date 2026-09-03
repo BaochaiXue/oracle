@@ -50,6 +50,8 @@ export interface ChatGptTabSummary {
   assistantFollowsLatestUser?: boolean;
   lastAssistantTurnIndex?: number;
   lastUserTurnIndex?: number;
+  /** Role of the last role-tagged message; "user" means the answer is still pending. */
+  lastMessageRole?: "user" | "assistant";
   lastAssistantSnippet: string;
   lastUserText: string;
   lastUserSnippet: string;
@@ -217,12 +219,28 @@ function buildTabInspectionExpression(): string {
       const lastUserContainer = lastUserTurn
         ? turns.find((turn) => turn === lastUserTurn || turn.contains?.(lastUserTurn))
         : null;
+      const roleTaggedMessages = Array.from(
+        document.querySelectorAll('[data-message-author-role], [data-turn]'),
+      ).filter((node) => {
+        const role = normalize(node.getAttribute('data-message-author-role') || node.getAttribute('data-turn')).toLowerCase();
+        return role === 'user' || role === 'assistant';
+      });
+      const roleOfMessage = (node) => normalize(
+        node.getAttribute('data-message-author-role') || node.getAttribute('data-turn'),
+      ).toLowerCase();
+      const lastRoleTagged = roleTaggedMessages[roleTaggedMessages.length - 1] || null;
+      const lastMessageRole = lastRoleTagged ? roleOfMessage(lastRoleTagged) : null;
+      // ChatGPT renders Pro "working" progress cards as .markdown blocks that sit
+      // outside any role-tagged message. When the page exposes role-tagged
+      // messages, only content inside an assistant message is an answer.
       const answerNodes = rawAnswerNodes.filter(
         (node) =>
-          !lastUserTurn ||
-          (node !== lastUserTurn &&
-            !lastUserTurn.contains?.(node) &&
-            !node.contains?.(lastUserTurn)),
+          (!lastUserTurn ||
+            (node !== lastUserTurn &&
+              !lastUserTurn.contains?.(node) &&
+              !node.contains?.(lastUserTurn))) &&
+          (roleTaggedMessages.length === 0 ||
+            Boolean(node.closest?.('[data-message-author-role="assistant"], [data-turn="assistant"]'))),
       );
       const answerTexts = answerNodes.map((node) => normalize(node.textContent)).filter(Boolean);
       const assistantCandidates = Array.from(new Set([...assistantTurns, ...answerNodes]));
@@ -265,6 +283,7 @@ function buildTabInspectionExpression(): string {
         lastAssistantTurnIndex,
         lastUserTurnIndex,
         lastUserText,
+        lastMessageRole,
         visibilityState: document.visibilityState,
         focused: Boolean(document.hasFocus?.()),
       };
@@ -335,6 +354,7 @@ export async function inspectChatGptTab(
       lastAssistantTurnIndex?: number;
       lastUserTurnIndex?: number;
       lastUserText?: string;
+      lastMessageRole?: string | null;
       visibilityState?: string;
       focused?: boolean;
     };
@@ -382,6 +402,10 @@ export async function inspectChatGptTab(
       lastAssistantSnippet: trimToSnippet(lastAssistantText),
       lastUserText,
       lastUserSnippet: trimToSnippet(lastUserText),
+      lastMessageRole:
+        info.lastMessageRole === "user" || info.lastMessageRole === "assistant"
+          ? info.lastMessageRole
+          : undefined,
       focused: Boolean(info.focused),
       visibilityState: typeof info.visibilityState === "string" ? info.visibilityState : "",
       conversationId: extractConversationIdFromUrl(info.url ?? target.url ?? ""),
@@ -409,12 +433,18 @@ export function classifyTabState(
   summary: Pick<
     ChatGptTabSummary,
     "authenticated" | "stopExists" | "sendExists" | "promptReady" | "assistantCount"
-  >,
+  > &
+    Partial<Pick<ChatGptTabSummary, "lastMessageRole">>,
 ): BrowserHarvestState {
   if (!summary?.authenticated) {
     return "detached";
   }
   if (summary.stopExists) {
+    return "running";
+  }
+  // A Pro background job shows a progress card and no Stop button while the
+  // latest user message still has no assistant reply. That is running, not done.
+  if (summary.lastMessageRole === "user") {
     return "running";
   }
   if (summary.sendExists || summary.promptReady || summary.assistantCount > 0) {

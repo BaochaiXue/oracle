@@ -120,6 +120,7 @@ export function isRecoveredConversationHarvestReady(harvested: {
   lastAssistantMarkdown?: string | null;
   lastAssistantText?: string | null;
   lastAssistantSnippet?: string | null;
+  lastMessageRole?: "user" | "assistant";
 }): boolean {
   const latestAssistant =
     harvested.lastAssistantText ??
@@ -135,6 +136,9 @@ export function isRecoveredConversationHarvestReady(harvested: {
     typeof harvested.lastUserTurnIndex === "number" && harvested.lastUserTurnIndex >= 0;
   return (
     (harvested.stopExists === true && hasHydratedUserTurn) ||
+    // A hydrated conversation whose last message is the user's is a pending
+    // answer (Pro background job); it is ready to be tailed, not a failure.
+    (hasHydratedUserTurn && harvested.lastMessageRole === "user") ||
     ((harvested.assistantCount ?? 0) > 0 &&
       assistantFollowsLatestUser &&
       latestAssistant.trim().length > 0 &&
