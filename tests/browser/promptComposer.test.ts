@@ -1573,6 +1573,13 @@ describe("promptComposer", () => {
           if (expression.includes("const cleanupMode = true")) {
             return { result: { value: { exactSetMatched: true, removeClicks: 1 } } };
           }
+          if (expression.includes("oracle-owned-draft-cleanup-final-verify")) {
+            return {
+              result: {
+                value: { composerFound: true, composerEmpty: true, attachmentSetEmpty: true },
+              },
+            };
+          }
           if (expression.includes("const expected = []")) {
             return { result: { value: true } };
           }
@@ -1833,6 +1840,118 @@ describe("promptComposer", () => {
       await vi.advanceTimersByTimeAsync(2_000);
       await assertion;
 
+      expect(input.dispatchMouseEvent).not.toHaveBeenCalled();
+      expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("retains the exact tab when an attachment appears during prompt cleanup", async () => {
+    vi.useFakeTimers();
+    try {
+      let emptyAttachmentChecks = 0;
+      let finalCleanupChecks = 0;
+      const runtime = {
+        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+          if (expression.includes("document.readyState")) {
+            return { result: { value: { ready: true, composer: true, fileInput: true } } };
+          }
+          if (expression.includes("oracle-preexisting-composer-check")) {
+            return {
+              result: { value: { composerFound: true, composerLength: 0, composerEmpty: true } },
+            };
+          }
+          if (expression.includes("oracle-owned-draft-cleanup-precheck")) {
+            return { result: { value: { matches: true } } };
+          }
+          if (expression.includes("const cleanupMode = true")) {
+            return { result: { value: { exactSetMatched: true, removeClicks: 1 } } };
+          }
+          if (expression.includes("oracle-owned-draft-cleanup-final-verify")) {
+            finalCleanupChecks += 1;
+            return {
+              result: {
+                value: { composerFound: true, composerEmpty: true, attachmentSetEmpty: false },
+              },
+            };
+          }
+          if (expression.includes("const expected = []")) {
+            emptyAttachmentChecks += 1;
+            return { result: { value: true } };
+          }
+          if (expression.startsWith("document.querySelectorAll")) {
+            return { result: { value: 0 } };
+          }
+          if (expression.includes("oracle-owned-draft-cleanup-verify")) {
+            return { result: { value: { composerFound: true, empty: true } } };
+          }
+          if (expression.includes("oracle-owned-draft-cleanup")) {
+            return { result: { value: { cleared: true } } };
+          }
+          if (expression.includes("focused: true")) {
+            return { result: { value: { focused: true } } };
+          }
+          if (expression.includes("editorText")) {
+            return {
+              result: {
+                value: { editorText: "hello", fallbackValue: "", activeValue: "hello" },
+              },
+            };
+          }
+          if (expression.includes("const expected =")) {
+            return { result: { value: true } };
+          }
+          if (expression.includes("button.scrollIntoView")) {
+            return { result: { value: { status: "settling" } } };
+          }
+          throw new Error("commit verification must not run without a dispatch");
+        }),
+      };
+      const input = {
+        insertText: vi.fn(),
+        dispatchMouseEvent: vi.fn(),
+        dispatchKeyEvent: vi.fn(),
+      };
+
+      const result = submitPrompt(
+        {
+          runtime: runtime as never,
+          input: input as never,
+          page: { bringToFront: vi.fn() } as never,
+          attachmentNames: ["evidence.txt"],
+          attachmentTimeoutMs: 1_000,
+          baselineTurns: 0,
+          isSubmissionOwner: async () => true,
+        },
+        "hello",
+        Object.assign(vi.fn(), { verbose: false }) as never,
+      );
+      const assertion = expect(result).rejects.toMatchObject({
+        details: expect.objectContaining({
+          code: "attachment-send-not-ready",
+          submissionCommitted: false,
+          draftRetained: true,
+          retrySafe: false,
+          recoverable: true,
+          cleanupVerified: false,
+          cleanupFailure: "composer state changed during final cleanup verification",
+          submissionDiagnostic: expect.objectContaining({
+            ownedAttachmentCleanupAttempted: true,
+            ownedAttachmentCleanupSucceeded: true,
+            ownedDraftCleanupAttempted: true,
+            ownedDraftCleanupSucceeded: true,
+            potentiallySubmittingEventEmitted: false,
+            retryEligible: false,
+            retryBlockedReason: "owned-pre-dispatch-cleanup-unverified",
+          }),
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(2_500);
+      await assertion;
+
+      expect(emptyAttachmentChecks).toBe(1);
+      expect(finalCleanupChecks).toBe(1);
       expect(input.dispatchMouseEvent).not.toHaveBeenCalled();
       expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
     } finally {

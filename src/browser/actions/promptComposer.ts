@@ -664,6 +664,12 @@ async function cleanupOwnedDraftAfterAttachmentReadinessFailure({
       throw new Error("exact owned prompt was not present and empty after cleanup");
     }
     diagnostic.ownedDraftCleanupSucceeded = true;
+    if (!(await deps.isSubmissionOwner?.())) {
+      throw new Error("submission target ownership changed after cleanup");
+    }
+    if (!(await verifyComposerCleanupComplete(deps.runtime))) {
+      throw new Error("composer state changed during final cleanup verification");
+    }
     diagnostic.composerCleared = true;
     diagnostic.draftRetained = false;
     diagnostic.retryEligible = true;
@@ -792,6 +798,30 @@ async function verifyComposerAttachmentSetEmpty(
     returnByValue: true,
   });
   return result.result?.value === true;
+}
+
+async function verifyComposerCleanupComplete(Runtime: ChromeClient["Runtime"]): Promise<boolean> {
+  const result = await Runtime.evaluate({
+    expression: `(() => {
+      // oracle-owned-draft-cleanup-final-verify
+      const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
+      ${COMPOSER_VALUE_READER_SOURCE}
+      const nodes = Array.from(new Set(inputSelectors.flatMap((selector) =>
+        Array.from(document.querySelectorAll(selector)))));
+      const attachmentSetEmpty = ${buildAttachmentReadyExpression([], true)};
+      return {
+        composerFound: nodes.length > 0,
+        composerEmpty: nodes.every((node) => String(readComposerValue(node)).trim().length === 0),
+        attachmentSetEmpty,
+      };
+    })()`,
+    returnByValue: true,
+  });
+  return (
+    result.result?.value?.composerFound === true &&
+    result.result?.value?.composerEmpty === true &&
+    result.result?.value?.attachmentSetEmpty === true
+  );
 }
 
 async function clearExactOwnedPromptComposer(
