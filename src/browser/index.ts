@@ -216,9 +216,11 @@ function isPreexistingComposerError(error: unknown): error is BrowserAutomationE
     | { code?: string; submissionCommitted?: boolean; draftRetained?: boolean }
     | undefined;
   return (
-    details?.code === "preexisting-composer-content" &&
-    details.submissionCommitted === false &&
-    details.draftRetained === true
+    ["preexisting-composer-content", "preexisting-composer-attachments"].includes(
+      details?.code ?? "",
+    ) &&
+    details?.submissionCommitted === false &&
+    details?.draftRetained === true
   );
 }
 

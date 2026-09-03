@@ -133,10 +133,13 @@ describe("shouldPreserveBrowserOnErrorForTest", () => {
     expect(classifyPreservedBrowserErrorForTest(error, false)).toBeNull();
   });
 
-  test("preserves unowned pre-existing composer content for manual inspection", () => {
-    const error = new BrowserAutomationError("Composer already contains text.", {
+  test.each([
+    ["content", "preexisting-composer-content"],
+    ["attachments", "preexisting-composer-attachments"],
+  ] as const)("preserves unowned pre-existing composer %s for manual inspection", (_kind, code) => {
+    const error = new BrowserAutomationError("Composer already contains an unowned draft.", {
       stage: "submit-prompt",
-      code: "preexisting-composer-content",
+      code,
       submissionCommitted: false,
       draftRetained: true,
     });
@@ -178,6 +181,17 @@ describe("shouldPreserveBrowserOnErrorForTest", () => {
 
     expect(classifyPreservedBrowserErrorForTest(error, true)).toBeNull();
     expect(classifyRemotePreservedBrowserErrorForTest(error)).toBe("draft-retained");
+  });
+
+  test("classifies remote attachment-only drafts for manual inspection", () => {
+    const error = new BrowserAutomationError("Composer already contains attachments.", {
+      stage: "submit-prompt",
+      code: "preexisting-composer-attachments",
+      submissionCommitted: false,
+      draftRetained: true,
+    });
+
+    expect(classifyRemotePreservedBrowserErrorForTest(error)).toBe("preexisting-composer");
   });
 });
 
@@ -315,6 +329,7 @@ describe("browser run target cleanup", () => {
   test.each([
     ["draft-retained", "composer-mutated-before-send"],
     ["preexisting-composer", "preexisting-composer-content"],
+    ["preexisting-composer", "preexisting-composer-attachments"],
   ] as const)("does not advertise a headless %s target as recoverable", (kind, code) => {
     const error = new BrowserAutomationError("The exact tab remains recoverable.", {
       stage: "submit-prompt",
