@@ -43,11 +43,27 @@ describe("canonical Oracle skill contract", () => {
 
     expect(skill).toContain("## Long runs and host timeouts");
     expect(skill).toContain("starts in a detached worker");
-    expect(skill).toContain("Non-Pro aliases do not detach.");
+    expect(skill).toContain("Non-Pro aliases do not detach either.");
     expect(skill).toContain("oracle status --hours 72");
     // gpt-5-pro selects the Sol row and drives the Pro effort tier; there is no
     // separate Pro model row to select.
     expect(skill).toContain("There is no\n  separate `Pro` model row to select.");
     expect(skill).not.toContain("`gpt-5-pro` selects ChatGPT's `Pro` target");
+    // Detachment switches must be named so an agent does not disable them.
+    expect(skill).toContain("ORACLE_NO_DETACH=1");
+    expect(skill).toContain("oracle session <id> --path");
+  });
+
+  test("supports only GPT-5.6 Sol Pro and never issues a GPT-5.5 alias", async () => {
+    const skill = await readSkill();
+
+    expect(skill).toContain("This skill supports exactly one target: GPT-5.6 Sol Pro.");
+    expect(skill).toMatch(/GPT-5\.5 and GPT-5\.5\nPro are no longer supported here/);
+    // No command line in the skill may select a GPT-5.5 model.
+    expect(skill).not.toMatch(/--model\s+"?gpt-5\.5/i);
+    // Base Sol does not run at Extra High unless the effort flag asks for it.
+    expect(skill).toContain("Without a\n`--browser-thinking-time` value Oracle leaves ChatGPT's default tier untouched.");
+    // Bundle format choices must match the CLI (auto|text|zip).
+    expect(skill).toContain("--browser-bundle-format auto|text|zip");
   });
 });

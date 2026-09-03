@@ -19,8 +19,14 @@ falls back to Gemini.
 
 Use browser mode with GPT-5.6 when the ChatGPT account exposes it. Base Sol and
 Sol Pro are two execution tiers of the same model row, not two model rows: base
-Sol runs at the Extra High effort setting, while Pro is the top tier of the same
-Intelligence picker, reserved for difficult or long-running work.
+Sol tops out at the Extra High effort setting, while Pro is the top tier of the
+same Intelligence picker, reserved for difficult or long-running work. Without a
+`--browser-thinking-time` value Oracle leaves ChatGPT's default tier untouched.
+
+This skill supports exactly one target: GPT-5.6 Sol Pro. GPT-5.5 and GPT-5.5
+Pro are no longer supported here. The CLI still parses their legacy aliases for
+compatibility, but this skill never issues them; a request that needs GPT-5.5
+is out of scope and must be reported as such rather than dispatched.
 
 Recommended defaults:
 
@@ -31,8 +37,8 @@ Recommended defaults:
   process remains available across users and sessions. A terminal run closes
   only its exact Oracle-owned tab; incomplete, foreign, and unowned meaningful
   tabs remain open. macOS cold starts use LaunchServices background-open
-  semantics plus `--no-startup-window`, new tabs use `focus:false`, and <!-- docs-check: external-flags -->
-  page-side focus emulation supports trusted input without changing the
+  semantics with Chrome's no-startup-window switch, new tabs use `focus:false`,
+  and page-side focus emulation supports trusted input without changing the
   frontmost app
 - Base Sol: `--model gpt-5.6-sol`
 - Base Sol maximum reasoning: `--browser-thinking-time extra-high` (Extra High)
@@ -65,8 +71,7 @@ gpt-5.6-sol` reaches the same ChatGPT model row, but the CLI does not classify
 it as a Pro-tier alias: it neither defaults the effort tier to Pro nor starts
 the run in a detached worker. Requesting Pro effort on a non-Pro alias leaves a
 capture of up to two hours attached to the foreground process, where any host
-timeout destroys it. The same applies to `--model gpt-5.5`, which is out of lane
-and permitted only on explicit operator request.
+timeout destroys it.
 
 For the canonical GPT-5.6 Pro browser lane, use:
 
@@ -86,9 +91,10 @@ oracle --engine api --model gpt-5.6-sol \
 ```
 
 Do not use `--model "GPT-5.6 Sol Pro"`. Pro is intentionally handled as a
-browser picker target and an API reasoning mode. Browser label validation rejects unknown future
-variants such as `gpt-5.6-luna` instead of silently falling back to Sol; API
-runs preserve such provider model IDs unchanged.
+browser effort tier and an API reasoning mode, never as a model slug. Browser
+label validation rejects unknown future variants such as `gpt-5.6-luna` instead
+of silently falling back to Sol; API runs preserve such provider model IDs
+unchanged.
 
 Browser mode maps these aliases to ChatGPT's Sol picker. API and multi-model
 runs preserve the corresponding first-party OpenAI model IDs; provider-qualified
@@ -203,7 +209,7 @@ password-store mode requires moving the old dedicated
 profile to a recoverable backup and creating a fresh owner-only profile before
 sign-in; restored tabs from an old profile are not login-persistence evidence.
 After the human confirms sign-in, verify that the setup PID belongs to Oracle's
-Chrome for Testing executable, names the dedicated `--user-data-dir`, and <!-- docs-check: external-flags -->
+Chrome for Testing executable, names the dedicated user-data directory, and
 carries the expected password-store flag. Keep that Chrome process running and
 close only the exact setup tab through its verified CDP target when it is no
 longer needed. Never send `WM_DELETE_WINDOW`, use a broad `pkill`, or signal the
@@ -243,12 +249,16 @@ duplicate dispatch.
 When the foreground call is cut off:
 
 1. `oracle status --hours 72` to locate the session.
-2. `oracle session <id> --render` to read the stored answer.
+2. `oracle session <id> --render` to read the stored answer. `--render` targets
+   a rich TTY; from a non-interactive shell use `oracle session <id> --path`
+   and read the printed `transcript.md` directly.
 3. Create another attempt only after a durable receipt proves the prompt was
    never submitted. Never re-run a consultation merely to make it look complete.
 
-Non-Pro aliases do not detach. Do not request Pro effort on one and then leave it
-in the foreground.
+Detachment is off in two cases: `ORACLE_NO_DETACH=1` in the environment, and
+remote execution through `--remote-host`. Never set the first for a Pro consult
+from an agent harness. Non-Pro aliases do not detach either. Do not request Pro
+effort on one and then leave it in the foreground.
 
 ## Commands
 
@@ -381,7 +391,7 @@ are essential to the question.
   remain available only when the operator explicitly intends an API run.
 - API runs require explicit user consent because they may incur usage costs.
 - Browser attachments use `--browser-attachments auto|never|always`.
-- For many files, add `--browser-bundle-files --browser-bundle-format auto|zip`.
+- For many files, add `--browser-bundle-files --browser-bundle-format auto|text|zip`.
 - Reuse an existing Chrome session with `--browser-tab <ref>`,
   `--browser-attach-running`, or `--remote-chrome <host:port>`.
 - Use `--browser-model-strategy select|current|ignore` to control picker
