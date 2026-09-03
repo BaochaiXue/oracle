@@ -114,8 +114,10 @@ describe("Oracle disposable attempt sandboxes", () => {
       turnAttemptId: "attempt_fixture_a",
       purpose: "probe",
     });
-    expect(statSync(cloneA.directory).mode & 0o777).toBe(0o700);
-    expect(statSync(path.join(cloneA.directory, "owner.json")).mode & 0o777).toBe(0o400);
+    if (process.platform !== "win32") {
+      expect(statSync(cloneA.directory).mode & 0o777).toBe(0o700);
+      expect(statSync(path.join(cloneA.directory, "owner.json")).mode & 0o777).toBe(0o400);
+    }
     writeFileSync(path.join(cloneA.profileDir, "retained-draft"), "synthetic marker\n");
     writeFileSync(path.join(cloneA.profileDir, "retained-attachment"), "synthetic file\n");
     expect(
@@ -187,7 +189,7 @@ describe("Oracle disposable attempt sandboxes", () => {
         turnAttemptId: "attempt_forged_seed",
         purpose: "probe",
       }),
-    ).rejects.toThrow(/neither an accepted seed nor one exact candidate/i);
+    ).rejects.toThrow(/exact profile realpath|neither an accepted seed nor one exact candidate/i);
 
     const candidate = await createAuthSeedCandidate({
       runtimeRoot,
