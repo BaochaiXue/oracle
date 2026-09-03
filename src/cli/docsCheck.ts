@@ -22,6 +22,7 @@ const DEFAULT_DOC_PATHS = [
   "docs/sessions.md",
   "docs/spec.md",
   "docs/cli-reference.md",
+  "skills/oracle/SKILL.md",
 ];
 const FLAG_RE = /(^|[\s`([{|,])(--[a-z][a-z0-9-]*)(?=$|[\s`)[\].,;:|=<>}])/g;
 const SLASH_FLAG_RE = /--[a-z][a-z0-9-]*(?:\/(?:--[a-z][a-z0-9-]*|-[a-z][a-z0-9-]*))+/g;

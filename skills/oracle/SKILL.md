@@ -1,6 +1,6 @@
 ---
 name: oracle
-description: "Oracle second-model review: bundle prompts/files, debug, refactor, design."
+description: "Second-opinion review from ChatGPT GPT-5.6 Pro with real repository context: hard bugs, stuck investigations, design and refactor decisions. Bundles a prompt plus selected files, and always names the project GitHub owner/repository so the connector can read it."
 ---
 
 # Oracle (CLI) — best use
@@ -17,10 +17,10 @@ falls back to Gemini.
 
 ## Main use case (browser, GPT-5.6)
 
-Use browser mode with GPT-5.6 when the ChatGPT account exposes it. GPT-5.6 Sol
-and GPT-5.6 Sol Pro are distinct targets: base Sol uses the Extra High effort
-setting, while Pro is a separate picker target for difficult or long-running
-work.
+Use browser mode with GPT-5.6 when the ChatGPT account exposes it. Base Sol and
+Sol Pro are two execution tiers of the same model row, not two model rows: base
+Sol runs at the Extra High effort setting, while Pro is the top tier of the same
+Intelligence picker, reserved for difficult or long-running work.
 
 Recommended defaults:
 
@@ -31,13 +31,14 @@ Recommended defaults:
   process remains available across users and sessions. A terminal run closes
   only its exact Oracle-owned tab; incomplete, foreign, and unowned meaningful
   tabs remain open. macOS cold starts use LaunchServices background-open
-  semantics plus `--no-startup-window`, new tabs use `focus:false`, and
+  semantics plus `--no-startup-window`, new tabs use `focus:false`, and <!-- docs-check: external-flags -->
   page-side focus emulation supports trusted input without changing the
   frontmost app
 - Base Sol: `--model gpt-5.6-sol`
 - Base Sol maximum reasoning: `--browser-thinking-time extra-high` (Extra High)
-- Explicit Pro effort on GPT-5.6 Sol: `--browser-thinking-time pro` (fails closed if Pro cannot be confirmed)
-- Browser GPT-5.5 with Pro effort: `--model gpt-5.5 --browser-thinking-time pro`
+- Explicit Pro effort: `--browser-thinking-time pro` (fails closed if Pro cannot
+  be confirmed). Pair it with `--model gpt-5-pro`, not with a non-Pro alias; see
+  "GPT-5.6 model selection" for why the alias changes run behavior.
 - API Pro maximum reasoning: `--model gpt-5.6-sol --reasoning-mode pro --reasoning-effort max`
 - Browser Pro capture: 60 minutes per bound-conversation attempt, with one
   same-conversation reload and no resubmission, for a two-hour default ceiling
@@ -54,8 +55,18 @@ This version supports GPT-5.6 on both surfaces, but Pro selection differs:
 
 - `gpt-5.6`: follow the GPT-5.6 family default
 - `gpt-5.6-sol`: pin ChatGPT's `GPT-5.6 Sol` entry
-- Browser: `gpt-5-pro` selects ChatGPT's `Pro` target
+- Browser: `gpt-5-pro` is the stable CLI alias for the canonical lane. It selects
+  the `GPT-5.6 Sol` model row and then drives the `Pro` effort tier. There is no
+  separate `Pro` model row to select.
 - API: `--reasoning-mode pro` enables Pro execution on `gpt-5.6-sol`; pair it with `--reasoning-effort max` for maximum reasoning
+
+Use `--model gpt-5-pro` for every canonical browser consult. `--model
+gpt-5.6-sol` reaches the same ChatGPT model row, but the CLI does not classify
+it as a Pro-tier alias: it neither defaults the effort tier to Pro nor starts
+the run in a detached worker. Requesting Pro effort on a non-Pro alias leaves a
+capture of up to two hours attached to the foreground process, where any host
+timeout destroys it. The same applies to `--model gpt-5.5`, which is out of lane
+and permitted only on explicit operator request.
 
 For the canonical GPT-5.6 Pro browser lane, use:
 
@@ -93,7 +104,9 @@ cannot rely on a detached stale node.
 ## Golden path
 
 1. For a project published on GitHub, resolve its canonical GitHub repository
-   identity from Git metadata and add the connector directive below.
+   identity from Git metadata and add the mandatory connector directive below.
+   This step is required, not advisory; the only exemption is a project with no
+   GitHub remote.
 2. Pick the smallest file set that still contains the truth.
 3. Run the browser consultation directly. Normal consults must not run
    dry-runs, smoke tests, live tests, doctor, or preflight validation unless a
@@ -101,18 +114,45 @@ cannot rely on a detached stale node.
 4. Use browser mode, direct CDP, and the GPT-5.6 Pro target. Do not switch
    model, tier, provider, or transport silently.
 5. If a run detaches or times out, reattach to the stored session instead of
-   starting a duplicate.
+   starting a duplicate. A host tool timeout is not a failed review; see
+   "Long runs and host timeouts".
 
-## GitHub repository context
+## GitHub repository context (mandatory)
 
-For every GPT-5.6 Pro consultation about a project already published on
-GitHub, actively ask ChatGPT to use its connected GitHub app/connector for
-repository background. Resolve the project as the canonical `owner/repository`
-slug from Git metadata; never infer it from the local folder name. Prefer the
-current branch's configured GitHub remote, then `origin`. When a fork also has
-an `upstream`, name their roles explicitly and use the fork as the project
-unless the task targets upstream. If no unique GitHub remote can be established,
-omit the connector claim instead of guessing.
+Every GPT-5.6 Pro consultation about a project already published on GitHub MUST
+actively instruct ChatGPT to open that repository through its connected GitHub
+app/connector. This is not optional and not a fallback: the connector is how the
+model reads commit history, issues, pull requests, and the files you chose not
+to attach. Dispatching without it wastes the strongest context channel Oracle
+has. The only exemption is a project with no GitHub remote at all.
+
+Name the project by its GitHub identity, never by the local folder. A checkout
+in `~/bit` whose remote is `Owner/neural-decoder` must be introduced to ChatGPT
+as `Owner/neural-decoder`; `bit` is not the project name.
+
+Resolve the identity from Git metadata before writing the prompt:
+
+```bash
+git -C <repo> rev-parse --abbrev-ref --symbolic-full-name '@{u}'  # tracked remote
+git -C <repo> remote -v                                           # all remotes
+git -C <repo> rev-parse --short HEAD                              # commit
+git -C <repo> status --porcelain                                  # dirty state
+```
+
+Reduce the remote URL to a bare `owner/repository` slug: drop
+`git@github.com:`, `https://github.com/`, any embedded credentials, and a
+trailing `.git`. `git@github.com:BaochaiXue/oracle.git` becomes
+`BaochaiXue/oracle`.
+
+Then decide:
+
+- Exactly one GitHub remote: that is the project.
+- Fork with both `origin` and `upstream`: the project is the fork. State both
+  roles explicitly so the model does not answer from the wrong tree, and use
+  upstream as the project only when the task targets upstream.
+- Several GitHub remotes that disagree and none is the tracked one, or no GitHub
+  remote: omit the block. Never guess a slug and never substitute the directory
+  name.
 
 Never place a raw remote URL, embedded credentials, access token, or private
 machine path in the prompt. Include only the sanitized `owner/repository` slug
@@ -130,6 +170,13 @@ surface, state that explicitly and continue only from the prompt and attached
 files. Treat the attached files and stated local commit or dirty diff as
 authoritative wherever they differ from GitHub.
 ```
+
+Verify all four before pressing Send:
+
+1. The slug came from Git metadata, not from the directory name.
+2. The slug carries no URL, credential, token, or local path.
+3. Fork and upstream roles are named whenever both remotes exist.
+4. The local commit and dirty state are stated when they affect the answer.
 
 The connector supplies remote background; it does not replace the minimal
 attachments needed to establish unpushed, dirty, generated, or otherwise
@@ -156,13 +203,52 @@ password-store mode requires moving the old dedicated
 profile to a recoverable backup and creating a fresh owner-only profile before
 sign-in; restored tabs from an old profile are not login-persistence evidence.
 After the human confirms sign-in, verify that the setup PID belongs to Oracle's
-Chrome for Testing executable, names the dedicated `--user-data-dir`, and
+Chrome for Testing executable, names the dedicated `--user-data-dir`, and <!-- docs-check: external-flags -->
 carries the expected password-store flag. Keep that Chrome process running and
 close only the exact setup tab through its verified CDP target when it is no
 longer needed. Never send `WM_DELETE_WINDOW`, use a broad `pkill`, or signal the
 Chrome process merely to clean up a consultation. Run the account-safe
 two-cold-start smoke after first setup or a concrete browser-contract change;
 it submits no prompt.
+
+## First-run browser setup
+
+Before the first consultation on a machine, bring up Oracle's dedicated Chrome:
+
+```bash
+oracle browser install   # fetch Chrome for Testing
+oracle browser setup     # human signs in to ChatGPT; opens no CDP endpoint
+oracle browser status    # four-line health summary
+oracle browser smoke     # two real cold starts; submits no prompt
+```
+
+`setup` exists only for the human sign-in and returns after the whole Chrome for
+Testing instance is closed. Run `smoke` after first setup or a concrete
+browser-contract change. For a stuck profile use `oracle browser heal` before
+considering any process-level action.
+
+## Long runs and host timeouts
+
+A Pro browser capture is allowed 60 minutes per bound-conversation attempt, with
+one same-conversation reload, for a two-hour default ceiling. Agent harnesses cap
+a single shell call far below that; Claude Code's Bash tool tops out at ten
+minutes.
+
+The canonical lane survives this. A browser run on a Pro-tier alias such as
+`gpt-5-pro` starts in a detached worker, so the consultation keeps running and
+still persists its answer after the foreground stream is cut. A host tool timeout
+is therefore not evidence that the review failed, and it is never grounds for a
+duplicate dispatch.
+
+When the foreground call is cut off:
+
+1. `oracle status --hours 72` to locate the session.
+2. `oracle session <id> --render` to read the stored answer.
+3. Create another attempt only after a durable receipt proves the prompt was
+   never submitted. Never re-run a consultation merely to make it look complete.
+
+Non-Pro aliases do not detach. Do not request Pro effort on one and then leave it
+in the foreground.
 
 ## Commands
 
@@ -182,6 +268,7 @@ it submits no prompt.
 - Manual paste fallback:
   - `oracle --render-markdown --copy-markdown -p "<task>" --file "src/**"`
   - `--render` is an alias for `--render-markdown`.
+  - `--render-markdown` cannot be combined with `--dry-run`; the CLI rejects it.
 
 - Performance trace:
   - `oracle --perf-trace --perf-trace-path /tmp/oracle-perf.json --dry-run summary -p "<task>" --file "src/**"`
@@ -308,9 +395,9 @@ are essential to the question.
 Before an API run, check provider readiness without printing secrets:
 
 ```bash
-oracle doctor --providers --models gpt-5.4,claude-4.6-sonnet
-oracle --preflight --models gpt-5.4,claude-4.6-sonnet
-oracle --route --model gpt-5.4
+oracle doctor --providers --models gpt-5.6-sol,claude-4.6-sonnet
+oracle --preflight --models gpt-5.6-sol,claude-4.6-sonnet
+oracle --route --model gpt-5.6-sol
 ```
 
 Use `--provider openai` or `--no-azure` when first-party OpenAI routing is
@@ -391,8 +478,8 @@ derives the HTTP timeout unless `--http-timeout` is supplied.
 
 Oracle starts with zero project knowledge. Include:
 
-- GitHub project identity and the connector directive above when the project is
-  already published on GitHub
+- GitHub project identity and the mandatory connector directive above whenever
+  the project is published on GitHub, named by its `owner/repository` slug
 - Project briefing: stack, services, build/test commands, and platform constraints
 - Where things live: entrypoints, configs, key modules, and dependency boundaries
 - Exact question, prior attempts, and verbatim error text
