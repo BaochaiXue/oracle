@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, test, vi } from "vitest";
 import {
   __test__ as promptComposer,
@@ -786,8 +787,8 @@ describe("promptComposer", () => {
           targetedRemoveClicks += 1;
           return { result: { value: { exactSetMatched: true, removeClicks: 1 } } };
         }
-        if (expression.includes("oracle-owned-draft-cleanup-precheck")) {
-          return { result: { value: { matches: true } } };
+        if (expression.includes("oracle-owned-draft-read")) {
+          return { result: { value: { exact: true, observed: "owned prompt" } } };
         }
         if (expression.includes("oracle-owned-draft-cleanup-verify")) {
           return { result: { value: { composerFound: true, empty: true } } };
@@ -822,8 +823,8 @@ describe("promptComposer", () => {
   test("retains fallback state when the prior attachment set is no longer exact", async () => {
     const runtime = {
       evaluate: vi.fn(async ({ expression }: { expression: string }) => {
-        if (expression.includes("oracle-owned-draft-cleanup-precheck")) {
-          return { result: { value: { matches: true } } };
+        if (expression.includes("oracle-owned-draft-read")) {
+          return { result: { value: { exact: true, observed: "owned prompt" } } };
         }
         if (expression.includes("evidence.bin")) {
           return { result: { value: false } };
@@ -853,8 +854,8 @@ describe("promptComposer", () => {
   test("retains fallback state when the exact owned prompt changed", async () => {
     const runtime = {
       evaluate: vi.fn(async ({ expression }: { expression: string }) => {
-        expect(expression).toContain("oracle-owned-draft-cleanup-precheck");
-        return { result: { value: { matches: false } } };
+        expect(expression).toContain("oracle-owned-draft-read");
+        return { result: { value: { exact: true, observed: "changed prompt" } } };
       }),
     };
 
@@ -869,6 +870,72 @@ describe("promptComposer", () => {
         retrySafe: false,
       }),
     });
+    expect(runtime.evaluate).toHaveBeenCalledTimes(1);
+  });
+
+  test("clears an exact digest-owned truncated draft for file fallback", async () => {
+    const truncatedPrompt = "owned truncated prompt";
+    const observedDraftSha256 = createHash("sha256").update(truncatedPrompt).digest("hex");
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("oracle-owned-draft-cleanup-final-verify")) {
+          return {
+            result: {
+              value: { composerFound: true, composerEmpty: true, attachmentSetEmpty: true },
+            },
+          };
+        }
+        if (expression.includes("oracle-owned-draft-read")) {
+          return { result: { value: { exact: true, observed: truncatedPrompt } } };
+        }
+        if (expression.includes("oracle-owned-draft-cleanup-verify")) {
+          return { result: { value: { composerFound: true, empty: true } } };
+        }
+        if (expression.includes("oracle-owned-draft-cleanup")) {
+          expect(expression).toContain(JSON.stringify(truncatedPrompt));
+          return { result: { value: { cleared: true } } };
+        }
+        if (expression.includes("const expected = []")) {
+          return { result: { value: true } };
+        }
+        throw new Error("unexpected truncated fallback cleanup probe");
+      }),
+    };
+
+    await expect(
+      clearOwnedPromptAndAttachmentsForFallback(
+        runtime as never,
+        `${truncatedPrompt} plus unavailable tail`,
+        [],
+        observedDraftSha256,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  test("retains a truncated fallback draft when its observed digest changed", async () => {
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        expect(expression).toContain("oracle-owned-draft-read");
+        return { result: { value: { exact: true, observed: "changed truncated prompt" } } };
+      }),
+    };
+
+    await expect(
+      clearOwnedPromptAndAttachmentsForFallback(
+        runtime as never,
+        "full prompt with unavailable tail",
+        [],
+        createHash("sha256").update("original truncated prompt").digest("hex"),
+      ),
+    ).rejects.toMatchObject({
+      details: {
+        code: "fallback-cleanup-unverified",
+        draftRetained: true,
+        retrySafe: false,
+        cleanupVerified: false,
+      },
+    });
+
     expect(runtime.evaluate).toHaveBeenCalledTimes(1);
   });
 
@@ -1066,6 +1133,7 @@ describe("promptComposer", () => {
         draftRetained: true,
         potentiallySubmittingEventEmitted: false,
         retrySafe: false,
+        observedDraftSha256: createHash("sha256").update(truncatedPrompt).digest("hex"),
       }),
     });
 

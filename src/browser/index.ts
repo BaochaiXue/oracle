@@ -945,7 +945,11 @@ async function runSubmissionWithRecovery({
   fallbackSubmission?: BrowserSubmissionFallback;
   submit: (prompt: string, attachments: BrowserAttachment[]) => Promise<BrowserSubmissionResult>;
   reloadPromptComposer: () => Promise<void>;
-  prepareFallbackSubmission: (currentAttachments: BrowserAttachment[]) => Promise<void>;
+  prepareFallbackSubmission: (
+    currentPrompt: string,
+    currentAttachments: BrowserAttachment[],
+    failure: unknown,
+  ) => Promise<void>;
   logger: BrowserLogger;
 }): Promise<BrowserSubmissionResult> {
   let currentPrompt = prompt;
@@ -968,7 +972,7 @@ async function runSubmissionWithRecovery({
       if (fallbackSubmission && isPromptTooLarge && !usedFallbackSubmission) {
         usedFallbackSubmission = true;
         logger("[browser] Inline prompt too large; retrying with file uploads.");
-        await prepareFallbackSubmission(currentAttachments);
+        await prepareFallbackSubmission(currentPrompt, currentAttachments, error);
         currentPrompt = fallbackSubmission.prompt;
         currentAttachments = fallbackSubmission.attachments;
         continue;
@@ -985,7 +989,11 @@ export async function runSubmissionWithRecoveryForTest(args: {
   fallbackSubmission?: BrowserSubmissionFallback;
   submit: (prompt: string, attachments: BrowserAttachment[]) => Promise<BrowserSubmissionResult>;
   reloadPromptComposer: () => Promise<void>;
-  prepareFallbackSubmission: (currentAttachments: BrowserAttachment[]) => Promise<void>;
+  prepareFallbackSubmission: (
+    currentPrompt: string,
+    currentAttachments: BrowserAttachment[],
+    failure: unknown,
+  ) => Promise<void>;
   logger: BrowserLogger;
 }): Promise<BrowserSubmissionResult> {
   return runSubmissionWithRecovery(args);
@@ -2067,16 +2075,22 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         submit: (submissionPrompt, submissionAttachments) =>
           raceWithDisconnect(submitOnce(submissionPrompt, submissionAttachments)),
         reloadPromptComposer,
-        prepareFallbackSubmission: async (currentAttachments) => {
+        prepareFallbackSubmission: async (currentPrompt, currentAttachments, failure) => {
           const currentAttachmentExpectations = currentAttachments.map((attachment) => ({
             name: path.basename(attachment.path),
             generatedBundle: attachment.generatedBundle === true,
           }));
+          const observedDraftSha256 =
+            failure instanceof BrowserAutomationError &&
+            typeof failure.details?.observedDraftSha256 === "string"
+              ? failure.details.observedDraftSha256
+              : undefined;
           await raceWithDisconnect(
             clearOwnedPromptAndAttachmentsForFallback(
               Runtime,
-              promptText,
+              currentPrompt,
               currentAttachmentExpectations,
+              observedDraftSha256,
             ),
           );
           await raceWithDisconnect(ensurePromptReady(Runtime, config.inputTimeoutMs, logger));
@@ -3869,15 +3883,21 @@ async function runRemoteBrowserMode(
       fallbackSubmission: options.fallbackSubmission,
       submit: submitOnce,
       reloadPromptComposer,
-      prepareFallbackSubmission: async (currentAttachments) => {
+      prepareFallbackSubmission: async (currentPrompt, currentAttachments, failure) => {
         const currentAttachmentExpectations = currentAttachments.map((attachment) => ({
           name: path.basename(attachment.path),
           generatedBundle: attachment.generatedBundle === true,
         }));
+        const observedDraftSha256 =
+          failure instanceof BrowserAutomationError &&
+          typeof failure.details?.observedDraftSha256 === "string"
+            ? failure.details.observedDraftSha256
+            : undefined;
         await clearOwnedPromptAndAttachmentsForFallback(
           Runtime,
-          promptText,
+          currentPrompt,
           currentAttachmentExpectations,
+          observedDraftSha256,
         );
         await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
       },

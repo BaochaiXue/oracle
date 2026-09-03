@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ChromeClient, BrowserLogger } from "../types.js";
 import {
   INPUT_SELECTORS,
@@ -234,9 +235,17 @@ export async function clearOwnedPromptAndAttachmentsForFallback(
   Runtime: ChromeClient["Runtime"],
   expectedPrompt: string,
   attachmentNames: AttachmentReadyInput[],
+  observedDraftSha256?: string,
 ): Promise<void> {
   try {
-    if (!(await matchesExactOwnedPromptComposer(Runtime, expectedPrompt))) {
+    const ownedPrompt = await readExactOwnedPromptComposer(Runtime);
+    const expectedDigest = observedDraftSha256?.toLowerCase();
+    const promptMatches = expectedDigest
+      ? /^[a-f0-9]{64}$/.test(expectedDigest) &&
+        composerSha256(ownedPrompt ?? "") === expectedDigest
+      : ownedPrompt !== null &&
+        normalizeComposerText(ownedPrompt) === normalizeComposerText(expectedPrompt);
+    if (!promptMatches || ownedPrompt === null) {
       throw new Error("exact owned prompt changed before fallback cleanup");
     }
     const attachmentsMatch =
@@ -251,7 +260,7 @@ export async function clearOwnedPromptAndAttachmentsForFallback(
       await clearExactOwnedAttachmentSet(Runtime, attachmentNames);
     }
 
-    if (!(await clearExactOwnedPromptComposer(Runtime, expectedPrompt))) {
+    if (!(await clearExactOwnedPromptComposer(Runtime, ownedPrompt))) {
       throw new Error("exact owned prompt changed during fallback cleanup");
     }
 
@@ -459,6 +468,7 @@ async function submitPromptInternal(
         draftRetained: true,
         promptLength,
         observedLength,
+        observedDraftSha256: composerSha256(observedComposer),
       },
     );
   }
@@ -791,6 +801,45 @@ async function matchesExactOwnedPromptComposer(
     returnByValue: true,
   });
   return result.result?.value?.matches === true;
+}
+
+async function readExactOwnedPromptComposer(
+  Runtime: ChromeClient["Runtime"],
+): Promise<string | null> {
+  const result = await Runtime.evaluate({
+    expression: `(() => {
+      // oracle-owned-draft-read
+      const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
+      ${COMPOSER_VALUE_READER_SOURCE}
+      const normalizeComposer = (value) => String(value ?? '')
+        .replace(/\\r\\n?/g, '\\n')
+        .replace(/\\u00a0/g, ' ');
+      const isVisible = (node) => {
+        if (!node || typeof node.getBoundingClientRect !== 'function') return false;
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+      const nodes = Array.from(new Set(inputSelectors.flatMap((selector) =>
+        Array.from(document.querySelectorAll(selector)))));
+      const active = nodes.find((node) => isVisible(node)) || nodes[0] || null;
+      const observed = readComposerValue(active);
+      const normalizedObserved = normalizeComposer(observed);
+      const nonEmptyNodes = nodes.filter((node) =>
+        normalizeComposer(readComposerValue(node)).trim().length > 0);
+      return {
+        exact:
+          Boolean(active) &&
+          normalizedObserved.trim().length > 0 &&
+          nonEmptyNodes.length > 0 &&
+          nonEmptyNodes.every((node) =>
+            normalizeComposer(readComposerValue(node)) === normalizedObserved),
+        observed,
+      };
+    })()`,
+    returnByValue: true,
+  });
+  const value = result.result?.value as { exact?: boolean; observed?: string } | undefined;
+  return value?.exact === true && typeof value.observed === "string" ? value.observed : null;
 }
 
 async function verifyExactOwnedAttachmentSet(
@@ -2155,6 +2204,10 @@ function summarizeCommitProbe(probe: CommitProbeState): Record<string, unknown> 
 
 function normalizeComposerText(value: string): string {
   return value.replace(/\r\n?/gu, "\n").replace(/\u00a0/gu, " ");
+}
+
+function composerSha256(value: string): string {
+  return createHash("sha256").update(normalizeComposerText(value), "utf8").digest("hex");
 }
 
 // biome-ignore lint/style/useNamingConvention: test-only export used in vitest suite

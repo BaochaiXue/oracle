@@ -47,8 +47,9 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   while continuing to require the exact attachment set and one trusted
   dispatch. Targeted pre-dispatch cleanup now resets a retained hidden file
   input only when its complete file set independently matches the attempt, and
-  inline-to-file fallback re-verifies and clears only the exact owned prompt;
-  changed or mixed composer state remains retained with `retrySafe:false`.
+  inline-to-file fallback re-verifies and clears only the exact owned draft,
+  including a digest-bound truncated draft; changed or mixed composer state
+  remains retained with `retrySafe:false`.
 - Oracle v2 recovery and tab ownership: persist an exact browser-private
   conversation locator before an at-risk Send, reattach only that target or
   conversation after worker restart, release job tabs after every terminal
