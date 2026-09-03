@@ -6,8 +6,11 @@ description: "Second-opinion review from ChatGPT GPT-5.6 Pro with real repositor
 # Oracle (CLI) — best use
 
 Oracle bundles a prompt and selected files for a ChatGPT GPT-5.6 Pro
-second-model review with real repository context. The canonical lane is browser
-mode over direct CDP with Oracle's dedicated profile. A prompt is required;
+second-model review with real repository context. GPT-5.6 Pro is multimodal:
+plots, screenshots, diagrams, videos, and PDFs attached with `--file` are
+uploaded and read as images, not as text (see "Showing the model visual
+evidence"). The canonical lane is browser mode over direct CDP with Oracle's
+dedicated profile. A prompt is required;
 attach files only when they add necessary context. Treat responses as advisory:
 verify them against the codebase and tests, and argue back in the same
 conversation when they are wrong or over-engineered (see "Arguing with the
@@ -455,6 +458,73 @@ Keep total input under roughly 196k tokens. Use `--files-report` or
 private keys, auth tokens, or other secrets unless they have been redacted and
 are essential to the question.
 
+## Showing the model visual evidence
+
+GPT-5.6 Pro reads images. When the question is about a training curve, a
+distribution, a confusion matrix, an attention map, a UI rendering, a diagram,
+or anything else a human would judge by looking, attach the picture instead of
+transcribing numbers into prose. A plot carries the shape, the outliers, and
+the axis scale at once; a paragraph of numbers loses all three.
+
+Media goes through the same `--file` flag. Oracle recognizes it by extension,
+never inlines it, and uploads the raw bytes as a ChatGPT attachment:
+
+- Images: `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.svg`, `.heic`
+- Video: `.mp4`, `.mov`, `.webm`, `.mkv`, `.m4v`, `.avi`
+- Audio: `.mp3`, `.wav`, `.flac`, `.ogg`, `.m4a`, `.aac`
+- Documents: `.pdf`
+
+```bash
+oracle --engine browser --browser-transport cdp --model gpt-5-pro \
+  --browser-thinking-time pro --browser-keep-browser \
+  -p "Attached: validation PER per epoch for runs A and B (same seed, same data).
+Look at the curves before reading the code. Is the divergence after epoch 40
+consistent with the LR schedule in train.py, or does it point elsewhere?" \
+  --file outputs-for-review/per_curves.png \
+  --file outputs-for-review/per_curves.csv \
+  --file src/train.py
+```
+
+Rules that make visual evidence useful rather than decorative:
+
+- Tell the model what it is looking at and what question the image answers.
+  Name the axes, units, series, and the run or commit each series comes from
+  when the figure itself does not.
+- Ask it to describe what it sees before interpreting it. A wrong reading of
+  the picture is caught in one turn instead of propagating through the answer.
+- Attach the numbers behind the picture when precision matters: the `.csv` or
+  `.json` next to the `.png`. The image carries shape; the table carries values.
+- Prefer one clear figure per question over a grid of tiny panels. Legible
+  labels beat high resolution.
+- For video, decide whether motion is the evidence. If not, extract two or
+  three key frames as images; they upload faster and are read more reliably.
+  If motion matters, keep the clip short and say which seconds to watch.
+- Never attach a figure that contains credentials, private paths, or personal
+  data in its labels or window title. Screenshots leak more than plots.
+
+Constraints that apply to media in this fork:
+
+- The 1 MB default file cap applies to uploads too. Most plots fit; screenshots
+  and videos often do not. Raise it for the run with `--max-file-size-bytes
+  <bytes>` or `ORACLE_MAX_FILE_SIZE_BYTES`; do not leave it raised in config.
+- One browser turn accepts at most 10 attachments before bundling is required,
+  and media cannot be bundled into a text bundle. Keep the figure set small or
+  use `--browser-bundle-format zip` for the text files so the images stay
+  separate uploads.
+- `--browser-attachments never` and `--browser-inline-files` fail on media,
+  because media has no inline form. Leave attachments on `auto` or `always`.
+- `.gitignore` filtering applies to every `--file` input, including a literal
+  path. A plot under an ignored `outputs/` directory is silently dropped, not
+  attached. Copy the figures to a non-ignored path inside the working
+  directory, or run Oracle from a scratch directory that holds them, and confirm
+  with `--dry-run summary --files-report` that each image is listed as an upload
+  before the real run.
+- Follow-ups accept `--file`, so a plot can be introduced mid-conversation as
+  evidence in a rebuttal (see "Arguing with the model").
+
+Images the model returns are downloaded as session artifacts; pass
+`--generate-image <file>` to choose the output path.
+
 ## Engines and browser controls
 
 - The canonical skill invocation explicitly selects browser mode, direct CDP,
@@ -565,6 +635,8 @@ Oracle starts with zero project knowledge. Include:
 - Project briefing: stack, services, build/test commands, and platform constraints
 - Where things live: entrypoints, configs, key modules, and dependency boundaries
 - Exact question, prior attempts, and verbatim error text
+- Visual evidence when the question is about a curve, a distribution, a layout,
+  or a rendering: attach the plot or screenshot itself, and say what to look at
 - Constraints such as API compatibility, performance budgets, and files not to change
 - Desired output such as a patch plan, tests, risk list, or tradeoff comparison
 

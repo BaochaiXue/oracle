@@ -81,4 +81,19 @@ describe("canonical Oracle skill contract", () => {
     expect(skill).toMatch(/Preference for\nanother phrasing, a fresh start, or a cleaner transcript is not a reason\./);
     expect(skill).not.toContain("Oracle runs are\none-shot; the model does not remember prior runs.");
   });
+
+  test("tells the agent to show GPT-5.6 Pro visual evidence and names the media traps", async () => {
+    const skill = await readSkill();
+
+    expect(skill).toContain("GPT-5.6 Pro is multimodal");
+    expect(skill).toContain("## Showing the model visual evidence");
+    // Media routing matches src/browser/prompt.ts MEDIA_EXTENSIONS.
+    expect(skill).toContain("- Video: `.mp4`, `.mov`, `.webm`, `.mkv`, `.m4v`, `.avi`");
+    expect(skill).toContain("never inlines it, and uploads the raw bytes");
+    // The three constraints that silently break media attachments.
+    expect(skill).toContain("The 1 MB default file cap applies to uploads too.");
+    expect(skill).toContain("at most 10 attachments");
+    expect(skill).toMatch(/`\.gitignore` filtering applies to every `--file` input, including a literal\npath\./);
+    expect(skill).toContain("--dry-run summary --files-report");
+  });
 });
