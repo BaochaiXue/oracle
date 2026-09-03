@@ -135,8 +135,12 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   ownership and prompt identity; one final DOM snapshot must prove both prompt
   text and attachments empty before recording `retrySafe:true`. Any incomplete
   proof preserves the exact tab with `retrySafe:false` and leaves unknown
-  content untouched. A large prompt truncated before dispatch without a usable
-  file fallback is likewise retained for exact-tab inspection.
+  content untouched. Every submission now proves the attachment set empty before
+  the attempt begins any upload, typing, or dispatch, including text-only runs. Inline-to-file
+  fallback revalidates and removes only the first attempt's exact owned
+  attachments before uploading the fallback set; unverifiable cleanup retains
+  the exact tab. A large prompt truncated before dispatch without a usable file
+  fallback is likewise retained for exact-tab inspection.
 - Direct CDP recovery receipts: require strict durable dispatch-boundary
   persistence before `mousePressed` or Enter `keyDown`, together with the
   current prompt digest and pre-dispatch turn baseline; a missing baseline now

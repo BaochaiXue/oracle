@@ -12,6 +12,7 @@ export { ensureModelSelection } from "./actions/modelSelection.js";
 export {
   submitPrompt,
   clearPromptComposer,
+  clearOwnedPromptAndAttachmentsForFallback,
   assertPromptComposerEmptyBeforeAttachmentMutation,
 } from "./actions/promptComposer.js";
 export {

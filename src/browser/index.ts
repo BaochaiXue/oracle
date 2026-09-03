@@ -34,6 +34,7 @@ import {
   installJavaScriptDialogAutoDismissal,
   ensureModelSelection,
   clearPromptComposer,
+  clearOwnedPromptAndAttachmentsForFallback,
   assertPromptComposerEmptyBeforeAttachmentMutation,
   waitForAssistantResponse,
   captureAssistantMarkdown,
@@ -205,6 +206,7 @@ function isRetainedDraftError(error: unknown): error is BrowserAutomationError {
       "commit-unverified-draft-retained",
       "attachment-send-not-ready",
       "prompt-too-large",
+      "fallback-cleanup-unverified",
     ].includes(details?.code ?? "") &&
     details?.submissionCommitted === false &&
     details.draftRetained === true
@@ -943,7 +945,7 @@ async function runSubmissionWithRecovery({
   fallbackSubmission?: BrowserSubmissionFallback;
   submit: (prompt: string, attachments: BrowserAttachment[]) => Promise<BrowserSubmissionResult>;
   reloadPromptComposer: () => Promise<void>;
-  prepareFallbackSubmission: () => Promise<void>;
+  prepareFallbackSubmission: (currentAttachments: BrowserAttachment[]) => Promise<void>;
   logger: BrowserLogger;
 }): Promise<BrowserSubmissionResult> {
   let currentPrompt = prompt;
@@ -966,7 +968,7 @@ async function runSubmissionWithRecovery({
       if (fallbackSubmission && isPromptTooLarge && !usedFallbackSubmission) {
         usedFallbackSubmission = true;
         logger("[browser] Inline prompt too large; retrying with file uploads.");
-        await prepareFallbackSubmission();
+        await prepareFallbackSubmission(currentAttachments);
         currentPrompt = fallbackSubmission.prompt;
         currentAttachments = fallbackSubmission.attachments;
         continue;
@@ -983,7 +985,7 @@ export async function runSubmissionWithRecoveryForTest(args: {
   fallbackSubmission?: BrowserSubmissionFallback;
   submit: (prompt: string, attachments: BrowserAttachment[]) => Promise<BrowserSubmissionResult>;
   reloadPromptComposer: () => Promise<void>;
-  prepareFallbackSubmission: () => Promise<void>;
+  prepareFallbackSubmission: (currentAttachments: BrowserAttachment[]) => Promise<void>;
   logger: BrowserLogger;
 }): Promise<BrowserSubmissionResult> {
   return runSubmissionWithRecovery(args);
@@ -1875,8 +1877,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       }));
       let inputOnlyAttachments = false;
       await raceWithDisconnect(ensurePromptReady(Runtime, config.inputTimeoutMs, logger));
+      await raceWithDisconnect(assertPromptComposerEmptyBeforeAttachmentMutation(Runtime));
       if (submissionAttachments.length > 0) {
-        await raceWithDisconnect(assertPromptComposerEmptyBeforeAttachmentMutation(Runtime));
         if (!DOM) {
           throw new Error("Chrome DOM domain unavailable while uploading attachments.");
         }
@@ -2065,8 +2067,18 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         submit: (submissionPrompt, submissionAttachments) =>
           raceWithDisconnect(submitOnce(submissionPrompt, submissionAttachments)),
         reloadPromptComposer,
-        prepareFallbackSubmission: async () => {
-          await raceWithDisconnect(clearPromptComposer(Runtime, logger));
+        prepareFallbackSubmission: async (currentAttachments) => {
+          const currentAttachmentExpectations = currentAttachments.map((attachment) => ({
+            name: path.basename(attachment.path),
+            generatedBundle: attachment.generatedBundle === true,
+          }));
+          await raceWithDisconnect(
+            clearOwnedPromptAndAttachmentsForFallback(
+              Runtime,
+              logger,
+              currentAttachmentExpectations,
+            ),
+          );
           await raceWithDisconnect(ensurePromptReady(Runtime, config.inputTimeoutMs, logger));
         },
         logger,
@@ -3711,8 +3723,8 @@ async function runRemoteBrowserMode(
         generatedBundle: a.generatedBundle === true,
       }));
       await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
+      await assertPromptComposerEmptyBeforeAttachmentMutation(Runtime);
       if (submissionAttachments.length > 0) {
-        await assertPromptComposerEmptyBeforeAttachmentMutation(Runtime);
         if (!DOM) {
           throw new Error("Chrome DOM domain unavailable while uploading attachments.");
         }
@@ -3857,8 +3869,16 @@ async function runRemoteBrowserMode(
       fallbackSubmission: options.fallbackSubmission,
       submit: submitOnce,
       reloadPromptComposer,
-      prepareFallbackSubmission: async () => {
-        await clearPromptComposer(Runtime, logger);
+      prepareFallbackSubmission: async (currentAttachments) => {
+        const currentAttachmentExpectations = currentAttachments.map((attachment) => ({
+          name: path.basename(attachment.path),
+          generatedBundle: attachment.generatedBundle === true,
+        }));
+        await clearOwnedPromptAndAttachmentsForFallback(
+          Runtime,
+          logger,
+          currentAttachmentExpectations,
+        );
         await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
       },
       logger,

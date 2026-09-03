@@ -107,6 +107,18 @@ describe("shouldPreserveBrowserOnErrorForTest", () => {
     expect(classifyPreservedBrowserErrorForTest(error, false)).toBe("draft-retained");
   });
 
+  test("preserves an unverified inline fallback cleanup for manual recovery", () => {
+    const error = new BrowserAutomationError("Fallback cleanup could not be verified.", {
+      stage: "submit-prompt",
+      code: "fallback-cleanup-unverified",
+      submissionCommitted: false,
+      draftRetained: true,
+      retrySafe: false,
+    });
+
+    expect(classifyPreservedBrowserErrorForTest(error, false)).toBe("draft-retained");
+  });
+
   test("does not retain a failed uncommitted send when no draft remains", () => {
     const error = new BrowserAutomationError("Prompt did not commit.", {
       stage: "submit-prompt",
@@ -1196,6 +1208,51 @@ describe("runSubmissionWithRecoveryForTest", () => {
     expect(submit).toHaveBeenNthCalledWith(3, "fallback prompt", [
       expect.objectContaining({ displayPath: "fallback.txt" }),
     ]);
+  });
+
+  test("passes already-uploaded raw attachments to inline fallback cleanup", async () => {
+    const rawAttachment = {
+      path: "/tmp/evidence.bin",
+      displayPath: "evidence.bin",
+      sizeBytes: 12,
+    };
+    const fallbackBundle = {
+      path: "/tmp/fallback.txt",
+      displayPath: "fallback.txt",
+      sizeBytes: 24,
+    };
+    const submit = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new BrowserAutomationError("prompt too large", { code: "prompt-too-large" }),
+      )
+      .mockResolvedValueOnce({
+        baselineTurns: 7,
+        baselineAssistantText: "done",
+      });
+    const prepareFallbackSubmission = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      runSubmissionWithRecoveryForTest({
+        prompt: "inline prompt",
+        attachments: [rawAttachment],
+        fallbackSubmission: {
+          prompt: "fallback prompt",
+          attachments: [fallbackBundle, rawAttachment],
+        },
+        submit,
+        reloadPromptComposer: vi.fn().mockResolvedValue(undefined),
+        prepareFallbackSubmission,
+        logger: vi.fn<(message: string) => void>(),
+      }),
+    ).resolves.toEqual({
+      baselineTurns: 7,
+      baselineAssistantText: "done",
+    });
+
+    expect(prepareFallbackSubmission).toHaveBeenCalledTimes(1);
+    expect(prepareFallbackSubmission).toHaveBeenCalledWith([rawAttachment]);
+    expect(submit).toHaveBeenNthCalledWith(2, "fallback prompt", [fallbackBundle, rawAttachment]);
   });
 
   test("throws when prompt-too-large happens again after fallback", async () => {

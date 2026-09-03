@@ -230,6 +230,51 @@ export async function assertPromptComposerEmptyBeforeAttachmentMutation(
   }
 }
 
+export async function clearOwnedPromptAndAttachmentsForFallback(
+  Runtime: ChromeClient["Runtime"],
+  logger: BrowserLogger,
+  attachmentNames: AttachmentReadyInput[],
+): Promise<void> {
+  try {
+    const attachmentsMatch =
+      attachmentNames.length > 0
+        ? await verifyExactOwnedAttachmentSet(Runtime, attachmentNames)
+        : await verifyComposerAttachmentSetEmpty(Runtime);
+    if (!attachmentsMatch) {
+      throw new Error("composer attachment set changed before fallback cleanup");
+    }
+
+    await clearPromptComposer(Runtime, logger);
+
+    if (attachmentNames.length > 0) {
+      if (!(await verifyExactOwnedAttachmentSet(Runtime, attachmentNames))) {
+        throw new Error("exact owned attachment set changed during fallback cleanup");
+      }
+      await clearExactOwnedAttachmentSet(Runtime, attachmentNames);
+    }
+
+    if (!(await verifyComposerCleanupComplete(Runtime))) {
+      throw new Error("composer state changed during final fallback cleanup verification");
+    }
+  } catch (error) {
+    throw new BrowserAutomationError(
+      "Oracle could not verify removal of only this attempt's prompt and attachments before file fallback, so the exact tab was retained for recovery.",
+      {
+        stage: "submit-prompt",
+        code: "fallback-cleanup-unverified",
+        submissionCommitted: false,
+        dispatchAttempted: false,
+        potentiallySubmittingEventEmitted: false,
+        draftRetained: true,
+        retrySafe: false,
+        recoverable: true,
+        cleanupVerified: false,
+      },
+      error,
+    );
+  }
+}
+
 async function submitPromptInternal(
   deps: SubmitPromptDependencies,
   prompt: string,

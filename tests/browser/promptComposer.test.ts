@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   __test__ as promptComposer,
   assertPromptComposerEmptyBeforeAttachmentMutation,
+  clearOwnedPromptAndAttachmentsForFallback,
   clearPromptComposer,
   submitPrompt,
 } from "../../src/browser/actions/promptComposer.js";
@@ -764,6 +765,75 @@ describe("promptComposer", () => {
       }),
     });
     expect(runtime.evaluate).toHaveBeenCalledTimes(2);
+  });
+
+  test("clears the exact owned attachment set before an inline file fallback", async () => {
+    let exactSetChecks = 0;
+    let targetedRemoveClicks = 0;
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("oracle-owned-draft-cleanup-final-verify")) {
+          return {
+            result: {
+              value: { composerFound: true, composerEmpty: true, attachmentSetEmpty: true },
+            },
+          };
+        }
+        if (expression.startsWith("document.querySelectorAll")) {
+          return { result: { value: 0 } };
+        }
+        if (expression.includes("const cleanupMode = true")) {
+          targetedRemoveClicks += 1;
+          return { result: { value: { exactSetMatched: true, removeClicks: 1 } } };
+        }
+        if (expression.includes("const dispatchClearEvents")) {
+          return { result: { value: { cleared: true, remaining: [] } } };
+        }
+        if (expression.includes("evidence.bin")) {
+          exactSetChecks += 1;
+          return { result: { value: true } };
+        }
+        if (expression.includes("const expected = []")) {
+          return { result: { value: true } };
+        }
+        throw new Error("unexpected fallback cleanup probe");
+      }),
+    };
+
+    await clearOwnedPromptAndAttachmentsForFallback(runtime as never, vi.fn() as never, [
+      { name: "evidence.bin" },
+    ]);
+
+    expect(exactSetChecks).toBe(2);
+    expect(targetedRemoveClicks).toBe(1);
+  });
+
+  test("retains fallback state when the prior attachment set is no longer exact", async () => {
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("evidence.bin")) {
+          return { result: { value: false } };
+        }
+        throw new Error("fallback cleanup must not mutate an unverified attachment set");
+      }),
+    };
+
+    await expect(
+      clearOwnedPromptAndAttachmentsForFallback(runtime as never, vi.fn() as never, [
+        { name: "evidence.bin" },
+      ]),
+    ).rejects.toMatchObject({
+      details: expect.objectContaining({
+        code: "fallback-cleanup-unverified",
+        submissionCommitted: false,
+        potentiallySubmittingEventEmitted: false,
+        draftRetained: true,
+        retrySafe: false,
+        recoverable: true,
+        cleanupVerified: false,
+      }),
+    });
+    expect(runtime.evaluate).toHaveBeenCalledTimes(1);
   });
 
   test("waits for transient restored composer content to settle empty before typing", async () => {
