@@ -106,5 +106,12 @@ describe("canonical Oracle skill contract", () => {
     expect(skill).toContain("Never run `smoke` or `setup` while any consultation is active or recoverable.");
     expect(skill).toContain("`smoke` is a first-install validator, not a repair\ntool");
     expect(skill).toContain('browser.browserLifetime: "persistent"');
+    // The three multi-agent invariants.
+    expect(skill).toContain("**No preemption.**");
+    expect(skill).toContain("**No deadlock.**");
+    expect(skill).toContain("**No lost tracking.**");
+    expect(skill).toContain("Never pass `--browser-tab <ref>` to reuse an existing ChatGPT tab");
+    expect(skill).toContain("do not kill the pid named in the message");
+    expect(skill).toContain("`--followup <latest own child>`");
   });
 });

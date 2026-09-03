@@ -344,6 +344,45 @@ Rules for every agent on a shared machine:
 - A run that failed before Send in a fresh Chrome is a cold-start symptom. Wait
   for the browser to settle and retry once; do not repair the process.
 
+### Three invariants for multi-agent use
+
+**No preemption.** An agent touches only the tab, lease, and session it created.
+Never pass `--browser-tab <ref>` to reuse an existing ChatGPT tab, never
+`--browser-attach-running` against the dedicated profile, never run
+`reconcile-tabs --apply` or `--include-untracked-chatgpt` while `oracle browser
+status` shows other work, and never raise `maxConcurrentTabs` or kill a process
+to free a slot. If every slot is taken, the run waits: lease acquisition polls
+for up to the run timeout (60 minutes on the Pro lane) and logs "Waiting for
+Oracle browser target slot" every 30 seconds. Waiting is the correct behavior.
+
+**No deadlock.** Every wait in Oracle is bounded and ordered, so a true deadlock
+cannot form: a run takes its tab lease first, then the profile lock only for the
+launch decision and the composer mutation, and releases the lock before waiting
+for the answer. The profile lock gives up after 300 seconds with "Oracle
+profile lock still held by pid N"; the lease wait gives up at the run timeout.
+Treat either message as "someone else is submitting or all slots are busy":
+inspect with `oracle browser status` and `oracle status --browser-tabs`, then
+retry later or reduce parallel demand. Do not remove lock files, do not clear
+the lease registry, and do not kill the pid named in the message; a dead pid is
+pruned automatically, a live one is doing work.
+
+**No lost tracking.** Each agent keeps an explicit map from its task to its own
+Oracle session lineage and never operates on a session it did not create.
+
+- Give every run a `--slug` that names the agent and task, for example
+  `<agent>-<task>-r1`, and record the printed session id next to the task in
+  the working notes together with the conversation URL from `oracle status`.
+- Continue that task only with `--followup <latest own child>`; children keep
+  the slug prefix, so `oracle status` shows the lineage as one tree.
+- Never `oracle session <id> --live|--harvest`, `--followup`, or `restart` a
+  session whose slug or lineage is not yours. Reading another agent's session
+  is allowed only through `oracle session <id>` as a read-only snapshot.
+- After a host cut-off, find your own work by slug in `oracle status --hours
+  72`, not by picking the most recent session; another agent's run may be newer.
+- One task, one conversation. Do not open a second conversation for the same
+  task while the first is `running` or `recoverable`; two live conversations on
+  one task is how an agent loses track of which answer is authoritative.
+
 ## Long runs and host timeouts
 
 A Pro browser capture is allowed 60 minutes per bound-conversation attempt, with
