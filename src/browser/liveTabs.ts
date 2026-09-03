@@ -219,28 +219,34 @@ function buildTabInspectionExpression(): string {
       const lastUserContainer = lastUserTurn
         ? turns.find((turn) => turn === lastUserTurn || turn.contains?.(lastUserTurn))
         : null;
-      const roleTaggedMessages = Array.from(
-        document.querySelectorAll('[data-message-author-role], [data-turn]'),
-      ).filter((node) => {
-        const role = normalize(node.getAttribute('data-message-author-role') || node.getAttribute('data-turn')).toLowerCase();
+      // ChatGPT wraps each turn in a [data-turn] container and puts the actual
+      // message in an inner [data-message-author-role] node. While GPT-5.6 Pro is
+      // still working, the page already has an assistant *container* holding a
+      // progress card (a .markdown block) but no inner assistant *message*. The
+      // inner messages are therefore the authority for "is the answer here";
+      // containers are only a fallback for layouts without inner role nodes.
+      const innerMessages = Array.from(document.querySelectorAll('[data-message-author-role]')).filter((node) => {
+        const role = normalize(node.getAttribute('data-message-author-role')).toLowerCase();
         return role === 'user' || role === 'assistant';
       });
-      const roleOfMessage = (node) => normalize(
-        node.getAttribute('data-message-author-role') || node.getAttribute('data-turn'),
-      ).toLowerCase();
-      const lastRoleTagged = roleTaggedMessages[roleTaggedMessages.length - 1] || null;
-      const lastMessageRole = lastRoleTagged ? roleOfMessage(lastRoleTagged) : null;
-      // ChatGPT renders Pro "working" progress cards as .markdown blocks that sit
-      // outside any role-tagged message. When the page exposes role-tagged
-      // messages, only content inside an assistant message is an answer.
+      const turnContainers = Array.from(document.querySelectorAll('[data-turn]')).filter((node) => {
+        const role = normalize(node.getAttribute('data-turn')).toLowerCase();
+        return role === 'user' || role === 'assistant';
+      });
+      const roleMessages = innerMessages.length > 0 ? innerMessages : turnContainers;
+      const roleAttr = innerMessages.length > 0 ? 'data-message-author-role' : 'data-turn';
+      const lastRoleTagged = roleMessages[roleMessages.length - 1] || null;
+      const lastMessageRole = lastRoleTagged ? normalize(lastRoleTagged.getAttribute(roleAttr)).toLowerCase() : null;
+      const assistantMessageSelector = innerMessages.length > 0
+        ? '[data-message-author-role="assistant"]'
+        : '[data-turn="assistant"]';
       const answerNodes = rawAnswerNodes.filter(
         (node) =>
           (!lastUserTurn ||
             (node !== lastUserTurn &&
               !lastUserTurn.contains?.(node) &&
               !node.contains?.(lastUserTurn))) &&
-          (roleTaggedMessages.length === 0 ||
-            Boolean(node.closest?.('[data-message-author-role="assistant"], [data-turn="assistant"]'))),
+          (roleMessages.length === 0 || Boolean(node.closest?.(assistantMessageSelector))),
       );
       const answerTexts = answerNodes.map((node) => normalize(node.textContent)).filter(Boolean);
       const assistantCandidates = Array.from(new Set([...assistantTurns, ...answerNodes]));
