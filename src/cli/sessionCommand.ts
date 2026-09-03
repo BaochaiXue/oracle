@@ -23,7 +23,7 @@ export interface StatusOptions extends OptionValues {
   clean?: boolean;
   render?: boolean;
   renderMarkdown?: boolean;
-  path?: boolean;
+  printPaths?: boolean;
   verboseRender?: boolean;
   hidePrompt?: boolean;
   model?: string;
@@ -75,7 +75,7 @@ const SESSION_OPTION_KEYS = new Set([
   "clean",
   "render",
   "renderMarkdown",
-  "path",
+  "printPaths",
   "model",
   "harvest",
   "live",
@@ -111,7 +111,7 @@ export async function handleSessionCommand(
   const renderMarkdownSource = command.getOptionValueSource?.("renderMarkdown");
   const renderExplicit = renderSource === "cli" || renderMarkdownSource === "cli";
   const autoRender = !renderExplicit && process.stdout.isTTY;
-  const pathRequested = Boolean(sessionOptions.path);
+  const pathRequested = Boolean(sessionOptions.printPaths);
   const clearRequested = Boolean(sessionOptions.clear || sessionOptions.clean);
   if (clearRequested) {
     if (sessionId) {
@@ -137,7 +137,7 @@ export async function handleSessionCommand(
   }
   if (pathRequested) {
     if (!sessionId) {
-      console.error("The --path flag requires a session ID.");
+      console.error("The --print-paths flag requires a session ID.");
       process.exitCode = 1;
       return;
     }

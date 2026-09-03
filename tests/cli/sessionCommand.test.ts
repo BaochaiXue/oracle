@@ -7,8 +7,8 @@ function createCommandWithOptions(options: StatusOptions): Command {
   command.setOptionValueWithSource("hours", options.hours, "cli");
   command.setOptionValueWithSource("limit", options.limit, "cli");
   command.setOptionValueWithSource("all", options.all, "cli");
-  if (options.path !== undefined) {
-    command.setOptionValueWithSource("path", options.path, "cli");
+  if (options.printPaths !== undefined) {
+    command.setOptionValueWithSource("printPaths", options.printPaths, "cli");
   }
   if (options.clear !== undefined) {
     command.setOptionValueWithSource("clear", options.clear, "cli");
@@ -90,12 +90,12 @@ describe("handleSessionCommand", () => {
     expect(process.exitCode).toBeUndefined();
   });
 
-  test("prints paths when --path is provided with an id", async () => {
+  test("prints paths when --print-paths is provided with an id", async () => {
     const command = createCommandWithOptions({
       hours: 24,
       limit: 10,
       all: false,
-      path: true,
+      printPaths: true,
     } as StatusOptions);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const deps = createDeps();
@@ -116,18 +116,18 @@ describe("handleSessionCommand", () => {
     expect(process.exitCode).toBeUndefined();
   });
 
-  test("errors when --path is provided without an id", async () => {
+  test("errors when --print-paths is provided without an id", async () => {
     const command = createCommandWithOptions({
       hours: 24,
       limit: 10,
       all: false,
-      path: true,
+      printPaths: true,
     } as StatusOptions);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     await handleSessionCommand(undefined, command, createDeps());
 
-    expect(errorSpy).toHaveBeenCalledWith("The --path flag requires a session ID.");
+    expect(errorSpy).toHaveBeenCalledWith("The --print-paths flag requires a session ID.");
     expect(process.exitCode).toBe(1);
   });
 
@@ -136,7 +136,7 @@ describe("handleSessionCommand", () => {
       hours: 24,
       limit: 10,
       all: false,
-      path: true,
+      printPaths: true,
     } as StatusOptions);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const deps = createDeps();

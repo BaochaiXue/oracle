@@ -1458,7 +1458,11 @@ program
   .option("--render", "Render completed session output as markdown (rich TTY only).", false)
   .option("--render-markdown", "Alias for --render.", false)
   .option("--model <name>", "Filter sessions/output for a specific model.", "")
-  .option("--path", "Print the stored session paths instead of attaching.", false)
+  .option(
+    "--print-paths",
+    "Print the stored session paths instead of attaching. (Named --print-paths because the root --path <paths...> alias for --file shadows a subcommand --path.)",
+    false,
+  )
   .option(
     "--harvest",
     "Re-read the bound browser tab and print/save the latest assistant output.",

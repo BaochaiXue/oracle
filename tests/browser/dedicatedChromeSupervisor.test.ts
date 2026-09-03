@@ -227,6 +227,32 @@ describe("dedicated Chrome ownership", () => {
   });
 });
 
+describe("POSIX process observation", () => {
+  test.skipIf(process.platform === "win32")(
+    "reads the full command line even when COLUMNS would truncate ps output",
+    async () => {
+      const { spawn } = await import("node:child_process");
+      // No leading dashes: node would otherwise reject it as an unknown option.
+      const marker = `oracle-observe-marker-${"x".repeat(200)}`;
+      const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 20000)", marker], {
+        stdio: "ignore",
+      });
+      const previousColumns = process.env.COLUMNS;
+      process.env.COLUMNS = "80";
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        const observed = await observeProcess(child.pid as number);
+        expect(observed?.pid).toBe(child.pid);
+        expect(observed?.command).toContain(marker);
+      } finally {
+        if (previousColumns === undefined) delete process.env.COLUMNS;
+        else process.env.COLUMNS = previousColumns;
+        child.kill("SIGKILL");
+      }
+    },
+  );
+});
+
 describe("Windows process observation", () => {
   test.skipIf(process.platform !== "win32")(
     "reads the current process identity through CIM",

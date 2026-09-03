@@ -416,10 +416,11 @@ When the foreground call is cut off:
    a rich TTY; from a non-interactive shell read the session directory
    directly: `~/.oracle/sessions/<id>/meta.json` holds status, error, and
    `browser.runtime`; `output.log` is the run log; the answer is
-   `~/.oracle/sessions/<id>/artifacts/transcript.md` once captured. Do not use
-   `oracle session <id> --path`: the root-level
-   `--path <paths...>` alias for `--file` shadows the subcommand flag and the
-   CLI rejects it with "argument missing".
+   `~/.oracle/sessions/<id>/artifacts/transcript.md` once captured.
+   `oracle session <id> --print-paths` prints the session directory and file
+   paths. Do not use `oracle session <id> --path`: the root-level
+   `--path <paths...>` alias for `--file` shadows that spelling and the CLI
+   rejects it with "argument missing".
 3. Create another attempt only after a durable receipt proves the prompt was
    never submitted. Never re-run a consultation merely to make it look complete.
 

@@ -118,7 +118,7 @@ and `oracle session <child> --live|--harvest`. These paths cannot own parent
 reservations, canonical answers, receipts, or the stage barrier.
 
 A Batch child remains inspectable with `oracle session <child>`, `oracle status
-<child>`, `oracle session <child> --path`, or stored log/artifact rendering.
+<child>`, `oracle session <child> --print-paths`, or stored log/artifact rendering.
 Here **inspect** is strictly read-only. Plain attach displays one current
 snapshot and returns; it does not wait, auto-reattach, repair capture, append a
 log, create an artifact, update model/session state, or terminalize. This is

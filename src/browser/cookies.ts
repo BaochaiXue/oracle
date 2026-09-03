@@ -1,9 +1,29 @@
 import { COOKIE_URLS } from "./constants.js";
+import { extractStableConversationIdFromUrl } from "./conversationUrl.js";
 import type { BrowserLogger, ChromeClient, CookieParam } from "./types.js";
 import { delay } from "./utils.js";
 import { getCookies, type Cookie } from "@steipete/sweet-cookie";
 
 export class ChromeCookieSyncError extends Error {}
+
+/**
+ * Stale-conversation cookie cleanup is profile-global (`Network.getAllCookies`
+ * and `Network.deleteCookies` act on the whole browser), so it may only run
+ * when this run is the sole live Oracle lease in the profile. Another run that
+ * has just submitted may hold `conv_key_<id>` for a conversation whose URL is
+ * not yet exposed on its tab, and deleting it is a cross-run mutation. Any
+ * failure to inspect the lease registry skips the optional cleanup.
+ */
+export async function shouldSkipStaleConversationCookieCleanup(
+  hasOtherActiveLeases: (() => Promise<boolean>) | null | undefined,
+): Promise<boolean> {
+  if (!hasOtherActiveLeases) return false;
+  try {
+    return await hasOtherActiveLeases();
+  } catch {
+    return true;
+  }
+}
 
 export async function clearStaleChatGptConversationCookies(
   Network: ChromeClient["Network"],
@@ -214,7 +234,9 @@ function extractChatGptConversationId(url: string): string | undefined {
     if (domain !== "chatgpt.com" && domain !== "chat.openai.com") {
       return undefined;
     }
-    return parsed.pathname.match(/\/c\/([a-zA-Z0-9-]+)/)?.[1];
+    // Use the shared stable parser so a transient `/c/WEB:<request-id>` route
+    // is never read as a conversation named "WEB".
+    return extractStableConversationIdFromUrl(parsed.pathname);
   } catch {
     return undefined;
   }

@@ -134,7 +134,7 @@ export async function findRunningChromeForProfile(
   }
 
   try {
-    const { stdout } = await execFileAsync("ps", ["-ax", "-o", "pid=", "-o", "command="], {
+    const { stdout } = await execFileAsync("ps", ["-ww", "-ax", "-o", "pid=", "-o", "command="], {
       maxBuffer: 10 * 1024 * 1024,
     });
     return findChromeForProfileFromProcessList(String(stdout ?? ""), userDataDir);
@@ -151,7 +151,7 @@ export async function findRunningChromeDebugTargetForProfile(
   }
 
   try {
-    const { stdout } = await execFileAsync("ps", ["-ax", "-o", "pid=", "-o", "command="], {
+    const { stdout } = await execFileAsync("ps", ["-ww", "-ax", "-o", "pid=", "-o", "command="], {
       maxBuffer: 10 * 1024 * 1024,
     });
     return findChromeDebugTargetForProfileFromProcessList(String(stdout ?? ""), userDataDir);
@@ -485,7 +485,7 @@ async function isChromeUsingUserDataDir(userDataDir: string): Promise<boolean> {
   }
 
   try {
-    const { stdout } = await execFileAsync("ps", ["-ax", "-o", "command="], {
+    const { stdout } = await execFileAsync("ps", ["-ww", "-ax", "-o", "command="], {
       maxBuffer: 10 * 1024 * 1024,
     });
     const lines = String(stdout ?? "").split("\n");
@@ -508,7 +508,7 @@ export async function readProcessCommand(pid: number): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync(
       "ps",
-      ["-p", String(Math.trunc(pid)), "-o", "command="],
+      ["-ww", "-p", String(Math.trunc(pid)), "-o", "command="],
       {
         maxBuffer: 1024 * 1024,
       },

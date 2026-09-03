@@ -22,7 +22,8 @@ import {
   closeTab,
   ensureChromePageTargetAfterClose,
 } from "./chromeLifecycle.js";
-import { clearStaleChatGptConversationCookies, syncCookies } from "./cookies.js";
+import { clearStaleChatGptConversationCookies,
+  shouldSkipStaleConversationCookieCleanup, syncCookies } from "./cookies.js";
 import {
   navigateToChatGPT,
   navigateToPromptReadyWithFallback,
@@ -1430,12 +1431,23 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           : "Skipping Chrome cookie sync (--browser-no-cookie-sync)",
       );
     }
-    await clearStaleChatGptConversationCookies(Network, Target, logger, {
-      preserveConversationIds: [
-        extractConversationIdFromUrl(config.resumeConversationUrl ?? ""),
-        extractConversationIdFromUrl(lastUrl ?? ""),
-      ],
-    });
+    const skipStaleCookieCleanup = await shouldSkipStaleConversationCookieCleanup(
+      manualLogin && tabLease
+        ? () => hasOtherActiveBrowserTabLeases(userDataDir, tabLease!.id)
+        : null,
+    );
+    if (skipStaleCookieCleanup) {
+      logger(
+        "[cookies] Skipping stale ChatGPT conversation-cookie cleanup: another Oracle browser lease is active.",
+      );
+    } else {
+      await clearStaleChatGptConversationCookies(Network, Target, logger, {
+        preserveConversationIds: [
+          extractConversationIdFromUrl(config.resumeConversationUrl ?? ""),
+          extractConversationIdFromUrl(lastUrl ?? ""),
+        ],
+      });
+    }
 
     if (cookieSyncEnabled && !manualLogin && (appliedCookies ?? 0) === 0 && !config.inlineCookies) {
       // Learned: if the profile has no ChatGPT cookies, browser mode will just bounce to login.

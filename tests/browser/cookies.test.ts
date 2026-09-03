@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
   clearStaleChatGptConversationCookies,
+  shouldSkipStaleConversationCookieCleanup,
   syncCookies,
   ChromeCookieSyncError,
 } from "../../src/browser/cookies.js";
@@ -16,7 +17,48 @@ beforeEach(() => {
   logger.mockReset();
 });
 
+describe("shouldSkipStaleConversationCookieCleanup", () => {
+  test("runs cleanup when this run is the only live lease", async () => {
+    expect(await shouldSkipStaleConversationCookieCleanup(async () => false)).toBe(false);
+  });
+
+  test("skips cleanup while another Oracle lease is live in the profile", async () => {
+    expect(await shouldSkipStaleConversationCookieCleanup(async () => true)).toBe(true);
+  });
+
+  test("skips cleanup when the lease registry cannot be inspected", async () => {
+    expect(
+      await shouldSkipStaleConversationCookieCleanup(async () => {
+        throw new Error("registry locked");
+      }),
+    ).toBe(true);
+  });
+
+  test("runs cleanup when no lease context exists (non-manual-login runs)", async () => {
+    expect(await shouldSkipStaleConversationCookieCleanup(null)).toBe(false);
+  });
+});
+
 describe("clearStaleChatGptConversationCookies", () => {
+  test("does not treat a transient /c/WEB:<request-id> route as conversation 'WEB'", async () => {
+    const deleteCookies = vi.fn().mockResolvedValue(undefined);
+    const Network = {
+      getAllCookies: vi.fn().mockResolvedValue({
+        cookies: [{ name: "conv_key_WEB", domain: "chatgpt.com", path: "/" }],
+      }),
+      deleteCookies,
+    } as unknown as ChromeClient["Network"];
+    const Target = {
+      getTargets: vi.fn().mockResolvedValue({
+        targetInfos: [{ type: "page", url: "https://chatgpt.com/c/WEB:3222941-5afa-4478" }],
+      }),
+    } as unknown as ChromeClient["Target"];
+
+    await clearStaleChatGptConversationCookies(Network, Target, logger);
+
+    expect(deleteCookies).toHaveBeenCalledWith({ name: "conv_key_WEB", domain: "chatgpt.com", path: "/" });
+  });
+
   test("deletes only stale ChatGPT conversation keys", async () => {
     const deleteCookies = vi.fn().mockResolvedValue(undefined);
     const Network = {

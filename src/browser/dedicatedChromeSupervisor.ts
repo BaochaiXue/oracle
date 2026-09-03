@@ -475,9 +475,16 @@ export async function observeProcess(
     };
   }
   try {
+    // `-ww` disables ps's column limit. Without it, a COLUMNS variable in the
+    // caller's environment (agent harnesses set one) truncates the command line
+    // to 80 characters even when piped, which cuts off `--user-data-dir` and
+    // makes a healthy managed Chrome look foreign: the inspection then reports
+    // "ambiguous" and tells the operator to close a browser other agents are
+    // using. On Linux the kernel's cmdline is read directly as the authority.
     const { stdout } = await execFileAsync(
       "ps",
       [
+        "-ww",
         "-p",
         String(Math.trunc(pid)),
         "-o",
@@ -491,8 +498,12 @@ export async function observeProcess(
       ],
       { maxBuffer: 1024 * 1024 },
     );
-    const observation = parsePsObservation(String(stdout ?? ""));
-    if (!observation) return null;
+    const parsed = parsePsObservation(String(stdout ?? ""));
+    if (!parsed) return null;
+    const observation =
+      process.platform === "linux"
+        ? { ...parsed, command: (await readProcCmdline(pid)) ?? parsed.command }
+        : parsed;
     let executablePath = inferKnownExecutable(observation.command, knownExecutablePaths);
     if (process.platform === "linux") {
       executablePath = await realpath(`/proc/${pid}/exe`).catch(() => executablePath);
@@ -504,6 +515,16 @@ export async function observeProcess(
         ? await realpath(executablePath).catch(() => undefined)
         : undefined,
     };
+  } catch {
+    return null;
+  }
+}
+
+async function readProcCmdline(pid: number): Promise<string | null> {
+  try {
+    const raw = await readFile(`/proc/${Math.trunc(pid)}/cmdline`, "utf8");
+    const command = raw.split("\0").filter(Boolean).join(" ").trim();
+    return command.length > 0 ? command : null;
   } catch {
     return null;
   }
