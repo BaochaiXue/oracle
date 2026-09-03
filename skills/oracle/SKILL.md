@@ -304,9 +304,45 @@ oracle browser smoke     # two real cold starts; submits no prompt
 ```
 
 `setup` exists only for the human sign-in and returns after the whole Chrome for
-Testing instance is closed. Run `smoke` after first setup or a concrete
-browser-contract change. For a stuck profile use `oracle browser heal` before
-considering any process-level action.
+Testing instance is closed. `smoke` is a first-install validator, not a repair
+tool: it refuses to start while the dedicated Chrome is running and performs two
+cold starts that end with the endpoint shut down. Run it only after first setup
+or a concrete browser-contract change, and only when `oracle browser status`
+reports `active 0` and `recoverable 0`. Never kill Chrome to make `smoke` run.
+For a stuck profile use `oracle browser heal` before considering any
+process-level action; `heal` preserves active and recoverable work by design.
+
+## Sharing one Chrome across agents
+
+Several agents consult in parallel through one dedicated Chrome. Each run owns
+one tab under a lease (`maxConcurrentTabs`, default 3), the profile lock
+serializes only the launch decision and the composer mutation while a prompt is
+being submitted, and waiting for the answer holds no lock. Two runs started 49
+milliseconds apart have been observed to share one Chrome correctly: the first
+launched it, the second reused it, both prompts were submitted.
+
+What breaks this is not contention but process-level action against the shared
+browser. A `kill` of the Chrome PID, `oracle browser smoke`, or `oracle browser
+setup` while another agent's consultation is live closes that agent's tab
+mid-answer ("Chrome window closed before oracle finished") and forces every
+following run into a cold start, where ChatGPT is far more likely to answer
+with an HTTP error or an unready model picker. A string of `error` sessions
+after a kill is the kill's consequence, not a reason for another kill.
+
+Rules for every agent on a shared machine:
+
+- Before any browser maintenance, run `oracle browser status`. If `active` or
+  `recoverable` is not zero, the browser belongs to someone else's work: do
+  nothing to the process.
+- Never `kill`, `pkill`, or signal the Chrome process to recover from a failed
+  consultation. Recover the session instead.
+- Never run `smoke` or `setup` while any consultation is active or recoverable.
+- Pass `--browser-keep-browser` on every run, or set
+  `browser.browserLifetime: "persistent"` in `~/.oracle/config.json` so the
+  default `while-needed` lifetime cannot drain the browser after a failed run
+  and cold-start the next agent.
+- A run that failed before Send in a fresh Chrome is a cold-start symptom. Wait
+  for the browser to settle and retry once; do not repair the process.
 
 ## Long runs and host timeouts
 

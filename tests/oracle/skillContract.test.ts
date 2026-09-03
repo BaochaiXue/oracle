@@ -97,4 +97,14 @@ describe("canonical Oracle skill contract", () => {
     expect(skill).toContain("`.gitignore` filtering applies to every `--file` input, including a literal\n  path.");
     expect(skill).toContain("--dry-run summary --files-report");
   });
+
+  test("forbids process-level action against the shared Chrome while others consult", async () => {
+    const skill = await readSkill();
+
+    expect(skill).toContain("## Sharing one Chrome across agents");
+    expect(skill).toContain("Never `kill`, `pkill`, or signal the Chrome process");
+    expect(skill).toContain("Never run `smoke` or `setup` while any consultation is active or recoverable.");
+    expect(skill).toContain("`smoke` is a first-install validator, not a repair\ntool");
+    expect(skill).toContain('browser.browserLifetime: "persistent"');
+  });
 });
