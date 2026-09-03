@@ -51,7 +51,8 @@ describe("canonical Oracle skill contract", () => {
     expect(skill).not.toContain("`gpt-5-pro` selects ChatGPT's `Pro` target");
     // Detachment switches must be named so an agent does not disable them.
     expect(skill).toContain("ORACLE_NO_DETACH=1");
-    expect(skill).toContain("oracle session <id> --path");
+    expect(skill).toContain("Do not use `oracle session <id> --path`");
+    expect(skill).toContain("~/.oracle/sessions/<id>/");
   });
 
   test("supports only GPT-5.6 Sol Pro and never issues a GPT-5.5 alias", async () => {

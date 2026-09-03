@@ -325,8 +325,12 @@ When the foreground call is cut off:
 
 1. `oracle status --hours 72` to locate the session.
 2. `oracle session <id> --render` to read the stored answer. `--render` targets
-   a rich TTY; from a non-interactive shell use `oracle session <id> --path`
-   and read the printed `transcript.md` directly.
+   a rich TTY; from a non-interactive shell read the session directory
+   directly: `~/.oracle/sessions/<id>/` holds `meta.json` (status, error,
+   `browser.runtime`), the run log, and `transcript.md` once the answer is
+   captured. Do not use `oracle session <id> --path`: the root-level
+   `--path <paths...>` alias for `--file` shadows the subcommand flag and the
+   CLI rejects it with "argument missing".
 3. Create another attempt only after a durable receipt proves the prompt was
    never submitted. Never re-run a consultation merely to make it look complete.
 
