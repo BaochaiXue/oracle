@@ -84,7 +84,9 @@ control policy without launching Chrome.
 
 The model picker proves requested UI state, not server-side routing. Both direct
 CDP and OpenCLI record dispatch intent and the elapsed time to the first stable
-Pro answer. Tiny workloads can legitimately complete in seconds and are exempt
+Pro answer. Direct CDP persists its at-risk boundary before final revalidation,
+but starts response timing only immediately before the actual `mousePressed` or
+Enter `keyDown` event. Tiny workloads can legitimately complete in seconds and are exempt
 from duration admission. Substantive workloads captured below 60 seconds fail
 closed with only digest/timing evidence retained. Very large runs that pass the
 guard but still complete unexpectedly quickly add a warning for operator review.

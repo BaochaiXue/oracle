@@ -49,7 +49,9 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   input only when its complete file set independently matches the attempt, and
   inline-to-file fallback re-verifies and clears only the exact owned draft,
   including a digest-bound truncated draft; changed or mixed composer state
-  remains retained with `retrySafe:false`.
+  remains retained with `retrySafe:false`. The durable dispatch boundary is
+  still written before final revalidation, while Pro response timing now starts
+  only immediately before the actual `mousePressed` or Enter `keyDown` event.
 - Oracle v2 recovery and tab ownership: persist an exact browser-private
   conversation locator before an at-risk Send, reattach only that target or
   conversation after worker restart, release job tabs after every terminal

@@ -1245,6 +1245,7 @@ describe("promptComposer", () => {
         commitAtMs: 3_500,
       });
       const onPromptDispatched = vi.fn();
+      const onPromptDispatchEvent = vi.fn();
 
       const result = submitPrompt(
         {
@@ -1254,6 +1255,7 @@ describe("promptComposer", () => {
           baselineTurns: 0,
           isSubmissionOwner: scenario.isSubmissionOwner,
           onPromptDispatched,
+          onPromptDispatchEvent,
         },
         "hello",
         Object.assign(vi.fn(), { verbose: false }) as never,
@@ -1264,6 +1266,7 @@ describe("promptComposer", () => {
 
       expect(scenario.dispatchCount()).toBe(1);
       expect(onPromptDispatched).toHaveBeenCalledTimes(1);
+      expect(onPromptDispatchEvent).toHaveBeenCalledTimes(1);
       expect(
         scenario.input.dispatchMouseEvent.mock.calls.filter(
           ([event]) => event.type === "mousePressed",
@@ -1500,6 +1503,7 @@ describe("promptComposer", () => {
         method: "enter",
         commitAtMs: null,
       });
+      const onPromptDispatchEvent = vi.fn();
 
       const result = submitPrompt(
         {
@@ -1508,6 +1512,7 @@ describe("promptComposer", () => {
           page: scenario.page as never,
           baselineTurns: 0,
           isSubmissionOwner: scenario.isSubmissionOwner,
+          onPromptDispatchEvent,
         },
         "hello",
         Object.assign(vi.fn(), { verbose: false }) as never,
@@ -1540,6 +1545,7 @@ describe("promptComposer", () => {
       await assertion;
 
       expect(scenario.dispatchCount()).toBe(1);
+      expect(onPromptDispatchEvent).toHaveBeenCalledTimes(1);
       expect(
         scenario.input.dispatchKeyEvent.mock.calls.filter(([event]) => event.type === "keyDown"),
       ).toHaveLength(1);
@@ -1616,6 +1622,65 @@ describe("promptComposer", () => {
       2,
       expect.objectContaining({ type: "mousePressed", x: 50, y: 60 }),
     );
+  });
+
+  test("records the dispatch event after a transient post-intent attachment wait", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(0);
+      let sendProbeCount = 0;
+      const timeline: Array<{ event: string; at: number }> = [];
+      const evaluate = vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("const expected =")) {
+          return { result: { value: true } };
+        }
+        if (expression.includes("button.scrollIntoView")) {
+          sendProbeCount += 1;
+          return {
+            result: {
+              value:
+                sendProbeCount === 2 ? { status: "missing" } : { status: "point", x: 10, y: 20 },
+            },
+          };
+        }
+        throw new Error("unexpected attachment dispatch probe");
+      });
+      const input = {
+        dispatchMouseEvent: vi.fn(async ({ type }: { type: string }) => {
+          if (type === "mousePressed") timeline.push({ event: "mousePressed", at: Date.now() });
+        }),
+      };
+      const persistDispatchIntent = vi.fn(async () => {
+        timeline.push({ event: "intent", at: Date.now() });
+      });
+      const recordDispatchEvent = vi.fn(async () => {
+        timeline.push({ event: "dispatch-event", at: Date.now() });
+      });
+
+      const result = promptComposer.attemptSendButton(
+        { evaluate } as never,
+        input as never,
+        undefined,
+        ["oracle-owned.txt"],
+        1_000,
+        "hello",
+        recordDispatchEvent,
+        persistDispatchIntent,
+        vi.fn(),
+      );
+      await vi.advanceTimersByTimeAsync(500);
+
+      await expect(result).resolves.toBe(true);
+      expect(persistDispatchIntent).toHaveBeenCalledTimes(1);
+      expect(recordDispatchEvent).toHaveBeenCalledTimes(1);
+      expect(timeline).toEqual([
+        { event: "intent", at: 0 },
+        { event: "dispatch-event", at: 150 },
+        { event: "mousePressed", at: 150 },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("waits through a transient missing send button while an attachment finishes", async () => {

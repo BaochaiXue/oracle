@@ -449,6 +449,10 @@ dispatch timestamp
                        → timing alone still does not prove Pro
 ```
 
+For direct CDP, the at-risk dispatch boundary is persisted before final target,
+composer, attachment, and Send-point revalidation. Its response-timing marker is
+then durably written immediately before the actual `mousePressed` or Enter
+`keyDown`, so any post-boundary attachment wait is excluded from reasoning time.
 The first observed elapsed time is durable runtime metadata. An 83-token fixed
 reply captured in 19 seconds is valid; a 4,096-token engineering review captured
 in 19 seconds is not. Runs at or above 25,000 input tokens that pass the

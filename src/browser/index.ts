@@ -1177,9 +1177,12 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       if (strict) throw error;
     }
   };
-  const markPromptDispatched = async (): Promise<void> => {
+  const persistPromptDispatchIntent = async (): Promise<void> => {
     browserTurnState = "active";
     answerCaptured = false;
+    await emitRuntimeHint(true);
+  };
+  const markPromptDispatchEvent = async (): Promise<void> => {
     if (proTimingRequired) {
       proTimingRuntime = markProPromptDispatched(proTimingRuntime);
     }
@@ -1960,7 +1963,8 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         attachmentTimeoutMs: config.attachmentTimeoutMs ?? undefined,
         baselineTurns: baselineTurns ?? undefined,
         attachmentNames: attachmentExpectations,
-        onPromptDispatched: markPromptDispatched,
+        onPromptDispatched: persistPromptDispatchIntent,
+        onPromptDispatchEvent: markPromptDispatchEvent,
         onPromptCommitted: (committedTurns: number | null, committedUserTurnIndex: number | null) =>
           markPromptCommitted(committedTurns, committedUserTurnIndex, prompt),
         onPromptCommitPending: () =>
@@ -3421,7 +3425,10 @@ async function runRemoteBrowserMode(
       if (strict) throw error;
     }
   };
-  const markPromptDispatched = async (): Promise<void> => {
+  const persistPromptDispatchIntent = async (): Promise<void> => {
+    await emitRuntimeHint(true);
+  };
+  const markPromptDispatchEvent = async (): Promise<void> => {
     if (proTimingRequired) {
       proTimingRuntime = markProPromptDispatched(proTimingRuntime);
     }
@@ -3797,7 +3804,8 @@ async function runRemoteBrowserMode(
         attachmentTimeoutMs: config.attachmentTimeoutMs ?? undefined,
         baselineTurns: baselineTurns ?? undefined,
         attachmentNames: attachmentExpectations,
-        onPromptDispatched: markPromptDispatched,
+        onPromptDispatched: persistPromptDispatchIntent,
+        onPromptDispatchEvent: markPromptDispatchEvent,
         onPromptCommitted: (committedTurns: number | null, committedUserTurnIndex: number | null) =>
           markPromptCommitted(committedTurns, committedUserTurnIndex, prompt),
         onPromptCommitPending: () =>

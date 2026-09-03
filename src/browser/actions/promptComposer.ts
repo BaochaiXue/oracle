@@ -105,7 +105,10 @@ interface SubmitPromptDependencies {
   baselineTurns?: number | null;
   inputTimeoutMs?: number | null;
   attachmentTimeoutMs?: number | null;
+  /** Persist the at-risk dispatch boundary before final target/input revalidation. */
   onPromptDispatched?: () => Promise<void> | void;
+  /** Record the dispatch-event timestamp immediately before mousePressed/keyDown. */
+  onPromptDispatchEvent?: () => Promise<void> | void;
   onPromptCommitted?: (
     committedTurns: number | null,
     committedUserTurnIndex: number | null,
@@ -503,11 +506,12 @@ async function submitPromptInternal(
       diagnostic,
     });
   };
-  const markPotentiallySubmittingEvent = (
+  const markPotentiallySubmittingEvent = async (
     method: SubmissionDispatchMethod,
     event: PotentiallySubmittingEvent,
-  ): void => {
+  ): Promise<void> => {
     if (diagnostic.potentiallySubmittingEventEmitted) return;
+    await deps.onPromptDispatchEvent?.();
     diagnostic.initialDispatchMethod = method;
     diagnostic.potentiallySubmittingEventEmitted = true;
     diagnostic.potentiallySubmittingEvent = event;
@@ -1666,6 +1670,7 @@ async function attemptSendButton(
   };
 
   const deadline = Date.now() + timeoutMs;
+  let dispatchIntentPrepared = false;
   while (Date.now() < deadline) {
     let value = await readSendButtonProbe();
     let status = value.status;
@@ -1675,7 +1680,10 @@ async function attemptSendButton(
     }
     if (status === "point" && typeof value.x === "number" && typeof value.y === "number") {
       if (persistDispatchIntent || revalidateAfterDispatchIntent) {
-        await persistDispatchIntent?.();
+        if (!dispatchIntentPrepared) {
+          await persistDispatchIntent?.();
+          dispatchIntentPrepared = true;
+        }
         await revalidateAfterDispatchIntent?.();
         value = await readSendButtonProbe();
         status = value.status;
