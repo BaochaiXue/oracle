@@ -93,7 +93,7 @@ describe("canonical Oracle skill contract", () => {
     // The three constraints that silently break media attachments.
     expect(skill).toContain("The 1 MB default file cap applies to uploads too.");
     expect(skill).toContain("at most 10 attachments");
-    expect(skill).toMatch(/`\.gitignore` filtering applies to every `--file` input, including a literal\npath\./);
+    expect(skill).toContain("`.gitignore` filtering applies to every `--file` input, including a literal\n  path.");
     expect(skill).toContain("--dry-run summary --files-report");
   });
 });
