@@ -199,4 +199,6 @@ an explicit authority or safety justification.
   and no unapproved live Send occurs.
 - T3: separately authorize each bounded live case.
 - G3: separately accept the default switch.
-- G4: separately accept physical legacy deletion after G3 evidence.
+- G4: separately accept physical legacy deletion only after G3 evidence and
+  every supported platform has an accepted replacement cutover or explicit
+  support-retirement decision.
