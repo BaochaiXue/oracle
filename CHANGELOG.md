@@ -77,11 +77,15 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   CDP target later navigates to another conversation. The original submitted
   conversation remains the recovery authority; Oracle never accepts or copies
   the other tab state as this run's answer.
-- Browser picker: select GPT-5.6 Pro from ChatGPT's current five-step Power
-  slider even when no static `Pro` option exists in the menu. Oracle reads the
-  slider's ARIA position, sends bounded ArrowRight input to its keyboard-owning
-  row, and requires both the maximum position and visible `Pro` label before
-  Send; an unchanged or unverified slider still fails closed.
+- Browser picker: select explicit Pro effort from ChatGPT's current five-step
+  Power slider even when no static `Pro` option exists in the menu. Slider use
+  now follows the visible, interactive ARIA control shape instead of one model
+  family; model identity remains independently verified. Oracle re-reads
+  min/max/current after bounded ArrowRight input and requires the maximum
+  position to agree with an exact `Pro` semantic label or effort pill across
+  Unicode punctuation and whitespace. Position-only, `Professional`, malformed,
+  and numerically contradictory states fail closed with bounded structural
+  diagnostics.
 - Dedicated Chrome lifecycle: supervise current and older installed Chrome for
   Testing generations through one startup/final-release/`browser heal` path.
   Healthy old generations finish current work and roll over when idle; stale
@@ -115,12 +119,53 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   quarantine an active claim and acquire the same batch simultaneously. Truly
   abandoned empty lock directories remain recoverable after a bounded
   publication grace.
-- Direct CDP submission recovery: after a nominal Send leaves the exact prompt
-  staged with no new turn or streaming evidence, revalidate the original target
-  and page state atomically before issuing at most one page-side Send click. Only
-  a finite pre-dispatch turn baseline can authorize recovery, and a per-document
-  token blocks same-target reloads or replacements. Delayed first commits cancel
-  recovery, and this path never falls back to Enter.
+- Direct CDP submission: activate and revalidate the exact Oracle-owned target
+  before measuring a trusted Send point, then verify coordinate-click and Enter
+  dispatches through one exact user-turn contract. Enter is an alternate only
+  while trusted-click has emitted no potentially submitting input event. Once
+  `mousePressed` or Enter `keyDown` has been emitted, Oracle never changes
+  methods or dispatches again automatically. An unverifiable exact commit is
+  indeterminate/recoverable with `retrySafe:false`; bounded diagnostics retain
+  the exact tab for inspection without recording prompt text or allowing a
+  later run to append to an unowned draft.
+- Direct CDP draft recovery: treat a first non-empty composer observation as a
+  bounded, read-only profile/SPA settling state before failing closed. When
+  attachment Send readiness fails before any submitting event, clear only the
+  current attempt's attachments and exact prompt after re-verifying target
+  ownership and prompt identity; one final DOM snapshot must prove both prompt
+  text and attachments empty before recording `retrySafe:true`. Any incomplete
+  proof preserves the exact tab with `retrySafe:false` and leaves unknown
+  content untouched. Every submission now proves the attachment set empty before
+  the attempt begins any upload, typing, or dispatch, including text-only runs. Inline-to-file
+  fallback revalidates and removes only the first attempt's exact owned
+  attachments before uploading the fallback set; unverifiable cleanup retains
+  the exact tab. A large prompt truncated before dispatch without a usable file
+  fallback is likewise retained for exact-tab inspection.
+- Direct CDP recovery receipts: require strict durable dispatch-boundary
+  persistence before `mousePressed` or Enter `keyDown`, together with the
+  current prompt digest and pre-dispatch turn baseline; a missing baseline now
+  fails before any submitting event. Ambiguous
+  dedicated-profile submissions persist as `incomplete-capture`; exact-tab
+  reattach must reconcile that digest to one unique post-baseline user turn
+  before capture, including delayed commits, so it cannot harvest a prior
+  answer. Retained pre-dispatch or manual targets persist as
+  `manual-intervention` and reattach for inspection only, without automatic
+  capture or submission. Copied-profile and locally launched headless
+  ambiguous, retained-draft, and manual outcomes remain explicitly
+  non-reattachable, while remote Chrome ignores the local headless launch flag
+  and retains its exact-target recovery. Ambiguous commit recovery now requires
+  that stored exact target ID and never falls back to another tab or browser.
+  Exact-owned attachment cleanup now revalidates both the current prompt and
+  the complete attachment set before removing anything, clicks only the
+  controls from that exact snapshot, and proves the current attachment set is
+  empty before clearing the draft. Undispatched failures with no retained draft
+  are explicitly retry-safe and no longer advertise a nonexistent reattach path.
+  Attachment-bearing runs now require empty composer text and an exact empty
+  attachment set before upload, without sweeping pre-existing attachment UI.
+  After durable dispatch-intent persistence, Oracle revalidates target
+  ownership, prompt identity, the exact attachment set, and the current trusted
+  Send point before emitting input. Ambiguous recovery accepts the expected
+  prompt only when it is the sole new post-baseline user turn.
 - Direct CDP lifecycle: separate persistent profile identity from browser
   process lifetime. Dedicated Chrome now defaults to `while-needed`, releases
   tab leases before final drain, rechecks under the profile lock, and closes

@@ -103,6 +103,31 @@ oracle --engine browser \
 
 See [Browser Mode](browser-mode.md) for the full set.
 
+If direct CDP emits one potentially submitting event but cannot verify the
+exact committed user turn, the session is stored as `error` with
+`incompleteReason: "incomplete-capture"`, an exact recoverable browser target,
+and `retrySafe:false`. Use `oracle session <id> --render` to reattach that target;
+do not start a replacement attempt while commit state remains indeterminate.
+If the stored exact target ID no longer exists, recovery fails closed rather
+than opening another tab or browser for the same conversation.
+The receipt persists the current prompt digest and pre-dispatch turn baseline
+before the event; Oracle emits no submitting event when it cannot establish the
+baseline. Reattach must match that digest to exactly one user turn at
+or after the baseline before it can capture the corresponding answer, including
+when the commit became visible only after the original run stopped.
+
+If an exact target is retained before dispatch because a draft is present, or
+the target otherwise requires manual intervention, the session instead records
+`incompleteReason: "manual-intervention"`. `oracle session <id> --render`
+reattaches that exact tab for inspection only: it never captures an earlier
+answer and never submits from the retained state.
+
+This recovery contract does not apply to `--copy-profile`, whose temporary
+profile is always removed, or locally launched `--browser-headless`, whose
+browser process is not retained. Ambiguous, retained-draft, and manual outcomes
+in either mode are explicitly non-reattachable. Remote Chrome ignores the local
+headless launch flag and keeps its exact-target recovery eligibility.
+
 For a declared parallel batch, resume the parent instead of restarting a child:
 
 ```bash

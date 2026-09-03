@@ -534,12 +534,36 @@ export async function performSessionRun({
       userError?.category === "browser-automation" &&
       (userError.details as { code?: string } | undefined)?.code === "chatgpt-submission-gate";
     const browserCanReattach = !browserConfig?.copyProfileSource;
+    const errorBrowserRuntime = (
+      userError?.details as { runtime?: BrowserRuntimeMetadata } | undefined
+    )?.runtime;
+    const errorCode = (userError?.details as { code?: string } | undefined)?.code;
+    const recoverableRetainedTarget =
+      userError?.category === "browser-automation" &&
+      errorBrowserRuntime?.browserDisposition === "recoverable" &&
+      (errorBrowserRuntime.recoveryKind === "draft-retained" ||
+        errorBrowserRuntime.recoveryKind === "manual-intervention" ||
+        (errorBrowserRuntime.recoveryKind === "awaiting-response" &&
+          [
+            "commit-ambiguous-composer-cleared",
+            "commit-ambiguous-multiple-user-turns",
+            "commit-indeterminate-after-dispatch",
+          ].includes(errorCode ?? "")));
     let reattachGuidanceLogged = false;
     const logBrowserReattachGuidance = (
       runtime: BrowserRuntimeMetadata | null | undefined,
     ): void => {
       if (reattachGuidanceLogged || mode !== "browser") return;
-      if (!hasRecoverableChatGptConversation(runtime) && runtime?.promptSubmitted !== true) {
+      const hasExactRecoverableTarget = Boolean(
+        runtime?.browserDisposition === "recoverable" &&
+        runtime.chromeTargetId &&
+        (runtime.chromePort || runtime.chromeBrowserWSEndpoint || runtime.chromeProfileRoot),
+      );
+      if (
+        !hasRecoverableChatGptConversation(runtime) &&
+        runtime?.promptSubmitted !== true &&
+        !hasExactRecoverableTarget
+      ) {
         return;
       }
       reattachGuidanceLogged = true;
@@ -646,6 +670,48 @@ export async function performSessionRun({
       if (success) {
         return;
       }
+      return;
+    }
+    if (recoverableRetainedTarget && mode === "browser" && browserCanReattach) {
+      const manualRecovery = errorBrowserRuntime?.recoveryKind !== "awaiting-response";
+      log(
+        dim(
+          manualRecovery
+            ? "Browser target needs manual inspection; marking session incomplete for exact-tab reattach."
+            : "Prompt commit is indeterminate; marking capture incomplete for exact-tab reattach.",
+        ),
+      );
+      const incompleteResponse = {
+        status: "incomplete",
+        incompleteReason: manualRecovery ? "manual-intervention" : "incomplete-capture",
+      } as const;
+      const retainedTargetError = {
+        category: userError.category,
+        message: userError.message,
+        details: userError.details,
+      };
+      if (modelForStatus) {
+        await sessionStore.updateModelRun(sessionMeta.id, modelForStatus, {
+          status: "error",
+          completedAt: new Date().toISOString(),
+          response: incompleteResponse,
+          error: retainedTargetError,
+        });
+      }
+      await sessionStore.updateSession(sessionMeta.id, {
+        status: "error",
+        completedAt: new Date().toISOString(),
+        errorMessage: message,
+        mode,
+        browser: {
+          ...currentBrowser,
+          config: browserConfig,
+          runtime: errorBrowserRuntime,
+        },
+        response: incompleteResponse,
+        error: retainedTargetError,
+      });
+      logBrowserReattachGuidance(errorBrowserRuntime);
       return;
     }
     if (assistantTimeout && mode === "browser" && browserCanReattach) {

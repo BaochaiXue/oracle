@@ -34,9 +34,10 @@ import {
   installJavaScriptDialogAutoDismissal,
   ensureModelSelection,
   clearPromptComposer,
+  clearOwnedPromptAndAttachmentsForFallback,
+  assertPromptComposerEmptyBeforeAttachmentMutation,
   waitForAssistantResponse,
   captureAssistantMarkdown,
-  clearComposerAttachments,
   uploadAttachmentFile,
   waitForAttachmentCompletion,
   waitForUserTurnAttachments,
@@ -155,6 +156,9 @@ export function redactBrowserConfigForDebugLogForTest(
 
 function pickProTimingRuntime(runtime: BrowserRuntimeMetadata): BrowserRuntimeMetadata {
   return {
+    browserPromptSha256: runtime.browserPromptSha256,
+    browserPromptBaselineTurns: runtime.browserPromptBaselineTurns,
+    browserPromptCommittedTurnIndex: runtime.browserPromptCommittedTurnIndex,
     proDispatchAt: runtime.proDispatchAt,
     proResponseElapsedMs: runtime.proResponseElapsedMs,
     proInputTokens: runtime.proInputTokens,
@@ -189,13 +193,58 @@ function isRetainedDraftError(error: unknown): error is BrowserAutomationError {
     | { code?: string; submissionCommitted?: boolean; draftRetained?: boolean }
     | undefined;
   return (
-    details?.code === "prompt-commit-timeout" &&
-    details.submissionCommitted === false &&
+    [
+      "prompt-commit-timeout",
+      "trusted-click-noop",
+      "enter-noop",
+      "send-control-unavailable",
+      "composer-mutated-before-send",
+      "ownership-changed-before-send",
+      "ownership-changed-before-retry",
+      "document-changed-before-retry",
+      "target-activation-failed",
+      "commit-unverified-draft-retained",
+      "attachment-send-not-ready",
+      "prompt-too-large",
+      "fallback-cleanup-unverified",
+    ].includes(details?.code ?? "") &&
+    details?.submissionCommitted === false &&
     details.draftRetained === true
   );
 }
 
-type PreservedBrowserErrorKind = "cloudflare-challenge" | "reattachable-capture" | "draft-retained";
+function isPreexistingComposerError(error: unknown): error is BrowserAutomationError {
+  if (!(error instanceof BrowserAutomationError)) return false;
+  const details = error.details as
+    | { code?: string; submissionCommitted?: boolean; draftRetained?: boolean }
+    | undefined;
+  return (
+    ["preexisting-composer-content", "preexisting-composer-attachments"].includes(
+      details?.code ?? "",
+    ) &&
+    details?.submissionCommitted === false &&
+    details?.draftRetained === true
+  );
+}
+
+function isAmbiguousCommitError(error: unknown): error is BrowserAutomationError {
+  if (!(error instanceof BrowserAutomationError)) return false;
+  const details = error.details as { code?: string; submissionCommitted?: boolean } | undefined;
+  return (
+    [
+      "commit-ambiguous-composer-cleared",
+      "commit-ambiguous-multiple-user-turns",
+      "commit-indeterminate-after-dispatch",
+    ].includes(details?.code ?? "") && details?.submissionCommitted === false
+  );
+}
+
+type PreservedBrowserErrorKind =
+  | "cloudflare-challenge"
+  | "reattachable-capture"
+  | "draft-retained"
+  | "preexisting-composer"
+  | "commit-ambiguous";
 
 function recoveryExpiryFromNow(kind: NonNullable<BrowserRuntimeMetadata["recoveryKind"]>): string {
   const ttlMs =
@@ -214,8 +263,16 @@ function classifyPreservedBrowserError(
   if (headless) return null;
   if (isCloudflareChallengeError(error)) return "cloudflare-challenge";
   if (isReattachableCaptureError(error)) return "reattachable-capture";
+  if (isAmbiguousCommitError(error)) return "commit-ambiguous";
+  if (isPreexistingComposerError(error)) return "preexisting-composer";
   if (isRetainedDraftError(error)) return "draft-retained";
   return null;
+}
+
+function classifyRemotePreservedBrowserError(error: unknown): PreservedBrowserErrorKind | null {
+  // Remote Chrome owns its browser lifetime; local launcher-only flags such as
+  // --browser-headless are ignored and must not suppress exact-target recovery.
+  return classifyPreservedBrowserError(error, false);
 }
 
 function shouldPreserveBrowserOnError(error: unknown, headless: boolean): boolean {
@@ -262,6 +319,52 @@ function shouldKeepLocalBrowserOpen(options: {
   return options.effectiveKeepBrowser || options.preserveBrowserOnError;
 }
 
+function normalizeUnretainedPreservedError(
+  error: Error,
+  kind: PreservedBrowserErrorKind,
+  mode: "copy-profile" | "headless",
+): BrowserAutomationError {
+  const details = error instanceof BrowserAutomationError ? error.details : undefined;
+  const reason =
+    mode === "copy-profile"
+      ? "This --copy-profile run cannot retain its temporary tab or profile"
+      : "This --browser-headless run cannot retain its browser process or tab";
+  const message =
+    kind === "commit-ambiguous"
+      ? `Oracle emitted a potentially submitting event but could not verify the exact committed turn. ${reason}, so automatic redispatch remains disabled and the result is not reattachable.`
+      : `${reason} after the browser failure; no automatic redispatch will be attempted.`;
+  return new BrowserAutomationError(
+    message,
+    {
+      ...details,
+      runtime: undefined,
+      recoverable: false,
+      reattachable: false,
+      ...(mode === "copy-profile" ? { copiedProfileRetained: false } : {}),
+      retrySafe: details?.retrySafe === true,
+    },
+    error,
+  );
+}
+
+function requirePreDispatchTurnBaseline(value: number | null): number {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+    return value;
+  }
+  throw new BrowserAutomationError(
+    "Oracle could not establish the conversation turn baseline required before dispatch, so no submitting input event was emitted.",
+    {
+      stage: "submit-prompt",
+      code: "conversation-turn-baseline-unavailable",
+      submissionCommitted: false,
+      dispatchAttempted: false,
+      potentiallySubmittingEventEmitted: false,
+      retrySafe: true,
+      recoverable: false,
+    },
+  );
+}
+
 export function shouldPreserveBrowserOnErrorForTest(error: unknown, headless: boolean): boolean {
   return shouldPreserveBrowserOnError(error, headless);
 }
@@ -271,6 +374,30 @@ export function classifyPreservedBrowserErrorForTest(
   headless: boolean,
 ): PreservedBrowserErrorKind | null {
   return classifyPreservedBrowserError(error, headless);
+}
+
+export function classifyRemotePreservedBrowserErrorForTest(
+  error: unknown,
+): PreservedBrowserErrorKind | null {
+  return classifyRemotePreservedBrowserError(error);
+}
+
+export function normalizeCopiedProfilePreservedErrorForTest(
+  error: Error,
+  kind: PreservedBrowserErrorKind,
+): BrowserAutomationError {
+  return normalizeUnretainedPreservedError(error, kind, "copy-profile");
+}
+
+export function normalizeHeadlessPreservedErrorForTest(
+  error: Error,
+  kind: PreservedBrowserErrorKind,
+): BrowserAutomationError {
+  return normalizeUnretainedPreservedError(error, kind, "headless");
+}
+
+export function requirePreDispatchTurnBaselineForTest(value: number | null): number {
+  return requirePreDispatchTurnBaseline(value);
 }
 
 // NOTE: Previously, shouldSkipThinkingTimeSelection() would skip the thinking
@@ -496,13 +623,20 @@ async function createChatGptUiWarningError(params: {
 
   params.logger(`[browser] ChatGPT UI warning detected (${uiWarning.type}): ${uiWarning.message}`);
   const submissionBlocked = params.submissionCommitted === false;
+  const dispatchIndeterminate = submissionBlocked && params.dispatchAttempted === true;
   return new BrowserAutomationError(
-    submissionBlocked
-      ? `ChatGPT blocked the request before submission with a ${formatChatGptUiWarningType(uiWarning.type)} warning. No prompt was committed; retrying after the page gate clears is safe. Page warning: ${uiWarning.message}`
-      : `ChatGPT displayed a ${formatChatGptUiWarningType(uiWarning.type)} warning while waiting for ${params.waitTarget}: ${uiWarning.message}`,
+    dispatchIndeterminate
+      ? `ChatGPT displayed a ${formatChatGptUiWarningType(uiWarning.type)} warning after Oracle emitted a potentially submitting input event. Exact commit is indeterminate; preserve this tab and do not resend. Page warning: ${uiWarning.message}`
+      : submissionBlocked
+        ? `ChatGPT blocked the request before submission with a ${formatChatGptUiWarningType(uiWarning.type)} warning. No prompt was committed; retrying after the page gate clears is safe. Page warning: ${uiWarning.message}`
+        : `ChatGPT displayed a ${formatChatGptUiWarningType(uiWarning.type)} warning while waiting for ${params.waitTarget}: ${uiWarning.message}`,
     {
       stage: params.stage,
-      code: submissionBlocked ? "chatgpt-submission-gate" : "chatgpt-ui-warning",
+      code: dispatchIndeterminate
+        ? "commit-indeterminate-after-dispatch"
+        : submissionBlocked
+          ? "chatgpt-submission-gate"
+          : "chatgpt-ui-warning",
       uiWarning,
       runtime: params.runtime,
       diagnostics: params.diagnostics,
@@ -510,8 +644,18 @@ async function createChatGptUiWarningError(params: {
         ? {
             submissionCommitted: false,
             dispatchAttempted: params.dispatchAttempted === true,
-            retrySafe: true,
-            retryGuidance: "wait-for-page-gate-to-clear",
+            ...(dispatchIndeterminate
+              ? {
+                  outcome: "indeterminate",
+                  commitVerification: "indeterminate",
+                  retrySafe: false,
+                  recoverable: true,
+                  retryGuidance: "reattach-exact-tab-do-not-resend",
+                }
+              : {
+                  retrySafe: true,
+                  retryGuidance: "wait-for-page-gate-to-clear",
+                }),
           }
         : {}),
     },
@@ -801,7 +945,7 @@ async function runSubmissionWithRecovery({
   fallbackSubmission?: BrowserSubmissionFallback;
   submit: (prompt: string, attachments: BrowserAttachment[]) => Promise<BrowserSubmissionResult>;
   reloadPromptComposer: () => Promise<void>;
-  prepareFallbackSubmission: () => Promise<void>;
+  prepareFallbackSubmission: (currentAttachments: BrowserAttachment[]) => Promise<void>;
   logger: BrowserLogger;
 }): Promise<BrowserSubmissionResult> {
   let currentPrompt = prompt;
@@ -824,7 +968,7 @@ async function runSubmissionWithRecovery({
       if (fallbackSubmission && isPromptTooLarge && !usedFallbackSubmission) {
         usedFallbackSubmission = true;
         logger("[browser] Inline prompt too large; retrying with file uploads.");
-        await prepareFallbackSubmission();
+        await prepareFallbackSubmission(currentAttachments);
         currentPrompt = fallbackSubmission.prompt;
         currentAttachments = fallbackSubmission.attachments;
         continue;
@@ -841,7 +985,7 @@ export async function runSubmissionWithRecoveryForTest(args: {
   fallbackSubmission?: BrowserSubmissionFallback;
   submit: (prompt: string, attachments: BrowserAttachment[]) => Promise<BrowserSubmissionResult>;
   reloadPromptComposer: () => Promise<void>;
-  prepareFallbackSubmission: () => Promise<void>;
+  prepareFallbackSubmission: (currentAttachments: BrowserAttachment[]) => Promise<void>;
   logger: BrowserLogger;
 }): Promise<BrowserSubmissionResult> {
   return runSubmissionWithRecovery(args);
@@ -1031,13 +1175,22 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     if (proTimingRequired) {
       proTimingRuntime = markProPromptDispatched(proTimingRuntime);
     }
-    await emitRuntimeHint();
+    await emitRuntimeHint(true);
   };
   const markPromptCommitted = async (
     _committedTurns: number | null,
     committedUserTurnIndex: number | null,
     committedPrompt: string,
   ): Promise<void> => {
+    proTimingRuntime = {
+      ...proTimingRuntime,
+      browserPromptCommittedTurnIndex:
+        typeof committedUserTurnIndex === "number" &&
+        Number.isSafeInteger(committedUserTurnIndex) &&
+        committedUserTurnIndex >= 0
+          ? committedUserTurnIndex
+          : undefined,
+    };
     if (proTimingRequired) {
       proTimingRuntime = markProPromptCommitted(proTimingRuntime, committedUserTurnIndex);
     }
@@ -1662,17 +1815,27 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     if (thinkingTime && !deepResearch) {
       const thinkingTargetModel = modelStrategy === "select" ? config.desiredModel : null;
       await raceWithDisconnect(
-        withRetries(() => ensureThinkingTime(Runtime, thinkingTime, logger, thinkingTargetModel), {
-          retries: 2,
-          delayMs: 300,
-          onRetry: (attempt, error) => {
-            if (options.verbose) {
-              logger(
-                `[retry] Thinking time (${thinkingTime}) attempt ${attempt + 1}: ${error instanceof Error ? error.message : error}`,
-              );
-            }
+        withRetries(
+          () =>
+            ensureThinkingTime(
+              Runtime,
+              thinkingTime,
+              logger,
+              thinkingTargetModel,
+              modelSelectionEvidence,
+            ),
+          {
+            retries: 2,
+            delayMs: 300,
+            onRetry: (attempt, error) => {
+              if (options.verbose) {
+                logger(
+                  `[retry] Thinking time (${thinkingTime}) attempt ${attempt + 1}: ${error instanceof Error ? error.message : error}`,
+                );
+              }
+            },
           },
-        }),
+        ),
       );
     }
     const profileLockTimeoutMs = manualLogin ? (config.profileLockTimeoutMs ?? 0) : 0;
@@ -1691,6 +1854,12 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       await handle.release().catch(() => undefined);
     };
     const submitOnce = async (prompt: string, submissionAttachments: BrowserAttachment[]) => {
+      proTimingRuntime = {
+        ...proTimingRuntime,
+        browserPromptSha256: hashProPromptIdentity(prompt),
+        browserPromptBaselineTurns: undefined,
+        browserPromptCommittedTurnIndex: undefined,
+      };
       if (proTimingRequired) {
         proTimingRuntime = beginProResponseTimingTurn(proTimingRuntime, {
           inputTokens: estimateTokenCount(prompt),
@@ -1707,13 +1876,12 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         generatedBundle: a.generatedBundle === true,
       }));
       let inputOnlyAttachments = false;
-      await raceWithDisconnect(clearPromptComposer(Runtime, logger));
       await raceWithDisconnect(ensurePromptReady(Runtime, config.inputTimeoutMs, logger));
+      await raceWithDisconnect(assertPromptComposerEmptyBeforeAttachmentMutation(Runtime));
       if (submissionAttachments.length > 0) {
         if (!DOM) {
           throw new Error("Chrome DOM domain unavailable while uploading attachments.");
         }
-        await clearComposerAttachments(Runtime, 5_000, logger);
         for (
           let attachmentIndex = 0;
           attachmentIndex < submissionAttachments.length;
@@ -1760,7 +1928,13 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           `Prompt textarea ready (after Deep Research activation, ${prompt.length.toLocaleString()} chars queued)`,
         );
       }
-      let baselineTurns = await readConversationTurnCount(Runtime, logger);
+      let baselineTurns = requirePreDispatchTurnBaseline(
+        await readConversationTurnCount(Runtime, logger),
+      );
+      proTimingRuntime = {
+        ...proTimingRuntime,
+        browserPromptBaselineTurns: baselineTurns,
+      };
       const submissionTargetId = lastTargetId;
       const isSubmissionOwner = async (): Promise<boolean> => {
         if (!submissionTargetId || lastTargetId !== submissionTargetId) return false;
@@ -1771,6 +1945,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       const providerState: Record<string, unknown> = {
         runtime: Runtime,
         input: Input,
+        page: Page,
         logger,
         timeoutMs: config.timeoutMs,
         inputTimeoutMs: config.inputTimeoutMs ?? undefined,
@@ -1892,8 +2067,18 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         submit: (submissionPrompt, submissionAttachments) =>
           raceWithDisconnect(submitOnce(submissionPrompt, submissionAttachments)),
         reloadPromptComposer,
-        prepareFallbackSubmission: async () => {
-          await raceWithDisconnect(clearPromptComposer(Runtime, logger));
+        prepareFallbackSubmission: async (currentAttachments) => {
+          const currentAttachmentExpectations = currentAttachments.map((attachment) => ({
+            name: path.basename(attachment.path),
+            generatedBundle: attachment.generatedBundle === true,
+          }));
+          await raceWithDisconnect(
+            clearOwnedPromptAndAttachmentsForFallback(
+              Runtime,
+              logger,
+              currentAttachmentExpectations,
+            ),
+          );
           await raceWithDisconnect(ensurePromptReady(Runtime, config.inputTimeoutMs, logger));
         },
         logger,
@@ -2381,7 +2566,6 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       await requireConversationIdentity(`follow-up-${index + 1}-owner`);
       await acquireProfileLockIfNeeded();
       try {
-        await raceWithDisconnect(clearPromptComposer(Runtime, logger));
         await raceWithDisconnect(ensurePromptReady(Runtime, config.inputTimeoutMs, logger));
         const submission = await runSubmissionWithRecovery({
           prompt: followUpPrompt,
@@ -2534,7 +2718,10 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     const normalizedError = error instanceof Error ? error : new Error(String(error));
     const socketClosed = connectionClosedUnexpectedly || isWebSocketClosureError(normalizedError);
     connectionClosedUnexpectedly = connectionClosedUnexpectedly || socketClosed;
-    const preservedErrorKind = classifyPreservedBrowserError(normalizedError, config.headless);
+    const preservedErrorKind = classifyPreservedBrowserError(normalizedError, false);
+    if (config.headless && preservedErrorKind) {
+      throw normalizeUnretainedPreservedError(normalizedError, preservedErrorKind, "headless");
+    }
     if (preservedErrorKind === "cloudflare-challenge") {
       if (usingCopiedProfile) {
         logger(
@@ -2619,16 +2806,35 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       logger("Assistant capture incomplete; leaving browser open for reattach.");
       throw normalizedError;
     }
-    if (preservedErrorKind === "draft-retained") {
+    if (
+      preservedErrorKind === "draft-retained" ||
+      preservedErrorKind === "preexisting-composer" ||
+      preservedErrorKind === "commit-ambiguous"
+    ) {
       if (usingCopiedProfile) {
-        throw normalizedError;
+        throw normalizeUnretainedPreservedError(
+          normalizedError,
+          preservedErrorKind,
+          "copy-profile",
+        );
       }
       preserveBrowserOnError = true;
       browserDisposition = "recoverable";
-      recoveryKind = "draft-retained";
-      recoveryExpiresAt = recoveryExpiryFromNow("draft-retained");
+      recoveryKind =
+        preservedErrorKind === "preexisting-composer"
+          ? "manual-intervention"
+          : preservedErrorKind === "commit-ambiguous"
+            ? "awaiting-response"
+            : "draft-retained";
+      recoveryExpiresAt = recoveryExpiryFromNow(recoveryKind);
       await emitRuntimeHint();
-      logger("Prompt draft remains in the composer; leaving this exact tab open for recovery.");
+      logger(
+        preservedErrorKind === "preexisting-composer"
+          ? "Unowned composer content remains untouched; leaving this exact tab open for manual inspection."
+          : preservedErrorKind === "commit-ambiguous"
+            ? "Prompt commit remains ambiguous; leaving this exact tab open for reattach instead of dispatching again."
+            : "Prompt draft remains in the composer; leaving this exact tab open for recovery.",
+      );
       const details =
         normalizedError instanceof BrowserAutomationError ? normalizedError.details : undefined;
       throw new BrowserAutomationError(
@@ -3170,7 +3376,7 @@ async function runRemoteBrowserMode(
     conversationUrlMonitor?.boundConversationId() ??
     extractConversationIdFromUrl(authoritativeConversationUrl() ?? "");
   const runtimeHintCb = options.runtimeHintCb;
-  const emitRuntimeHint = async () => {
+  const emitRuntimeHint = async (strict = false) => {
     if (!runtimeHintCb) return;
     try {
       await runtimeHintCb(
@@ -3198,19 +3404,29 @@ async function runRemoteBrowserMode(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger(`Failed to persist runtime hint: ${message}`);
+      if (strict) throw error;
     }
   };
   const markPromptDispatched = async (): Promise<void> => {
     if (proTimingRequired) {
       proTimingRuntime = markProPromptDispatched(proTimingRuntime);
     }
-    await emitRuntimeHint();
+    await emitRuntimeHint(true);
   };
   const markPromptCommitted = async (
     _committedTurns: number | null,
     committedUserTurnIndex: number | null,
     committedPrompt: string,
   ): Promise<void> => {
+    proTimingRuntime = {
+      ...proTimingRuntime,
+      browserPromptCommittedTurnIndex:
+        typeof committedUserTurnIndex === "number" &&
+        Number.isSafeInteger(committedUserTurnIndex) &&
+        committedUserTurnIndex >= 0
+          ? committedUserTurnIndex
+          : undefined,
+    };
     if (proTimingRequired) {
       proTimingRuntime = markProPromptCommitted(proTimingRuntime, committedUserTurnIndex);
     }
@@ -3463,7 +3679,14 @@ async function runRemoteBrowserMode(
     if (thinkingTime && !deepResearch) {
       const thinkingTargetModel = modelStrategy === "select" ? config.desiredModel : null;
       await withRetries(
-        () => ensureThinkingTime(Runtime, thinkingTime, logger, thinkingTargetModel),
+        () =>
+          ensureThinkingTime(
+            Runtime,
+            thinkingTime,
+            logger,
+            thinkingTargetModel,
+            modelSelectionEvidence,
+          ),
         {
           retries: 2,
           delayMs: 300,
@@ -3478,6 +3701,12 @@ async function runRemoteBrowserMode(
       );
     }
     const submitOnce = async (prompt: string, submissionAttachments: BrowserAttachment[]) => {
+      proTimingRuntime = {
+        ...proTimingRuntime,
+        browserPromptSha256: hashProPromptIdentity(prompt),
+        browserPromptBaselineTurns: undefined,
+        browserPromptCommittedTurnIndex: undefined,
+      };
       if (proTimingRequired) {
         proTimingRuntime = beginProResponseTimingTurn(proTimingRuntime, {
           inputTokens: estimateTokenCount(prompt),
@@ -3493,13 +3722,12 @@ async function runRemoteBrowserMode(
         name: path.basename(a.path),
         generatedBundle: a.generatedBundle === true,
       }));
-      await clearPromptComposer(Runtime, logger);
       await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
+      await assertPromptComposerEmptyBeforeAttachmentMutation(Runtime);
       if (submissionAttachments.length > 0) {
         if (!DOM) {
           throw new Error("Chrome DOM domain unavailable while uploading attachments.");
         }
-        await clearComposerAttachments(Runtime, 5_000, logger);
         // Use remote file transfer for remote Chrome (reads local files and injects via CDP)
         for (const attachment of submissionAttachments) {
           logger(`Uploading attachment: ${attachment.displayPath}`);
@@ -3532,7 +3760,13 @@ async function runRemoteBrowserMode(
           `Prompt textarea ready (after Deep Research activation, ${prompt.length.toLocaleString()} chars queued)`,
         );
       }
-      let baselineTurns = await readConversationTurnCount(Runtime, logger);
+      let baselineTurns = requirePreDispatchTurnBaseline(
+        await readConversationTurnCount(Runtime, logger),
+      );
+      proTimingRuntime = {
+        ...proTimingRuntime,
+        browserPromptBaselineTurns: baselineTurns,
+      };
       const submissionTargetId = remoteTargetId;
       const isSubmissionOwner = async (): Promise<boolean> => {
         if (!submissionTargetId || remoteTargetId !== submissionTargetId) return false;
@@ -3542,6 +3776,7 @@ async function runRemoteBrowserMode(
       const providerState: Record<string, unknown> = {
         runtime: Runtime,
         input: Input,
+        page: Page,
         logger,
         timeoutMs: config.timeoutMs,
         inputTimeoutMs: config.inputTimeoutMs ?? undefined,
@@ -3634,8 +3869,16 @@ async function runRemoteBrowserMode(
       fallbackSubmission: options.fallbackSubmission,
       submit: submitOnce,
       reloadPromptComposer,
-      prepareFallbackSubmission: async () => {
-        await clearPromptComposer(Runtime, logger);
+      prepareFallbackSubmission: async (currentAttachments) => {
+        const currentAttachmentExpectations = currentAttachments.map((attachment) => ({
+          name: path.basename(attachment.path),
+          generatedBundle: attachment.generatedBundle === true,
+        }));
+        await clearOwnedPromptAndAttachmentsForFallback(
+          Runtime,
+          logger,
+          currentAttachmentExpectations,
+        );
         await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
       },
       logger,
@@ -4068,7 +4311,6 @@ async function runRemoteBrowserMode(
       const followUpPrompt = followUpPrompts[index];
       logger(`[browser] Sending follow-up ${index + 1}/${followUpPrompts.length}`);
       await requireConversationIdentity(`follow-up-${index + 1}-owner`);
-      await clearPromptComposer(Runtime, logger);
       await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
       const submission = await runSubmissionWithRecovery({
         prompt: followUpPrompt,
@@ -4206,6 +4448,44 @@ async function runRemoteBrowserMode(
     connectionClosedUnexpectedly = connectionClosedUnexpectedly || socketClosed;
 
     if (!socketClosed) {
+      const preservedErrorKind = classifyRemotePreservedBrowserError(normalizedError);
+      if (
+        preservedErrorKind === "draft-retained" ||
+        preservedErrorKind === "preexisting-composer" ||
+        preservedErrorKind === "commit-ambiguous"
+      ) {
+        const recoveryKind =
+          preservedErrorKind === "preexisting-composer"
+            ? "manual-intervention"
+            : preservedErrorKind === "commit-ambiguous"
+              ? "awaiting-response"
+              : "draft-retained";
+        const details =
+          normalizedError instanceof BrowserAutomationError ? normalizedError.details : undefined;
+        throw new BrowserAutomationError(
+          normalizedError.message,
+          {
+            ...details,
+            runtime: {
+              browserTransport: "cdp",
+              chromeHost: host,
+              chromePort: port,
+              chromeBrowserWSEndpoint: browserWSEndpoint,
+              chromeProfileRoot,
+              chromeTargetId: remoteTargetId ?? undefined,
+              tabUrl: authoritativeConversationUrl(),
+              conversationId: authoritativeConversationId(),
+              promptSubmitted,
+              browserDisposition: "recoverable",
+              recoveryKind,
+              recoveryExpiresAt: recoveryExpiryFromNow(recoveryKind),
+              controllerPid: process.pid,
+              ...proTimingRuntime,
+            },
+          },
+          normalizedError,
+        );
+      }
       logger(`Failed to complete ChatGPT run: ${normalizedError.message}`);
       if ((config.debug || process.env.CHATGPT_DEVTOOLS_TRACE === "1") && normalizedError.stack) {
         logger(normalizedError.stack);

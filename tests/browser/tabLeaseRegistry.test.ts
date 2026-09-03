@@ -171,34 +171,29 @@ describe("tabLeaseRegistry", () => {
         timeoutMs: 500,
       });
       let finishCleanup!: () => void;
-      const cleanupStarted = new Promise<void>((resolveStarted) => {
-        void current.release({
-          onRelease: async ({ isLastLease }) => {
-            expect(isLastLease).toBe(true);
-            resolveStarted();
-            await new Promise<void>((resolveCleanup) => {
-              finishCleanup = resolveCleanup;
-            });
-          },
-        });
+      let signalCleanupStarted!: () => void;
+      const cleanupStarted = new Promise<void>((resolve) => {
+        signalCleanupStarted = resolve;
+      });
+      const currentRelease = current.release({
+        onRelease: async ({ isLastLease }) => {
+          expect(isLastLease).toBe(true);
+          signalCleanupStarted();
+          await new Promise<void>((resolveCleanup) => {
+            finishCleanup = resolveCleanup;
+          });
+        },
       });
       await cleanupStarted;
 
-      let acquired = false;
-      const nextPromise = acquireBrowserTabLease(dir, {
+      const next = await acquireBrowserTabLease(dir, {
         maxConcurrentTabs: 3,
         pollMs: 25,
         timeoutMs: 1000,
-      }).then((lease) => {
-        acquired = true;
-        return lease;
       });
-      await new Promise((resolve) => setTimeout(resolve, 75));
-      expect(acquired).toBe(true);
 
       finishCleanup();
-      const next = await nextPromise;
-      expect(acquired).toBe(true);
+      await currentRelease;
       await next.release();
     } finally {
       await rm(dir, { recursive: true, force: true });
