@@ -68,6 +68,12 @@ or maintainer-only release instructions.
   explicitly supersedes R12's old `R10-R11` dependency: G4 depends on accepted
   T1-T3 and G3 evidence, a rollback tag, a fresh deletion scan, and its own
   owner decision, not on remote bridge delivery.
+- G4 is a repository-wide physical deletion gate, not a macOS-only cleanup.
+  Do not remove the shared legacy implementation while any supported platform
+  still selects it by default. Every such platform must first have an accepted
+  replacement-worker cutover, or its support must be retired by a separate
+  explicit owner decision. Deferred platform work does not itself authorize
+  either outcome.
 
 ## Disposable attempt sandbox contract
 

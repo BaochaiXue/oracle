@@ -231,14 +231,14 @@ separate facts.
 The disposable-attempt trim is inserted before G3 without reopening the v2
 durable constitution:
 
-| Slice | Outcome                                                                                                                                 | Gate                                                                                    | Status                                    |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------- |
-| T0    | Freeze authority, correct source/dependency mapping, and publish the legacy deletion map                                                | owner accepts trim boundary and deletion map                                            | source-complete; owner acceptance pending |
-| T1    | Add login-only auth seed, atomic sandbox clone/cleanup, exact process receipts, and the two-clone no-Send proof                         | owner-authorized real no-Send gate passes with unchanged seed and zero residue          | owner-gated                               |
-| T2    | Route each provider purpose through one attempt sandbox/page and isolate cleanup failures by job                                        | fixture/fault suite proves at most one Send and later jobs remain schedulable           | planned                                   |
-| T3    | Run bounded text, bundle, pre-Send failure, at-risk interruption, capture-only recovery, and sequential live acceptance                 | each exact live case is separately owner-authorized and receipts match account history  | owner-gated                               |
-| G3    | Make `broker` the default browser route on a supported, certified macOS GUI worker; retain legacy as explicit short-lived rollback only | separate owner approval after T1-T3 and stable-resource evidence                        | owner-gated                               |
-| G4    | Physically remove legacy browser execution/ownership while preserving read-only history                                                 | separate owner approval after accepted G3 evidence and rollback tag; R11 is independent | owner-gated                               |
+| Slice | Outcome                                                                                                                                 | Gate                                                                                                                                                                      | Status                                    |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| T0    | Freeze authority, correct source/dependency mapping, and publish the legacy deletion map                                                | owner accepts trim boundary and deletion map                                                                                                                              | source-complete; owner acceptance pending |
+| T1    | Add login-only auth seed, atomic sandbox clone/cleanup, exact process receipts, and the two-clone no-Send proof                         | owner-authorized real no-Send gate passes with unchanged seed and zero residue                                                                                            | owner-gated                               |
+| T2    | Route each provider purpose through one attempt sandbox/page and isolate cleanup failures by job                                        | fixture/fault suite proves at most one Send and later jobs remain schedulable                                                                                             | planned                                   |
+| T3    | Run bounded text, bundle, pre-Send failure, at-risk interruption, capture-only recovery, and sequential live acceptance                 | each exact live case is separately owner-authorized and receipts match account history                                                                                    | owner-gated                               |
+| G3    | Make `broker` the default browser route on a supported, certified macOS GUI worker; retain legacy as explicit short-lived rollback only | separate owner approval after T1-T3 and stable-resource evidence                                                                                                          | owner-gated                               |
+| G4    | Physically remove legacy browser execution/ownership while preserving read-only history                                                 | separate owner approval after every supported platform has replacement cutover or explicit support retirement, accepted G3 evidence, and rollback tag; R11 is independent | owner-gated                               |
 
 T0-T3 supersede the fixed-profile route to G3. They do not weaken or replace
 R1-R4 kernel/store/worker/adapter authority, R8 client admission, R9 Batch
@@ -249,6 +249,10 @@ G3 is platform-qualified: Windows and other deferred worker platforms retain
 their existing engine default. R11 remote bridging is no longer a G4
 prerequisite because it uses the durable client protocol and does not own the
 local legacy execution stack.
+Because the legacy implementation is shared repository code, G4 cannot follow
+the macOS cutover alone: every still-supported platform that uses legacy by
+default must first receive an accepted replacement-worker cutover, or platform
+support must be retired through a separate explicit owner gate.
 
 ## Complete acceptance ledger
 
@@ -348,4 +352,6 @@ authority only; no runtime behavior, local profile, or account state changes.
 This delta also platform-qualifies G3 to the supported, certified macOS GUI
 worker and removes R11 remote bridging from the G4 prerequisite chain. Remote
 bridging remains planned after G3, but it neither authorizes nor blocks local
-legacy deletion.
+legacy deletion. Repository-wide G4 deletion additionally waits until no
+supported platform depends on legacy execution; an owner-gated platform support
+retirement may satisfy that platform boundary, but deferral alone may not.

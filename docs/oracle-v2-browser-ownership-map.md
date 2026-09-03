@@ -142,8 +142,13 @@ supported cutover platform. G3 does not authorize deletion.
 
 G4 is a second owner decision after accepted G3 evidence and a rollback tag.
 R11 remote bridging is independent: its absence neither blocks nor authorizes
-G4. Delete or strip the following executable ownership areas after a fresh
-reference scan:
+G4. Because these ownership areas are shared repository code, the macOS-only G3
+cutover is not sufficient deletion authority. Before G4, every supported
+platform that still selects legacy by default must have an accepted replacement
+worker and cutover, or that platform's support must be retired through a
+separate explicit owner decision. A deferred worker is not equivalent to either
+condition. Delete or strip the following executable ownership areas only after
+that platform boundary and a fresh reference scan:
 
 - `src/browser/lifecycleReconciler.ts`,
   `src/browser/tabLeaseRegistry.ts`, and
