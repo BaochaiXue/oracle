@@ -84,7 +84,7 @@ export interface DedicatedBrowserStatusResult {
   dedicatedBrowser: "ready" | "unavailable" | "ambiguous";
   generation: "current" | "compatible update pending" | "unavailable" | "ambiguous";
   consultations: { active: number; recoverable: number };
-  actionRequired: "none" | "sign in" | "close unverified browser" | "wait: consultations active";
+  actionRequired: "none" | "sign in" | "close unverified browser" | "do not close active browser";
   promptSubmitted: false;
   inspection?: DedicatedChromeInspection;
   error?: string;
@@ -420,7 +420,7 @@ function statusFromInspection(
     // `ps` line led an agent to SIGTERM a Chrome mid-answer.)
     actionRequired: ambiguous
       ? counts.active > 0 || counts.recoverable > 0
-        ? "wait: consultations active"
+        ? "do not close active browser"
         : "close unverified browser"
       : initialized
         ? "none"

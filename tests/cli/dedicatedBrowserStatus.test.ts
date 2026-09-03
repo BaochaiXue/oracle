@@ -12,10 +12,10 @@ describe("dedicated browser status advice", () => {
   test("never tells a human to close a browser while consultations are active or recoverable", () => {
     expect(
       __test__.statusFromInspection(ambiguous, { active: 1, recoverable: 0 }, true).actionRequired,
-    ).toBe("wait: consultations active");
+    ).toBe("do not close active browser");
     expect(
       __test__.statusFromInspection(ambiguous, { active: 0, recoverable: 2 }, true).actionRequired,
-    ).toBe("wait: consultations active");
+    ).toBe("do not close active browser");
   });
 
   test("still asks for the unverified browser to be closed when nothing is running", () => {

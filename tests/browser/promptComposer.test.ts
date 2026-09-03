@@ -343,7 +343,7 @@ describe("promptComposer", () => {
     }
   });
 
-  test("does not accept a committed user turn with stray appended input", async () => {
+  test("classifies a committed user turn with stray appended input as submitted-unverified, never as unsent", async () => {
     vi.useFakeTimers();
     try {
       const content = { innerText: "hello x", textContent: "hello x" };
@@ -380,12 +380,18 @@ describe("promptComposer", () => {
         undefined,
         0,
       );
+      // The turn on the page is not the exact prompt, so identity stays
+      // unverified, but a new user turn exists and the composer is empty:
+      // something was sent, and sending again would duplicate it.
       const assertion = expect(promise).rejects.toMatchObject({
         details: expect.objectContaining({
-          code: "prompt-commit-timeout",
+          code: "prompt-commit-identity-unverified",
+          promptSubmitted: true,
+          retrySafe: false,
           commitProbe: expect.objectContaining({
             lastMatched: false,
             lastUserTurnAvailable: true,
+            hasNewUserTurn: true,
           }),
         }),
       });

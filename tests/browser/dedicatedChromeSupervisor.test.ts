@@ -8,6 +8,7 @@ import {
   inspectDedicatedChromeState,
   listObservedProcesses,
   observeProcess,
+  processStartTimesMatch,
   planDedicatedChromeAction,
   terminateVerifiedDedicatedChrome,
   writeDedicatedBrowserRuntimeReceipt,
@@ -227,6 +228,51 @@ describe("dedicated Chrome ownership", () => {
   });
 });
 
+describe("processStartTimesMatch", () => {
+  test("uses Linux start ticks as the identity when both sides have them", () => {
+    expect(processStartTimesMatch({ startTicks: "3362639" }, { startTicks: "3362639" })).toBe(true);
+    expect(
+      processStartTimesMatch(
+        { startTicks: "3362639", processStartTime: "Fri Sep 4 02:51:41 2026" },
+        { startTicks: "9999999", processStartTime: "Fri Sep 4 02:51:41 2026" },
+      ),
+    ).toBe(false);
+  });
+
+  test("tolerates the seconds of drift a WSL2 clock resync puts into ps lstart", () => {
+    expect(
+      processStartTimesMatch(
+        { processStartTime: "Fri Sep 4 02:51:36 2026" },
+        { processStartTime: "Fri Sep 4 02:51:41 2026" },
+      ),
+    ).toBe(true);
+  });
+
+  test("still separates processes that started minutes apart", () => {
+    expect(
+      processStartTimesMatch(
+        { processStartTime: "Fri Sep 4 02:51:36 2026" },
+        { processStartTime: "Fri Sep 4 02:58:00 2026" },
+      ),
+    ).toBe(false);
+    expect(processStartTimesMatch({}, { processStartTime: "Fri Sep 4 02:51:36 2026" })).toBe(false);
+  });
+});
+
+describe("ambiguous ownership with protected work", () => {
+  test("preserves the browser instead of asking a human to close it", () => {
+    expect(
+      planDedicatedChromeAction({ state: "ambiguous", mode: "acquire", protectedState: true }),
+    ).toMatchObject({ action: "preserve-protected" });
+    expect(
+      planDedicatedChromeAction({ state: "ambiguous", mode: "heal", protectedState: true }),
+    ).toMatchObject({ action: "preserve-protected" });
+    expect(
+      planDedicatedChromeAction({ state: "ambiguous", mode: "acquire", protectedState: false }),
+    ).toMatchObject({ action: "block-human-action" });
+  });
+});
+
 describe("POSIX process observation", () => {
   test.skipIf(process.platform === "win32")(
     "reads the full command line even when COLUMNS would truncate ps output",
@@ -244,6 +290,11 @@ describe("POSIX process observation", () => {
         const observed = await observeProcess(child.pid as number);
         expect(observed?.pid).toBe(child.pid);
         expect(observed?.command).toContain(marker);
+        // listObservedProcesses() reads the whole table through ps alone, so it
+        // must also pass -ww; /proc does not back it up.
+        const inventory = await listObservedProcesses();
+        const row = inventory.find((entry) => entry.pid === child.pid);
+        expect(row?.command).toContain(marker);
       } finally {
         if (previousColumns === undefined) delete process.env.COLUMNS;
         else process.env.COLUMNS = previousColumns;

@@ -1217,6 +1217,11 @@ async function verifyPromptCommitted(
 			      normalizedPrompt.length > 0 && lastTurn === normalizedPrompt;
 		    const baseline = ${baselineLiteral};
 		    const hasNewTurn = baseline < 0 ? false : normalizedTurns.length > baseline;
+		    // A new *user-role* turn is the safety boundary for "a prompt was sent":
+		    // total growth can also come from an assistant or progress container.
+		    const newUserTurns = baseline < 0 ? [] : userTurns.filter((entry) => entry && entry.index >= baseline);
+		    const hasNewUserTurn = newUserTurns.length > 0;
+		    const newestUserTurnIndex = hasNewUserTurn ? newUserTurns[newUserTurns.length - 1].index : null;
 		    const stopVisible = Boolean(document.querySelector(${stopSelectorLiteral}));
 		    const assistantVisible = Boolean(
 		      document.querySelector(${assistantSelectorLiteral}) ||
@@ -1237,6 +1242,8 @@ async function verifyPromptCommitted(
 	      lastMatched,
 	      lastUserTurnAvailable: userTurnTexts.length > 0,
 	      hasNewTurn,
+	      hasNewUserTurn,
+	      newestUserTurnIndex,
       stopVisible,
       assistantVisible,
       composerCleared,
@@ -1324,6 +1331,31 @@ async function verifyPromptCommitted(
       },
     );
   }
+  // A new user-role turn appeared and the composer emptied: something was sent
+  // even though its text did not match the expected prompt exactly (ChatGPT
+  // renders Markdown, a mutation slipped in, or the turn was virtualized).
+  // Sending again would duplicate it, so this is terminal and recoverable,
+  // with promptSubmitted:true, and it never completes a Pro receipt or a
+  // committed prompt digest: identity stays unverified.
+  const submittedUnverified = Boolean(probe?.hasNewUserTurn === true && probe.composerCleared === true);
+  if (submittedUnverified) {
+    throw new BrowserAutomationError(
+      "A new user turn was committed and the composer cleared, but Oracle could not verify the exact prompt identity. The review was sent; recover this session and do not submit it again.",
+      {
+        stage: "submit-prompt",
+        code: "prompt-commit-identity-unverified",
+        promptSubmitted: true,
+        submissionState: "submitted-unverified",
+        promptIdentityVerified: false,
+        retrySafe: false,
+        draftRetained: false,
+        candidateUserTurnIndex: probe?.newestUserTurnIndex ?? null,
+        promptLength: prompt.trim().length,
+        timeoutMs,
+        commitProbe: probe ? summarizeCommitProbe(probe) : undefined,
+      },
+    );
+  }
   const draftRetained = Boolean(
     probe &&
     probe.composerCleared === false &&
@@ -1357,6 +1389,8 @@ interface CommitProbeState {
   lastMatched?: boolean;
   lastUserTurnAvailable?: boolean;
   hasNewTurn?: boolean;
+  hasNewUserTurn?: boolean;
+  newestUserTurnIndex?: number | null;
   stopVisible?: boolean;
   assistantVisible?: boolean;
   composerCleared?: boolean;
@@ -1378,6 +1412,8 @@ function summarizeCommitProbe(probe: CommitProbeState): Record<string, unknown> 
     lastMatched: probe.lastMatched,
     lastUserTurnAvailable: probe.lastUserTurnAvailable,
     hasNewTurn: probe.hasNewTurn,
+    hasNewUserTurn: probe.hasNewUserTurn,
+    newestUserTurnIndex: probe.newestUserTurnIndex,
     stopVisible: probe.stopVisible,
     assistantVisible: probe.assistantVisible,
     composerCleared: probe.composerCleared,

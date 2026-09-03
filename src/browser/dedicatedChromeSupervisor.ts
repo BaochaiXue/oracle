@@ -78,6 +78,32 @@ export interface ObservedProcess {
   executablePath?: string;
   executableRealpath?: string;
   processStartTime?: string;
+  /** Linux: monotonic start ticks from /proc/<pid>/stat; immune to clock resync. */
+  startTicks?: string;
+}
+
+const PROCESS_START_TIME_TOLERANCE_MS = 30_000;
+
+/**
+ * Whether two observations describe the same process incarnation. On Linux
+ * the /proc start ticks are authoritative. Otherwise `ps lstart` is compared
+ * with a tolerance: it is derived from the boot time, and under WSL2 the boot
+ * time shifts by seconds when the VM clock resyncs, so the same process can
+ * print 02:51:36, then 02:51:39, then 02:51:41. Exact string equality turned
+ * every such shift into "foreign or conflicting identity" and told operators
+ * to close a browser other agents were using.
+ */
+export function processStartTimesMatch(
+  a: { processStartTime?: string; startTicks?: string },
+  b: { processStartTime?: string; startTicks?: string },
+): boolean {
+  if (a.startTicks && b.startTicks) return a.startTicks === b.startTicks;
+  if (!a.processStartTime || !b.processStartTime) return false;
+  if (a.processStartTime === b.processStartTime) return true;
+  const left = Date.parse(a.processStartTime);
+  const right = Date.parse(b.processStartTime);
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return false;
+  return Math.abs(left - right) <= PROCESS_START_TIME_TOLERANCE_MS;
 }
 
 export interface DedicatedChromeProcessFamilyMember {
@@ -92,6 +118,8 @@ export interface DedicatedBrowserRuntimeReceipt {
   version: 1;
   pid: number;
   processStartTime: string;
+  /** Linux start ticks of the receipt process, when known. */
+  startTicks?: string;
   profileRealpath: string;
   executableRealpath: string;
   buildId?: string;
@@ -262,7 +290,8 @@ function parseRuntimeReceipt(raw: string): DedicatedBrowserRuntimeReceipt | null
       value.debugHost !== "127.0.0.1" ||
       !validPositiveInteger(value.debugPort) ||
       typeof value.launchedAt !== "string" ||
-      typeof value.lastVerifiedAt !== "string"
+      typeof value.lastVerifiedAt !== "string" ||
+      (value.startTicks !== undefined && typeof value.startTicks !== "string")
     ) {
       return null;
     }
@@ -376,7 +405,7 @@ function receiptConflicts(input: {
   return (
     receipt.pid !== observed.pid ||
     !observed.processStartTime ||
-    receipt.processStartTime !== observed.processStartTime ||
+    !processStartTimesMatch(receipt, observed) ||
     !sameIdentityPath(receipt.profileRealpath, profileRealpath) ||
     receipt.debugHost !== "127.0.0.1" ||
     receipt.debugPort !== debugPort ||
@@ -474,6 +503,7 @@ export async function observeProcess(
         : undefined,
     };
   }
+  const before = process.platform === "linux" ? await readLinuxProcIdentity(pid) : null;
   try {
     // `-ww` disables ps's column limit. Without it, a COLUMNS variable in the
     // caller's environment (agent harnesses set one) truncates the command line
@@ -500,10 +530,20 @@ export async function observeProcess(
     );
     const parsed = parsePsObservation(String(stdout ?? ""));
     if (!parsed) return null;
-    const observation =
-      process.platform === "linux"
-        ? { ...parsed, command: (await readProcCmdline(pid)) ?? parsed.command }
-        : parsed;
+    let observation = parsed;
+    if (process.platform === "linux") {
+      // Guard the ps + /proc combination against PID reuse and zombies: the
+      // start ticks must be identical before and after the reads, and the
+      // process must not be defunct, or the observation is discarded.
+      if (!before || before.state === "Z") return null;
+      observation = {
+        ...parsed,
+        command: (await readProcCmdline(pid)) ?? parsed.command,
+        startTicks: before.startTicks,
+      };
+      const after = await readLinuxProcIdentity(pid);
+      if (!after || after.state === "Z" || after.startTicks !== before.startTicks) return null;
+    }
     let executablePath = inferKnownExecutable(observation.command, knownExecutablePaths);
     if (process.platform === "linux") {
       executablePath = await realpath(`/proc/${pid}/exe`).catch(() => executablePath);
@@ -518,6 +558,25 @@ export async function observeProcess(
   } catch {
     return null;
   }
+}
+
+interface LinuxProcIdentity {
+  state: string;
+  startTicks: string;
+}
+
+/** Process state and monotonic start ticks from /proc/<pid>/stat (fields 3 and 22). */
+async function readLinuxProcIdentity(pid: number): Promise<LinuxProcIdentity | null> {
+  const raw = await readFile(`/proc/${Math.trunc(pid)}/stat`, "utf8").catch(() => null);
+  if (!raw) return null;
+  // comm is parenthesized and may itself contain spaces or ')'; split after the last ')'.
+  const close = raw.lastIndexOf(")");
+  if (close < 0) return null;
+  const fields = raw.slice(close + 2).trim().split(/\s+/u);
+  const state = fields[0];
+  const startTicks = fields[19];
+  if (!state || !startTicks) return null;
+  return { state, startTicks };
 }
 
 async function readProcCmdline(pid: number): Promise<string | null> {
@@ -535,7 +594,7 @@ export async function listObservedProcesses(): Promise<ObservedProcess[]> {
   try {
     const { stdout } = await execFileAsync(
       "ps",
-      ["-ax", "-o", "pid=", "-o", "ppid=", "-o", "lstart=", "-o", "command="],
+      ["-ww", "-ax", "-o", "pid=", "-o", "ppid=", "-o", "lstart=", "-o", "command="],
       { maxBuffer: 16 * 1024 * 1024 },
     );
     return String(stdout ?? "")
@@ -834,6 +893,16 @@ export function planDedicatedChromeAction(input: {
   protectedState: boolean;
 }): DedicatedChromePlan {
   if (input.state === "ambiguous") {
+    if (input.protectedState) {
+      // Live leases or recoverable targets outrank process-identity doubt:
+      // an ambiguous inspection must never turn into advice to close a
+      // browser that other consultations are running in.
+      return {
+        action: "preserve-protected",
+        reason:
+          "An active or recoverable consultation exists in this browser. Ownership is ambiguous; do not close or repair it.",
+      };
+    }
     return {
       action: "block-human-action",
       reason: "The dedicated profile owner cannot be verified.",
@@ -945,6 +1014,7 @@ function buildReceipt(
     version: 1,
     pid: observed.pid,
     processStartTime: observed.processStartTime,
+    startTicks: observed.startTicks,
     profileRealpath: inspection.profileRealpath,
     executableRealpath,
     buildId: inspection.installedBuildIds[executableRealpath],
@@ -989,7 +1059,7 @@ async function persistReusableChrome(
 
 function unverifiedOwnerError(inspection: DedicatedChromeInspection): BrowserAutomationError {
   return new BrowserAutomationError(
-    "Oracle found an unverified browser using its dedicated profile. The review was not sent. Close that Oracle browser window once, then retry.",
+    "Oracle found an unverified browser using its dedicated profile. The review was not sent. No automatic action was taken. After `oracle browser status` reports active 0 and recoverable 0, close the unverified Oracle browser once, then retry.",
     {
       stage: "dedicated-browser-heal",
       code: "dedicated-browser-owner-unverified",
@@ -1344,7 +1414,7 @@ async function captureVerifiedProcessFamily(
     (candidate) =>
       candidate.pid === root.pid &&
       candidate.processStartTime &&
-      candidate.processStartTime === root.processStartTime,
+      processStartTimesMatch(candidate, root),
   );
   if (!listedRoot?.processStartTime) return [fallback];
 
@@ -1391,7 +1461,7 @@ async function inspectCapturedProcessFamily(
     if (!current?.processStartTime) {
       return { identityVerified: false, remaining };
     }
-    if (current.processStartTime === member.processStartTime) {
+    if (processStartTimesMatch(current, member)) {
       remaining.push(member);
     }
     // A live PID with another start time is a reused PID. The captured Chrome
@@ -1446,7 +1516,7 @@ async function revalidateTerminationOwnership(
     expected.observed &&
     current.observed.pid === expected.observed.pid &&
     current.observed.processStartTime &&
-    current.observed.processStartTime === expected.observed.processStartTime &&
+    processStartTimesMatch(current.observed, expected.observed) &&
     current.debugPort === expected.debugPort &&
     (current.ownership === "managed-current" || current.ownership === "managed-compatible"),
   );

@@ -177,10 +177,12 @@ function isCloudflareChallengeError(error: unknown): error is BrowserAutomationE
 function isReattachableCaptureError(error: unknown): error is BrowserAutomationError {
   if (!(error instanceof BrowserAutomationError)) return false;
   const stage = (error.details as { stage?: string } | undefined)?.stage;
+  const code = (error.details as { code?: string } | undefined)?.code;
   return (
     stage === "assistant-timeout" ||
     stage === "assistant-recheck" ||
-    stage === "conversation-identity"
+    stage === "conversation-identity" ||
+    code === "prompt-commit-identity-unverified"
   );
 }
 
@@ -2548,6 +2550,16 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     };
   } catch (error) {
     const normalizedError = error instanceof Error ? error : new Error(String(error));
+    // An error can carry proof that a turn was sent even though the exact
+    // commit callback never ran; the run-local flag must reflect it before any
+    // classification or persistence below reads it.
+    const errorDetails =
+      normalizedError instanceof BrowserAutomationError
+        ? (normalizedError.details as { promptSubmitted?: boolean } | undefined)
+        : undefined;
+    if (errorDetails?.promptSubmitted === true) {
+      promptSubmitted = true;
+    }
     const socketClosed = connectionClosedUnexpectedly || isWebSocketClosureError(normalizedError);
     connectionClosedUnexpectedly = connectionClosedUnexpectedly || socketClosed;
     const preservedErrorKind = classifyPreservedBrowserError(normalizedError, config.headless);
@@ -3397,12 +3409,27 @@ async function runRemoteBrowserMode(
 
     // Skip cookie sync for remote Chrome - it already has cookies
     logger("Skipping cookie sync for remote Chrome (using existing session)");
-    await clearStaleChatGptConversationCookies(Network, Target, logger, {
-      preserveConversationIds: [
-        extractConversationIdFromUrl(config.resumeConversationUrl ?? ""),
-        extractConversationIdFromUrl(lastUrl ?? ""),
-      ],
-    });
+    // Cookie cleanup is browser-global. Without a lease scope that proves sole
+    // ownership of this remote browser (attached tab, or no manual-login
+    // profile), the optional cleanup is skipped rather than risked.
+    const skipRemoteStaleCookieCleanup =
+      !remoteLeaseProfileDir ||
+      !tabLease ||
+      (await shouldSkipStaleConversationCookieCleanup(() =>
+        hasOtherActiveBrowserTabLeases(remoteLeaseProfileDir, tabLease!.id),
+      ));
+    if (skipRemoteStaleCookieCleanup) {
+      logger(
+        "[cookies] Skipping stale ChatGPT conversation-cookie cleanup: sole ownership of the remote browser profile was not established.",
+      );
+    } else {
+      await clearStaleChatGptConversationCookies(Network, Target, logger, {
+        preserveConversationIds: [
+          extractConversationIdFromUrl(config.resumeConversationUrl ?? ""),
+          extractConversationIdFromUrl(lastUrl ?? ""),
+        ],
+      });
+    }
 
     if (config.resumeConversationUrl) {
       await navigateToChatGPT(Page, Runtime, config.resumeConversationUrl, logger);
@@ -4222,6 +4249,16 @@ async function runRemoteBrowserMode(
     };
   } catch (error) {
     const normalizedError = error instanceof Error ? error : new Error(String(error));
+    // An error can carry proof that a turn was sent even though the exact
+    // commit callback never ran; the run-local flag must reflect it before any
+    // classification or persistence below reads it.
+    const errorDetails =
+      normalizedError instanceof BrowserAutomationError
+        ? (normalizedError.details as { promptSubmitted?: boolean } | undefined)
+        : undefined;
+    if (errorDetails?.promptSubmitted === true) {
+      promptSubmitted = true;
+    }
     const socketClosed = connectionClosedUnexpectedly || isWebSocketClosureError(normalizedError);
     connectionClosedUnexpectedly = connectionClosedUnexpectedly || socketClosed;
 

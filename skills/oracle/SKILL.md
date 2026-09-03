@@ -362,7 +362,8 @@ Rules for every agent on a shared machine:
 
 - Before any browser maintenance, run `oracle browser status`. If `active` or
   `recoverable` is not zero, the browser belongs to someone else's work: do
-  nothing to the process.
+  nothing to the process. `Action required: do not close active browser`
+  means exactly that, even when the line above it says `ambiguous`.
 - Never `kill`, `pkill`, or signal the Chrome process to recover from a failed
   consultation. Recover the session instead.
 - Never run `smoke` or `setup` while any consultation is active or recoverable.
