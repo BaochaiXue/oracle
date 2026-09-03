@@ -264,6 +264,12 @@ function classifyPreservedBrowserError(
   return null;
 }
 
+function classifyRemotePreservedBrowserError(error: unknown): PreservedBrowserErrorKind | null {
+  // Remote Chrome owns its browser lifetime; local launcher-only flags such as
+  // --browser-headless are ignored and must not suppress exact-target recovery.
+  return classifyPreservedBrowserError(error, false);
+}
+
 function shouldPreserveBrowserOnError(error: unknown, headless: boolean): boolean {
   return classifyPreservedBrowserError(error, headless) !== null;
 }
@@ -336,6 +342,24 @@ function normalizeUnretainedPreservedError(
   );
 }
 
+function requirePreDispatchTurnBaseline(value: number | null): number {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+    return value;
+  }
+  throw new BrowserAutomationError(
+    "Oracle could not establish the conversation turn baseline required before dispatch, so no submitting input event was emitted.",
+    {
+      stage: "submit-prompt",
+      code: "conversation-turn-baseline-unavailable",
+      submissionCommitted: false,
+      dispatchAttempted: false,
+      potentiallySubmittingEventEmitted: false,
+      retrySafe: true,
+      recoverable: false,
+    },
+  );
+}
+
 export function shouldPreserveBrowserOnErrorForTest(error: unknown, headless: boolean): boolean {
   return shouldPreserveBrowserOnError(error, headless);
 }
@@ -345,6 +369,12 @@ export function classifyPreservedBrowserErrorForTest(
   headless: boolean,
 ): PreservedBrowserErrorKind | null {
   return classifyPreservedBrowserError(error, headless);
+}
+
+export function classifyRemotePreservedBrowserErrorForTest(
+  error: unknown,
+): PreservedBrowserErrorKind | null {
+  return classifyRemotePreservedBrowserError(error);
 }
 
 export function normalizeCopiedProfilePreservedErrorForTest(
@@ -359,6 +389,10 @@ export function normalizeHeadlessPreservedErrorForTest(
   kind: PreservedBrowserErrorKind,
 ): BrowserAutomationError {
   return normalizeUnretainedPreservedError(error, kind, "headless");
+}
+
+export function requirePreDispatchTurnBaselineForTest(value: number | null): number {
+  return requirePreDispatchTurnBaseline(value);
 }
 
 // NOTE: Previously, shouldSkipThinkingTimeSelection() would skip the thinking
@@ -1889,13 +1923,12 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           `Prompt textarea ready (after Deep Research activation, ${prompt.length.toLocaleString()} chars queued)`,
         );
       }
-      let baselineTurns = await readConversationTurnCount(Runtime, logger);
+      let baselineTurns = requirePreDispatchTurnBaseline(
+        await readConversationTurnCount(Runtime, logger),
+      );
       proTimingRuntime = {
         ...proTimingRuntime,
-        browserPromptBaselineTurns:
-          typeof baselineTurns === "number" && Number.isSafeInteger(baselineTurns)
-            ? baselineTurns
-            : undefined,
+        browserPromptBaselineTurns: baselineTurns,
       };
       const submissionTargetId = lastTargetId;
       const isSubmissionOwner = async (): Promise<boolean> => {
@@ -2670,10 +2703,10 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     const normalizedError = error instanceof Error ? error : new Error(String(error));
     const socketClosed = connectionClosedUnexpectedly || isWebSocketClosureError(normalizedError);
     connectionClosedUnexpectedly = connectionClosedUnexpectedly || socketClosed;
-    if (config.headless && isAmbiguousCommitError(normalizedError)) {
-      throw normalizeUnretainedPreservedError(normalizedError, "commit-ambiguous", "headless");
+    const preservedErrorKind = classifyPreservedBrowserError(normalizedError, false);
+    if (config.headless && preservedErrorKind) {
+      throw normalizeUnretainedPreservedError(normalizedError, preservedErrorKind, "headless");
     }
-    const preservedErrorKind = classifyPreservedBrowserError(normalizedError, config.headless);
     if (preservedErrorKind === "cloudflare-challenge") {
       if (usingCopiedProfile) {
         logger(
@@ -3712,13 +3745,12 @@ async function runRemoteBrowserMode(
           `Prompt textarea ready (after Deep Research activation, ${prompt.length.toLocaleString()} chars queued)`,
         );
       }
-      let baselineTurns = await readConversationTurnCount(Runtime, logger);
+      let baselineTurns = requirePreDispatchTurnBaseline(
+        await readConversationTurnCount(Runtime, logger),
+      );
       proTimingRuntime = {
         ...proTimingRuntime,
-        browserPromptBaselineTurns:
-          typeof baselineTurns === "number" && Number.isSafeInteger(baselineTurns)
-            ? baselineTurns
-            : undefined,
+        browserPromptBaselineTurns: baselineTurns,
       };
       const submissionTargetId = remoteTargetId;
       const isSubmissionOwner = async (): Promise<boolean> => {
@@ -4393,7 +4425,7 @@ async function runRemoteBrowserMode(
     connectionClosedUnexpectedly = connectionClosedUnexpectedly || socketClosed;
 
     if (!socketClosed) {
-      const preservedErrorKind = classifyPreservedBrowserError(normalizedError, config.headless);
+      const preservedErrorKind = classifyRemotePreservedBrowserError(normalizedError);
       if (
         preservedErrorKind === "draft-retained" ||
         preservedErrorKind === "preexisting-composer" ||

@@ -137,14 +137,17 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   content untouched.
 - Direct CDP recovery receipts: require strict durable dispatch-boundary
   persistence before `mousePressed` or Enter `keyDown`, together with the
-  current prompt digest and pre-dispatch turn baseline. Ambiguous
+  current prompt digest and pre-dispatch turn baseline; a missing baseline now
+  fails before any submitting event. Ambiguous
   dedicated-profile submissions persist as `incomplete-capture`; exact-tab
   reattach must reconcile that digest to one unique post-baseline user turn
   before capture, including delayed commits, so it cannot harvest a prior
   answer. Retained pre-dispatch or manual targets persist as
   `manual-intervention` and reattach for inspection only, without automatic
-  capture or submission. Copied-profile and headless ambiguity remain
-  explicitly non-reattachable. Exact-owned attachment cleanup now revalidates
+  capture or submission. Copied-profile and locally launched headless
+  ambiguous, retained-draft, and manual outcomes remain explicitly
+  non-reattachable, while remote Chrome ignores the local headless launch flag
+  and retains its exact-target recovery. Exact-owned attachment cleanup now revalidates
   both the current prompt and the complete attachment set before removing
   anything, then clicks only the controls from that exact snapshot.
 - Direct CDP lifecycle: separate persistent profile identity from browser

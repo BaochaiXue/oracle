@@ -99,7 +99,8 @@ surface and keeps its existing scalar receipt compatibility.
 The active direct-CDP receipt also stores the current prompt's SHA-256 digest,
 the pre-dispatch turn baseline, commit state, and the exact committed user-turn
 index. The digest and baseline are persisted before any potentially submitting
-input event. Reattach must reconcile that digest to exactly one user turn at or
+input event; if the baseline cannot be established, no such event is emitted.
+Reattach must reconcile that digest to exactly one user turn at or
 after the baseline before waiting for its assistant successor; this permits a
 delayed commit to be recovered without ever falling back to an earlier answer.
 An absent or ambiguous match fails closed. Missing attachment sizes are
@@ -118,9 +119,11 @@ dispatch-boundary marker must be written before either event; persistence
 failure prevents dispatch. A retained pre-dispatch draft or other
 manual-intervention target is persisted separately and can be reattached only
 for exact-tab inspection; Oracle never captures an earlier answer or submits
-from that state. Copied-profile and headless runs remain retry-unsafe but are
-explicitly non-reattachable because their temporary profile or browser process
-is not retained.
+from that state. Copied-profile and locally launched headless runs explicitly
+mark all ambiguous, retained-draft, and manual outcomes as non-reattachable
+because their temporary profile or browser process is not retained. Remote
+Chrome ignores the local headless launch flag, so its retained exact target
+remains eligible for recovery.
 
 ## OpenCLI Browser Bridge (explicit alternative)
 

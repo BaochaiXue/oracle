@@ -5,12 +5,14 @@ import { describe, expect, test, vi } from "vitest";
 import {
   __test__,
   classifyPreservedBrowserErrorForTest,
+  classifyRemotePreservedBrowserErrorForTest,
   formatBrowserTurnTranscript,
   isLocalChromeHostForTest,
   normalizeCopiedProfilePreservedErrorForTest,
   normalizeHeadlessPreservedErrorForTest,
   redactBrowserConfigForDebugLogForTest,
   resolveRemoteTabLeaseProfileDirForTest,
+  requirePreDispatchTurnBaselineForTest,
   runBrowserMode,
   runSubmissionWithRecoveryForTest,
   shouldPreferSystemTmpDirForTest,
@@ -165,6 +167,18 @@ describe("shouldPreserveBrowserOnErrorForTest", () => {
     expect(classifyPreservedBrowserErrorForTest(error, false)).toBe("commit-ambiguous");
     expect(shouldPreserveBrowserOnErrorForTest(error, false)).toBe(true);
   });
+
+  test("classifies remote recovery independently of ignored local headless state", () => {
+    const error = new BrowserAutomationError("Prompt remained in the remote composer.", {
+      stage: "submit-prompt",
+      code: "composer-mutated-before-send",
+      submissionCommitted: false,
+      draftRetained: true,
+    });
+
+    expect(classifyPreservedBrowserErrorForTest(error, true)).toBeNull();
+    expect(classifyRemotePreservedBrowserErrorForTest(error)).toBe("draft-retained");
+  });
 });
 
 describe("authenticated model-selection errors", () => {
@@ -295,6 +309,50 @@ describe("browser run target cleanup", () => {
       recoverable: false,
       reattachable: false,
       runtime: undefined,
+    });
+  });
+
+  test.each([
+    ["draft-retained", "composer-mutated-before-send"],
+    ["preexisting-composer", "preexisting-composer-content"],
+  ] as const)("does not advertise a headless %s target as recoverable", (kind, code) => {
+    const error = new BrowserAutomationError("The exact tab remains recoverable.", {
+      stage: "submit-prompt",
+      code,
+      submissionCommitted: false,
+      draftRetained: true,
+      retrySafe: false,
+      recoverable: true,
+      runtime: { chromePort: 9222, chromeTargetId: "target-1" },
+    });
+
+    const normalized = normalizeHeadlessPreservedErrorForTest(error, kind);
+
+    expect(normalized.message).toMatch(/--browser-headless run cannot retain/i);
+    expect(normalized.details).toMatchObject({
+      code,
+      retrySafe: false,
+      recoverable: false,
+      reattachable: false,
+      runtime: undefined,
+    });
+  });
+
+  test("requires a durable turn baseline before dispatch", () => {
+    expect(requirePreDispatchTurnBaselineForTest(3)).toBe(3);
+    let baselineError: unknown;
+    try {
+      requirePreDispatchTurnBaselineForTest(null);
+    } catch (error) {
+      baselineError = error;
+    }
+    expect(baselineError).toMatchObject({
+      details: expect.objectContaining({
+        code: "conversation-turn-baseline-unavailable",
+        dispatchAttempted: false,
+        potentiallySubmittingEventEmitted: false,
+        retrySafe: true,
+      }),
     });
   });
 

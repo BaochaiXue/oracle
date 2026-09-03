@@ -109,7 +109,8 @@ exact committed user turn, the session is stored as `error` with
 and `retrySafe:false`. Use `oracle session <id> --render` to reattach that target;
 do not start a replacement attempt while commit state remains indeterminate.
 The receipt persists the current prompt digest and pre-dispatch turn baseline
-before the event. Reattach must match that digest to exactly one user turn at
+before the event; Oracle emits no submitting event when it cannot establish the
+baseline. Reattach must match that digest to exactly one user turn at
 or after the baseline before it can capture the corresponding answer, including
 when the commit became visible only after the original run stopped.
 
@@ -120,8 +121,10 @@ reattaches that exact tab for inspection only: it never captures an earlier
 answer and never submits from the retained state.
 
 This recovery contract does not apply to `--copy-profile`, whose temporary
-profile is always removed, or `--browser-headless`, whose browser process is not
-retained. Ambiguity in either mode is explicitly non-reattachable.
+profile is always removed, or locally launched `--browser-headless`, whose
+browser process is not retained. Ambiguous, retained-draft, and manual outcomes
+in either mode are explicitly non-reattachable. Remote Chrome ignores the local
+headless launch flag and keeps its exact-target recovery eligibility.
 
 For a declared parallel batch, resume the parent instead of restarting a child:
 
