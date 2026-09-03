@@ -22,7 +22,6 @@ interface ChatgptDomProviderState {
   ) => Promise<void> | void;
   onPromptCommitPending?: () => Promise<void> | void;
   isSubmissionOwner?: () => Promise<boolean> | boolean;
-  cleanupOwnedAttachments?: () => Promise<void>;
 }
 
 function requireState(ctx: ProviderDomFlowContext): ChatgptDomProviderState {
@@ -57,7 +56,6 @@ async function submitPromptViaAdapter(ctx: ProviderDomFlowContext): Promise<void
       onPromptCommitted: state.onPromptCommitted,
       onPromptCommitPending: state.onPromptCommitPending,
       isSubmissionOwner: state.isSubmissionOwner,
-      cleanupOwnedAttachments: state.cleanupOwnedAttachments,
     },
     ctx.prompt,
     state.logger,

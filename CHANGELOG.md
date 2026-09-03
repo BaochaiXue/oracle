@@ -140,7 +140,8 @@ validate|run|status|resume|accept-missing|render` commands, atomic action
   dedicated-profile submissions as `incomplete-capture` for exact-tab
   reattach, and label copied-profile ambiguity as non-reattachable. Exact-owned
   attachment cleanup now revalidates both the current prompt and the complete
-  attachment set before removing anything.
+  attachment set before removing anything, then clicks only the controls from
+  that exact snapshot. Headless ambiguity is also explicitly non-reattachable.
 - Direct CDP lifecycle: separate persistent profile identity from browser
   process lifetime. Dedicated Chrome now defaults to `while-needed`, releases
   tab leases before final drain, rechecks under the profile lock, and closes

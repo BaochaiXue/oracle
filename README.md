@@ -86,7 +86,7 @@ oracle --followup <session-id> \
 
 Oracle 会记录已提交 turn 的 identity 与 timing evidence，并把 durable conversation ID 冻结为 capture authority；同一 tab 后来跳到别的 conversation 时不会复制或接纳那边的答案。恢复必须回到原 conversation；只有 durable receipt 明确证明 prompt 尚未提交、尚未 commit 且 `retrySafe:true` 时，显式 resume 才能创建新 attempt。
 
-Legacy direct-CDP 提交会先激活并重新验证 exact owned target，再从新鲜 DOM 计算可信 Send 坐标；click 与 Enter 共用同一条 exact-user-turn 验证。任何可能触发提交的 input event 都必须先成功持久化 dispatch boundary；写入失败时绝不发出 event。只有在尚未发出任何 submitting event 时，Oracle 才能从不可用的 trusted-click 路径改用 Enter；一旦发出 `mousePressed` 或 Enter `keyDown`，就绝不自动换方法或再次 dispatch。若 exact commit 无法验证，普通 dedicated-profile run 会持久化为 incomplete/recoverable、`retrySafe:false` 并保留 exact tab，供 `oracle session <session-id> --render` reattach；`--copy-profile` 的临时 profile 必定删除，因此同类结果会明确标记为不可 reattach，且仍禁止自动重跑。
+Legacy direct-CDP 提交会先激活并重新验证 exact owned target，再从新鲜 DOM 计算可信 Send 坐标；click 与 Enter 共用同一条 exact-user-turn 验证。任何可能触发提交的 input event 都必须先成功持久化 dispatch boundary；写入失败时绝不发出 event。只有在尚未发出任何 submitting event 时，Oracle 才能从不可用的 trusted-click 路径改用 Enter；一旦发出 `mousePressed` 或 Enter `keyDown`，就绝不自动换方法或再次 dispatch。若 exact commit 无法验证，普通 headful dedicated-profile run 会持久化为 incomplete/recoverable、`retrySafe:false` 并保留 exact tab，供 `oracle session <session-id> --render` reattach；`--copy-profile` 的临时 profile 与 `--browser-headless` 的 browser process 都不会保留，因此同类结果会明确标记为不可 reattach，且仍禁止自动重跑。
 
 首次发现 composer 非空时，Oracle 会在最多 5 秒的 bounded settle window 内只读复核，避免把 profile/SPA 恢复过程中的瞬时 draft 当成稳定状态；若内容持续存在，仍会保持原样并 fail closed。若 attachment Send readiness 在任何 submitting event 之前失败，且 exact target、ownership 与本 attempt 的完整 prompt 都能重新证明，Oracle 才会清理这次 attempt 自己的 attachments 和 exact draft，并记录 `retrySafe:true`；任一清理证据不足时则保留 exact tab、记录 `retrySafe:false`，绝不清空或覆盖未知内容。
 

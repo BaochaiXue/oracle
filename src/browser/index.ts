@@ -305,15 +305,20 @@ function shouldKeepLocalBrowserOpen(options: {
   return options.effectiveKeepBrowser || options.preserveBrowserOnError;
 }
 
-function normalizeCopiedProfilePreservedError(
+function normalizeUnretainedPreservedError(
   error: Error,
   kind: PreservedBrowserErrorKind,
+  mode: "copy-profile" | "headless",
 ): BrowserAutomationError {
   const details = error instanceof BrowserAutomationError ? error.details : undefined;
+  const reason =
+    mode === "copy-profile"
+      ? "This --copy-profile run cannot retain its temporary tab or profile"
+      : "This --browser-headless run cannot retain its browser process or tab";
   const message =
     kind === "commit-ambiguous"
-      ? "Oracle emitted a potentially submitting event but could not verify the exact committed turn. This --copy-profile run cannot retain its temporary tab or profile, so automatic redispatch remains disabled and the result is not reattachable."
-      : "This --copy-profile run cannot retain its temporary tab or profile after the browser failure; no automatic redispatch will be attempted.";
+      ? `Oracle emitted a potentially submitting event but could not verify the exact committed turn. ${reason}, so automatic redispatch remains disabled and the result is not reattachable.`
+      : `${reason} after the browser failure; no automatic redispatch will be attempted.`;
   return new BrowserAutomationError(
     message,
     {
@@ -321,7 +326,7 @@ function normalizeCopiedProfilePreservedError(
       runtime: undefined,
       recoverable: false,
       reattachable: false,
-      copiedProfileRetained: false,
+      ...(mode === "copy-profile" ? { copiedProfileRetained: false } : {}),
       retrySafe: details?.retrySafe === true,
     },
     error,
@@ -343,7 +348,14 @@ export function normalizeCopiedProfilePreservedErrorForTest(
   error: Error,
   kind: PreservedBrowserErrorKind,
 ): BrowserAutomationError {
-  return normalizeCopiedProfilePreservedError(error, kind);
+  return normalizeUnretainedPreservedError(error, kind, "copy-profile");
+}
+
+export function normalizeHeadlessPreservedErrorForTest(
+  error: Error,
+  kind: PreservedBrowserErrorKind,
+): BrowserAutomationError {
+  return normalizeUnretainedPreservedError(error, kind, "headless");
 }
 
 // NOTE: Previously, shouldSkipThinkingTimeSelection() would skip the thinking
@@ -1903,10 +1915,6 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
             dispatchAttempted: true,
           }),
         isSubmissionOwner,
-        cleanupOwnedAttachments:
-          attachmentExpectations.length > 0
-            ? () => clearComposerAttachments(Runtime, 5_000, logger)
-            : undefined,
       };
       const deepResearchTargetBaseline =
         deepResearch && client
@@ -2637,6 +2645,9 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     const normalizedError = error instanceof Error ? error : new Error(String(error));
     const socketClosed = connectionClosedUnexpectedly || isWebSocketClosureError(normalizedError);
     connectionClosedUnexpectedly = connectionClosedUnexpectedly || socketClosed;
+    if (config.headless && isAmbiguousCommitError(normalizedError)) {
+      throw normalizeUnretainedPreservedError(normalizedError, "commit-ambiguous", "headless");
+    }
     const preservedErrorKind = classifyPreservedBrowserError(normalizedError, config.headless);
     if (preservedErrorKind === "cloudflare-challenge") {
       if (usingCopiedProfile) {
@@ -2728,7 +2739,11 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       preservedErrorKind === "commit-ambiguous"
     ) {
       if (usingCopiedProfile) {
-        throw normalizeCopiedProfilePreservedError(normalizedError, preservedErrorKind);
+        throw normalizeUnretainedPreservedError(
+          normalizedError,
+          preservedErrorKind,
+          "copy-profile",
+        );
       }
       preserveBrowserOnError = true;
       browserDisposition = "recoverable";
@@ -3700,10 +3715,6 @@ async function runRemoteBrowserMode(
             dispatchAttempted: true,
           }),
         isSubmissionOwner,
-        cleanupOwnedAttachments:
-          attachmentExpectations.length > 0
-            ? () => clearComposerAttachments(Runtime, 5_000, logger)
-            : undefined,
       };
       const deepResearchTargetBaseline =
         deepResearch && client

@@ -111,7 +111,6 @@ interface SubmitPromptDependencies {
   ) => Promise<void> | void;
   onPromptCommitPending?: () => Promise<void> | void;
   isSubmissionOwner?: () => Promise<boolean> | boolean;
-  cleanupOwnedAttachments?: () => Promise<void>;
 }
 
 function createSubmissionDiagnostic(baselineTurns?: number | null): SubmissionDiagnostic {
@@ -559,8 +558,7 @@ async function cleanupOwnedDraftAfterAttachmentReadinessFailure({
     diagnostic.composerMatchedPromptBeforeDispatch &&
     Array.isArray(deps.attachmentNames) &&
     deps.attachmentNames.length > 0 &&
-    typeof deps.isSubmissionOwner === "function" &&
-    typeof deps.cleanupOwnedAttachments === "function";
+    typeof deps.isSubmissionOwner === "function";
 
   if (!canAttemptCleanup) {
     diagnostic.retryEligible = false;
@@ -595,7 +593,7 @@ async function cleanupOwnedDraftAfterAttachmentReadinessFailure({
     diagnostic.ownedAttachmentSetVerified = true;
 
     diagnostic.ownedAttachmentCleanupAttempted = true;
-    await deps.cleanupOwnedAttachments?.();
+    await clearExactOwnedAttachmentSet(deps.runtime, deps.attachmentNames ?? []);
     diagnostic.ownedAttachmentCleanupSucceeded = true;
 
     if (!(await deps.isSubmissionOwner?.())) {
@@ -692,6 +690,37 @@ async function verifyExactOwnedAttachmentSet(
     returnByValue: true,
   });
   return result.result?.value === true;
+}
+
+async function clearExactOwnedAttachmentSet(
+  Runtime: ChromeClient["Runtime"],
+  attachmentNames: AttachmentReadyInput[],
+): Promise<void> {
+  if (attachmentNames.length === 0) {
+    throw new Error("exact owned attachment set is empty");
+  }
+  const marker = `oracle-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const result = await Runtime.evaluate({
+    expression: buildAttachmentReadyExpression(attachmentNames, true, marker),
+    returnByValue: true,
+  });
+  const value = result.result?.value as
+    | { exactSetMatched?: boolean; removeClicks?: number }
+    | undefined;
+  if (value?.exactSetMatched !== true || value.removeClicks !== attachmentNames.length) {
+    throw new Error("exact owned attachment snapshot changed before targeted cleanup");
+  }
+
+  await delay(OWNED_DRAFT_CLEAR_SETTLE_MS);
+  const verification = await Runtime.evaluate({
+    expression: `document.querySelectorAll(${JSON.stringify(
+      `[data-oracle-owned-attachment-cleanup="${marker}"]`,
+    )}).length`,
+    returnByValue: true,
+  });
+  if (verification.result?.value !== 0) {
+    throw new Error("targeted attachment controls did not detach after cleanup");
+  }
 }
 
 async function clearExactOwnedPromptComposer(
@@ -950,6 +979,7 @@ async function waitForDomReady(
 function buildAttachmentReadyExpression(
   attachmentNames: AttachmentReadyInput[],
   requireExactSet = false,
+  cleanupMarker?: string,
 ): string {
   const attachmentExpectations = attachmentNames.map((attachment) => {
     const name = typeof attachment === "string" ? attachment : attachment.name;
@@ -965,6 +995,8 @@ function buildAttachmentReadyExpression(
   return `(() => {
     const expected = ${namesLiteral};
     const requireExactSet = ${JSON.stringify(requireExactSet)};
+    const cleanupMode = ${JSON.stringify(Boolean(cleanupMarker))};
+    const cleanupMarker = ${JSON.stringify(cleanupMarker ?? null)};
     const sendSelectors = ${JSON.stringify(SEND_BUTTON_SELECTORS)};
     const normalize = (value) => String(value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
     const hasNameBoundary = (text, name) => {
@@ -1238,17 +1270,19 @@ function buildAttachmentReadyExpression(
       visibleExtensionLabelsMatchExpected &&
       removeAffordances.length >= expected.length;
 
-    const exactDistinctMatch = (labels) => {
-      if (labels.length !== expected.length) return false;
+    const exactDistinctIndexes = (labels) => {
+      if (labels.length !== expected.length) return null;
       const used = new Set();
-      return expected.every((item) => {
+      const indexes = [];
+      for (const item of expected) {
         const index = labels.findIndex((label, candidateIndex) =>
           !used.has(candidateIndex) && matchesExpected(label, item),
         );
-        if (index === -1) return false;
+        if (index === -1) return null;
         used.add(index);
-        return true;
-      });
+        indexes.push(index);
+      }
+      return indexes;
     };
     const removeLabels = removeAffordances.map((node) => collectLabelHaystack(node));
     const inputNames = attachmentRoots.flatMap((root) =>
@@ -1258,7 +1292,25 @@ function buildAttachmentReadyExpression(
         ),
       ),
     );
-    const exactSetReady = exactDistinctMatch(removeLabels) || exactDistinctMatch(inputNames);
+    const exactRemoveIndexes = exactDistinctIndexes(removeLabels);
+    const exactSetReady = exactRemoveIndexes !== null || exactDistinctIndexes(inputNames) !== null;
+
+    if (cleanupMode) {
+      if (!(chipsReady || inputsReady || countReady) || exactRemoveIndexes === null) {
+        return { exactSetMatched: false, removeClicks: 0 };
+      }
+      const capturedButtons = exactRemoveIndexes.map((index) => removeAffordances[index]);
+      for (const button of capturedButtons) {
+        button.setAttribute('data-oracle-owned-attachment-cleanup', cleanupMarker);
+      }
+      for (const button of capturedButtons) {
+        try {
+          if (button instanceof HTMLButtonElement) button.type = 'button';
+          button.click();
+        } catch {}
+      }
+      return { exactSetMatched: true, removeClicks: capturedButtons.length };
+    }
 
     return (chipsReady || inputsReady || countReady) && (!requireExactSet || exactSetReady);
   })()`;
@@ -1267,8 +1319,9 @@ function buildAttachmentReadyExpression(
 export function buildAttachmentReadyExpressionForTest(
   attachmentNames: AttachmentReadyInput[],
   requireExactSet = false,
+  cleanupMarker?: string,
 ) {
-  return buildAttachmentReadyExpression(attachmentNames, requireExactSet);
+  return buildAttachmentReadyExpression(attachmentNames, requireExactSet, cleanupMarker);
 }
 
 async function attemptSendButton(

@@ -8,6 +8,7 @@ import {
   formatBrowserTurnTranscript,
   isLocalChromeHostForTest,
   normalizeCopiedProfilePreservedErrorForTest,
+  normalizeHeadlessPreservedErrorForTest,
   redactBrowserConfigForDebugLogForTest,
   resolveRemoteTabLeaseProfileDirForTest,
   runBrowserMode,
@@ -271,6 +272,28 @@ describe("browser run target cleanup", () => {
       recoverable: false,
       reattachable: false,
       copiedProfileRetained: false,
+      runtime: undefined,
+    });
+  });
+
+  test("does not advertise an indeterminate headless submission as recoverable", () => {
+    const error = new BrowserAutomationError("The exact tab remains recoverable.", {
+      stage: "submit-prompt",
+      code: "commit-indeterminate-after-dispatch",
+      submissionCommitted: false,
+      retrySafe: false,
+      recoverable: true,
+      runtime: { chromePort: 9222, chromeTargetId: "target-1" },
+    });
+
+    const normalized = normalizeHeadlessPreservedErrorForTest(error, "commit-ambiguous");
+
+    expect(normalized.message).toMatch(/--browser-headless run cannot retain/i);
+    expect(normalized.details).toMatchObject({
+      code: "commit-indeterminate-after-dispatch",
+      retrySafe: false,
+      recoverable: false,
+      reattachable: false,
       runtime: undefined,
     });
   });

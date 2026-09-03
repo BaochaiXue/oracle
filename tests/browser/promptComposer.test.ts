@@ -1227,8 +1227,6 @@ describe("promptComposer", () => {
       };
       const page = { bringToFront: vi.fn() };
       const logger = Object.assign(vi.fn(), { verbose: false });
-      const cleanupOwnedAttachments = vi.fn(async () => undefined);
-
       const result = submitPrompt(
         {
           runtime: runtime as never,
@@ -1237,7 +1235,6 @@ describe("promptComposer", () => {
           attachmentNames: ["evidence.txt"],
           baselineTurns: 0,
           isSubmissionOwner: () => true,
-          cleanupOwnedAttachments,
         },
         "hello",
         logger as never,
@@ -1276,7 +1273,6 @@ describe("promptComposer", () => {
 
       expect(input.dispatchMouseEvent).toHaveBeenCalledTimes(3);
       expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
-      expect(cleanupOwnedAttachments).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
@@ -1285,7 +1281,6 @@ describe("promptComposer", () => {
   test("clears only the exact owned pre-dispatch draft after attachment readiness fails", async () => {
     vi.useFakeTimers();
     try {
-      const cleanupOwnedAttachments = vi.fn(async () => undefined);
       const isSubmissionOwner = vi.fn(async () => true);
       const runtime = {
         evaluate: vi.fn(async ({ expression }: { expression: string }) => {
@@ -1299,6 +1294,12 @@ describe("promptComposer", () => {
           }
           if (expression.includes("oracle-owned-draft-cleanup-precheck")) {
             return { result: { value: { matches: true } } };
+          }
+          if (expression.includes("const cleanupMode = true")) {
+            return { result: { value: { exactSetMatched: true, removeClicks: 1 } } };
+          }
+          if (expression.startsWith("document.querySelectorAll")) {
+            return { result: { value: 0 } };
           }
           if (expression.includes("oracle-owned-draft-cleanup-verify")) {
             return { result: { value: { composerFound: true, empty: true } } };
@@ -1341,7 +1342,6 @@ describe("promptComposer", () => {
           attachmentTimeoutMs: 1_000,
           baselineTurns: 0,
           isSubmissionOwner,
-          cleanupOwnedAttachments,
         },
         "hello",
         Object.assign(vi.fn(), { verbose: false }) as never,
@@ -1373,7 +1373,6 @@ describe("promptComposer", () => {
       await vi.advanceTimersByTimeAsync(2_500);
       await assertion;
 
-      expect(cleanupOwnedAttachments).toHaveBeenCalledTimes(1);
       expect(input.dispatchMouseEvent).not.toHaveBeenCalled();
       expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
     } finally {
@@ -1384,7 +1383,6 @@ describe("promptComposer", () => {
   test("retains the exact tab when the pre-dispatch draft no longer exactly matches", async () => {
     vi.useFakeTimers();
     try {
-      const cleanupOwnedAttachments = vi.fn(async () => undefined);
       const runtime = {
         evaluate: vi.fn(async ({ expression }: { expression: string }) => {
           if (expression.includes("document.readyState")) {
@@ -1435,7 +1433,6 @@ describe("promptComposer", () => {
           attachmentTimeoutMs: 1_000,
           baselineTurns: 0,
           isSubmissionOwner: async () => true,
-          cleanupOwnedAttachments,
         },
         "hello",
         Object.assign(vi.fn(), { verbose: false }) as never,
@@ -1463,7 +1460,6 @@ describe("promptComposer", () => {
       await vi.advanceTimersByTimeAsync(2_000);
       await assertion;
 
-      expect(cleanupOwnedAttachments).not.toHaveBeenCalled();
       expect(input.dispatchMouseEvent).not.toHaveBeenCalled();
       expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
     } finally {

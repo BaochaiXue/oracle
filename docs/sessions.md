@@ -109,7 +109,8 @@ exact committed user turn, the session is stored as `error` with
 and `retrySafe:false`. Use `oracle session <id> --render` to reattach that target;
 do not start a replacement attempt while commit state remains indeterminate.
 This recovery contract does not apply to `--copy-profile`, whose temporary
-profile is always removed and whose ambiguity is explicitly non-reattachable.
+profile is always removed, or `--browser-headless`, whose browser process is not
+retained. Ambiguity in either mode is explicitly non-reattachable.
 
 For a declared parallel batch, resume the parent instead of restarting a child:
 

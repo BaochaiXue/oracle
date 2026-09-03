@@ -112,8 +112,9 @@ indeterminate and recoverable with `retrySafe:false`; Oracle preserves the exact
 tab, persists `incomplete-capture` session state for explicit reattach, and does
 not redispatch or wait for a response whose existence is unknown. The durable
 dispatch-boundary marker must be written before either event; persistence
-failure prevents dispatch. Copied-profile runs remain retry-unsafe but are
-explicitly non-reattachable because their temporary profile is always removed.
+failure prevents dispatch. Copied-profile and headless runs remain retry-unsafe
+but are explicitly non-reattachable because their temporary profile or browser
+process is not retained.
 
 ## OpenCLI Browser Bridge (explicit alternative)
 
@@ -229,7 +230,7 @@ Notes:
    - When `--file` inputs would push the pasted composer content over ~60k characters, we switch to uploading attachments (optionally bundled). Oracle first waits for every expected attachment to settle while the prompt is intentionally empty; ChatGPT may keep Send disabled in that state. It then composes the exact system+user prompt, re-verifies the attachments, and requires an enabled Send button before clicking.
    - Immediately before dispatch, Oracle activates the exact owned target, rechecks ownership and the visible composer, and measures a fresh trusted Send point. Coordinate clicks and Enter share the same exact-turn verification. The durable dispatch-boundary marker must be persisted before either potentially submitting input event. Enter is permitted as an alternate only when trusted-click emitted no potentially submitting input event at all. Once `mousePressed` or Enter `keyDown` has been emitted, Oracle never changes methods or dispatches again automatically.
    - Oracle refuses to overwrite or append to non-empty composer content it cannot prove it owns. After a potentially submitting event, retained drafts and cleared-but-unobserved commits are classified as indeterminate/recoverable with `retrySafe:false` and keep their exact tab with sanitized submission diagnostics. Preserve that session and inspect it with `oracle session <id> --render`; do not rerun the prompt while commit state is uncertain.
-   - A first non-empty composer observation receives up to five seconds of read-only settling checks for transient profile/SPA restoration; persistent content remains untouched. Before any submitting event, an attachment Send-readiness failure may clear only the current attempt's attachments and exact prompt after exact-target, ownership, current full-prompt, and exact attachment-set re-verification. Verified cleanup records `retrySafe:true`; unverifiable or partial cleanup retains the exact tab with `retrySafe:false`.
+   - A first non-empty composer observation receives up to five seconds of read-only settling checks for transient profile/SPA restoration; persistent content remains untouched. Before any submitting event, an attachment Send-readiness failure may clear only the current attempt's attachments and exact prompt after exact-target, ownership, current full-prompt, and exact attachment-set re-verification. Attachment removal atomically revalidates that exact set and clicks only the controls captured in that snapshot; it never re-queries and clears every current attachment. Verified cleanup records `retrySafe:true`; unverifiable or partial cleanup retains the exact tab with `retrySafe:false`.
    - Dedicated mode treats the persistent profile as a shared browser-scope resource while process lifetime defaults to `while-needed`; each run owns only its exact tab, and the last lease drains Chrome when no recovery hold or unowned meaningful page remains. Ephemeral mode removes its temporary profile unless explicitly retained.
 
 3. **Session integration** – browser sessions use the normal log writer, add `mode: "browser"` plus `browser.config/runtime` metadata, and persist Chrome pid/port or websocket attach metadata plus the Oracle-owned target and committed conversation URL for reattach. A later URL observed in that mutable target cannot replace the committed conversation receipt.
