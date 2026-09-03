@@ -305,6 +305,29 @@ function shouldKeepLocalBrowserOpen(options: {
   return options.effectiveKeepBrowser || options.preserveBrowserOnError;
 }
 
+function normalizeCopiedProfilePreservedError(
+  error: Error,
+  kind: PreservedBrowserErrorKind,
+): BrowserAutomationError {
+  const details = error instanceof BrowserAutomationError ? error.details : undefined;
+  const message =
+    kind === "commit-ambiguous"
+      ? "Oracle emitted a potentially submitting event but could not verify the exact committed turn. This --copy-profile run cannot retain its temporary tab or profile, so automatic redispatch remains disabled and the result is not reattachable."
+      : "This --copy-profile run cannot retain its temporary tab or profile after the browser failure; no automatic redispatch will be attempted.";
+  return new BrowserAutomationError(
+    message,
+    {
+      ...details,
+      runtime: undefined,
+      recoverable: false,
+      reattachable: false,
+      copiedProfileRetained: false,
+      retrySafe: details?.retrySafe === true,
+    },
+    error,
+  );
+}
+
 export function shouldPreserveBrowserOnErrorForTest(error: unknown, headless: boolean): boolean {
   return shouldPreserveBrowserOnError(error, headless);
 }
@@ -314,6 +337,13 @@ export function classifyPreservedBrowserErrorForTest(
   headless: boolean,
 ): PreservedBrowserErrorKind | null {
   return classifyPreservedBrowserError(error, headless);
+}
+
+export function normalizeCopiedProfilePreservedErrorForTest(
+  error: Error,
+  kind: PreservedBrowserErrorKind,
+): BrowserAutomationError {
+  return normalizeCopiedProfilePreservedError(error, kind);
 }
 
 // NOTE: Previously, shouldSkipThinkingTimeSelection() would skip the thinking
@@ -1091,7 +1121,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     if (proTimingRequired) {
       proTimingRuntime = markProPromptDispatched(proTimingRuntime);
     }
-    await emitRuntimeHint();
+    await emitRuntimeHint(true);
   };
   const markPromptCommitted = async (
     _committedTurns: number | null,
@@ -2698,7 +2728,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       preservedErrorKind === "commit-ambiguous"
     ) {
       if (usingCopiedProfile) {
-        throw normalizedError;
+        throw normalizeCopiedProfilePreservedError(normalizedError, preservedErrorKind);
       }
       preserveBrowserOnError = true;
       browserDisposition = "recoverable";
@@ -3258,7 +3288,7 @@ async function runRemoteBrowserMode(
     conversationUrlMonitor?.boundConversationId() ??
     extractConversationIdFromUrl(authoritativeConversationUrl() ?? "");
   const runtimeHintCb = options.runtimeHintCb;
-  const emitRuntimeHint = async () => {
+  const emitRuntimeHint = async (strict = false) => {
     if (!runtimeHintCb) return;
     try {
       await runtimeHintCb(
@@ -3286,13 +3316,14 @@ async function runRemoteBrowserMode(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger(`Failed to persist runtime hint: ${message}`);
+      if (strict) throw error;
     }
   };
   const markPromptDispatched = async (): Promise<void> => {
     if (proTimingRequired) {
       proTimingRuntime = markProPromptDispatched(proTimingRuntime);
     }
-    await emitRuntimeHint();
+    await emitRuntimeHint(true);
   };
   const markPromptCommitted = async (
     _committedTurns: number | null,

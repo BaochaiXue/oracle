@@ -103,6 +103,14 @@ oracle --engine browser \
 
 See [Browser Mode](browser-mode.md) for the full set.
 
+If direct CDP emits one potentially submitting event but cannot verify the
+exact committed user turn, the session is stored as `error` with
+`incompleteReason: "incomplete-capture"`, an exact recoverable browser target,
+and `retrySafe:false`. Use `oracle session <id> --render` to reattach that target;
+do not start a replacement attempt while commit state remains indeterminate.
+This recovery contract does not apply to `--copy-profile`, whose temporary
+profile is always removed and whose ambiguity is explicitly non-reattachable.
+
 For a declared parallel batch, resume the parent instead of restarting a child:
 
 ```bash

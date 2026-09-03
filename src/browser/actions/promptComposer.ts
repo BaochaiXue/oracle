@@ -88,6 +88,7 @@ interface SubmissionDiagnostic {
   ownershipVerified: boolean;
   composerMatchedPromptBeforeDispatch: boolean;
   ownedAttachmentCleanupAttempted: boolean;
+  ownedAttachmentSetVerified: boolean;
   ownedAttachmentCleanupSucceeded: boolean;
   ownedDraftCleanupAttempted: boolean;
   ownedDraftCleanupSucceeded: boolean;
@@ -137,6 +138,7 @@ function createSubmissionDiagnostic(baselineTurns?: number | null): SubmissionDi
     ownershipVerified: false,
     composerMatchedPromptBeforeDispatch: false,
     ownedAttachmentCleanupAttempted: false,
+    ownedAttachmentSetVerified: false,
     ownedAttachmentCleanupSucceeded: false,
     ownedDraftCleanupAttempted: false,
     ownedDraftCleanupSucceeded: false,
@@ -584,6 +586,14 @@ async function cleanupOwnedDraftAfterAttachmentReadinessFailure({
       throw new Error("submission target ownership changed before cleanup");
     }
 
+    if (!(await matchesExactOwnedPromptComposer(deps.runtime, prompt))) {
+      throw new Error("exact owned prompt changed before attachment cleanup");
+    }
+    if (!(await verifyExactOwnedAttachmentSet(deps.runtime, deps.attachmentNames ?? []))) {
+      throw new Error("exact owned attachment set changed before cleanup");
+    }
+    diagnostic.ownedAttachmentSetVerified = true;
+
     diagnostic.ownedAttachmentCleanupAttempted = true;
     await deps.cleanupOwnedAttachments?.();
     diagnostic.ownedAttachmentCleanupSucceeded = true;
@@ -636,6 +646,54 @@ async function cleanupOwnedDraftAfterAttachmentReadinessFailure({
   }
 }
 
+async function matchesExactOwnedPromptComposer(
+  Runtime: ChromeClient["Runtime"],
+  expectedPrompt: string,
+): Promise<boolean> {
+  const result = await Runtime.evaluate({
+    expression: `(() => {
+      // oracle-owned-draft-cleanup-precheck
+      const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
+      ${COMPOSER_VALUE_READER_SOURCE}
+      const normalizeComposer = (value) => String(value ?? '')
+        .replace(/\\r\\n?/g, '\\n')
+        .replace(/\\u00a0/g, ' ');
+      const expected = normalizeComposer(${JSON.stringify(expectedPrompt)});
+      const isVisible = (node) => {
+        if (!node || typeof node.getBoundingClientRect !== 'function') return false;
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+      const nodes = Array.from(new Set(inputSelectors.flatMap((selector) =>
+        Array.from(document.querySelectorAll(selector)))));
+      const active = nodes.find((node) => isVisible(node)) || nodes[0] || null;
+      const nonEmptyNodes = nodes.filter((node) =>
+        normalizeComposer(readComposerValue(node)).trim().length > 0);
+      return {
+        matches:
+          Boolean(active) &&
+          normalizeComposer(readComposerValue(active)) === expected &&
+          nonEmptyNodes.length > 0 &&
+          nonEmptyNodes.every((node) => normalizeComposer(readComposerValue(node)) === expected),
+      };
+    })()`,
+    returnByValue: true,
+  });
+  return result.result?.value?.matches === true;
+}
+
+async function verifyExactOwnedAttachmentSet(
+  Runtime: ChromeClient["Runtime"],
+  attachmentNames: AttachmentReadyInput[],
+): Promise<boolean> {
+  if (attachmentNames.length === 0) return false;
+  const result = await Runtime.evaluate({
+    expression: buildAttachmentReadyExpression(attachmentNames, true),
+    returnByValue: true,
+  });
+  return result.result?.value === true;
+}
+
 async function clearExactOwnedPromptComposer(
   Runtime: ChromeClient["Runtime"],
   expectedPrompt: string,
@@ -649,11 +707,19 @@ async function clearExactOwnedPromptComposer(
         .replace(/\\r\\n?/g, '\\n')
         .replace(/\\u00a0/g, ' ');
       const expected = normalizeComposer(${JSON.stringify(expectedPrompt)});
+      const isVisible = (node) => {
+        if (!node || typeof node.getBoundingClientRect !== 'function') return false;
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
       const nodes = Array.from(new Set(inputSelectors.flatMap((selector) =>
         Array.from(document.querySelectorAll(selector)))));
+      const active = nodes.find((node) => isVisible(node)) || nodes[0] || null;
       const nonEmptyNodes = nodes.filter((node) =>
         normalizeComposer(readComposerValue(node)).trim().length > 0);
       if (
+        !active ||
+        normalizeComposer(readComposerValue(active)) !== expected ||
         nonEmptyNodes.length === 0 ||
         nonEmptyNodes.some((node) => normalizeComposer(readComposerValue(node)) !== expected)
       ) {
@@ -881,7 +947,10 @@ async function waitForDomReady(
   logger?.(`Page did not reach ready/composer state within ${timeoutMs}ms; continuing cautiously.`);
 }
 
-function buildAttachmentReadyExpression(attachmentNames: AttachmentReadyInput[]): string {
+function buildAttachmentReadyExpression(
+  attachmentNames: AttachmentReadyInput[],
+  requireExactSet = false,
+): string {
   const attachmentExpectations = attachmentNames.map((attachment) => {
     const name = typeof attachment === "string" ? attachment : attachment.name;
     const normalized = name.toLowerCase().replace(/\s+/g, " ").trim();
@@ -895,6 +964,7 @@ function buildAttachmentReadyExpression(attachmentNames: AttachmentReadyInput[])
   const namesLiteral = JSON.stringify(attachmentExpectations);
   return `(() => {
     const expected = ${namesLiteral};
+    const requireExactSet = ${JSON.stringify(requireExactSet)};
     const sendSelectors = ${JSON.stringify(SEND_BUTTON_SELECTORS)};
     const normalize = (value) => String(value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
     const hasNameBoundary = (text, name) => {
@@ -1168,12 +1238,37 @@ function buildAttachmentReadyExpression(attachmentNames: AttachmentReadyInput[])
       visibleExtensionLabelsMatchExpected &&
       removeAffordances.length >= expected.length;
 
-    return chipsReady || inputsReady || countReady;
+    const exactDistinctMatch = (labels) => {
+      if (labels.length !== expected.length) return false;
+      const used = new Set();
+      return expected.every((item) => {
+        const index = labels.findIndex((label, candidateIndex) =>
+          !used.has(candidateIndex) && matchesExpected(label, item),
+        );
+        if (index === -1) return false;
+        used.add(index);
+        return true;
+      });
+    };
+    const removeLabels = removeAffordances.map((node) => collectLabelHaystack(node));
+    const inputNames = attachmentRoots.flatMap((root) =>
+      Array.from(root.querySelectorAll('input[type="file"]')).flatMap((el) =>
+        Array.from((el instanceof HTMLInputElement ? el.files : []) || []).map((file) =>
+          normalize(file?.name),
+        ),
+      ),
+    );
+    const exactSetReady = exactDistinctMatch(removeLabels) || exactDistinctMatch(inputNames);
+
+    return (chipsReady || inputsReady || countReady) && (!requireExactSet || exactSetReady);
   })()`;
 }
 
-export function buildAttachmentReadyExpressionForTest(attachmentNames: AttachmentReadyInput[]) {
-  return buildAttachmentReadyExpression(attachmentNames);
+export function buildAttachmentReadyExpressionForTest(
+  attachmentNames: AttachmentReadyInput[],
+  requireExactSet = false,
+) {
+  return buildAttachmentReadyExpression(attachmentNames, requireExactSet);
 }
 
 async function attemptSendButton(

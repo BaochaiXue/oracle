@@ -104,8 +104,9 @@ function matchesSingleSelector(element: FakeElement, selector: string): boolean 
 function evaluateAttachmentReadyExpression(
   attachmentNames: Array<string | { name: string; generatedBundle?: boolean }>,
   document: FakeDocument,
+  requireExactSet = false,
 ): boolean {
-  const expression = buildAttachmentReadyExpressionForTest(attachmentNames);
+  const expression = buildAttachmentReadyExpressionForTest(attachmentNames, requireExactSet);
   const evaluate = new Function(
     "document",
     "HTMLElement",
@@ -183,6 +184,26 @@ describe("prompt composer attachment expressions", () => {
     ]);
 
     expect(evaluateAttachmentReadyExpression([fileName], document)).toBe(true);
+  });
+
+  test("exact cleanup ownership rejects an added attachment before removing anything", () => {
+    const ownedName = "oracle-owned.txt";
+    const addedName = "user-added.txt";
+    const document = new FakeDocument([
+      new FakeElement("div", { "data-testid": "unified-composer" }, [
+        new FakeElement("div", { "data-testid": "attachment-chip" }, [
+          new FakeElement("span", {}, [], ownedName),
+          new FakeElement("button", { "aria-label": `Remove file 1: ${ownedName}` }),
+        ]),
+        new FakeElement("div", { "data-testid": "attachment-chip" }, [
+          new FakeElement("span", {}, [], addedName),
+          new FakeElement("button", { "aria-label": `Remove file 2: ${addedName}` }),
+        ]),
+      ]),
+    ]);
+
+    expect(evaluateAttachmentReadyExpression([ownedName], document)).toBe(true);
+    expect(evaluateAttachmentReadyExpression([ownedName], document, true)).toBe(false);
   });
 
   test("attachment ready check prefers composer roots over unrelated forms", () => {

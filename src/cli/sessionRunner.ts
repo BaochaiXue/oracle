@@ -534,12 +534,34 @@ export async function performSessionRun({
       userError?.category === "browser-automation" &&
       (userError.details as { code?: string } | undefined)?.code === "chatgpt-submission-gate";
     const browserCanReattach = !browserConfig?.copyProfileSource;
+    const errorBrowserRuntime = (
+      userError?.details as { runtime?: BrowserRuntimeMetadata } | undefined
+    )?.runtime;
+    const errorCode = (userError?.details as { code?: string } | undefined)?.code;
+    const recoverableAmbiguousSubmission =
+      userError?.category === "browser-automation" &&
+      [
+        "commit-ambiguous-composer-cleared",
+        "commit-ambiguous-multiple-user-turns",
+        "commit-indeterminate-after-dispatch",
+      ].includes(errorCode ?? "") &&
+      errorBrowserRuntime?.browserDisposition === "recoverable" &&
+      errorBrowserRuntime.recoveryKind === "awaiting-response";
     let reattachGuidanceLogged = false;
     const logBrowserReattachGuidance = (
       runtime: BrowserRuntimeMetadata | null | undefined,
     ): void => {
       if (reattachGuidanceLogged || mode !== "browser") return;
-      if (!hasRecoverableChatGptConversation(runtime) && runtime?.promptSubmitted !== true) {
+      const hasExactRecoverableTarget = Boolean(
+        runtime?.browserDisposition === "recoverable" &&
+        runtime.chromeTargetId &&
+        (runtime.chromePort || runtime.chromeBrowserWSEndpoint || runtime.chromeProfileRoot),
+      );
+      if (
+        !hasRecoverableChatGptConversation(runtime) &&
+        runtime?.promptSubmitted !== true &&
+        !hasExactRecoverableTarget
+      ) {
         return;
       }
       reattachGuidanceLogged = true;
@@ -646,6 +668,43 @@ export async function performSessionRun({
       if (success) {
         return;
       }
+      return;
+    }
+    if (recoverableAmbiguousSubmission && mode === "browser" && browserCanReattach) {
+      log(
+        dim("Prompt commit is indeterminate; marking capture incomplete for exact-tab reattach."),
+      );
+      const incompleteResponse = {
+        status: "incomplete",
+        incompleteReason: "incomplete-capture",
+      } as const;
+      const ambiguousError = {
+        category: userError.category,
+        message: userError.message,
+        details: userError.details,
+      };
+      if (modelForStatus) {
+        await sessionStore.updateModelRun(sessionMeta.id, modelForStatus, {
+          status: "error",
+          completedAt: new Date().toISOString(),
+          response: incompleteResponse,
+          error: ambiguousError,
+        });
+      }
+      await sessionStore.updateSession(sessionMeta.id, {
+        status: "error",
+        completedAt: new Date().toISOString(),
+        errorMessage: message,
+        mode,
+        browser: {
+          ...currentBrowser,
+          config: browserConfig,
+          runtime: errorBrowserRuntime,
+        },
+        response: incompleteResponse,
+        error: ambiguousError,
+      });
+      logBrowserReattachGuidance(errorBrowserRuntime);
       return;
     }
     if (assistantTimeout && mode === "browser" && browserCanReattach) {

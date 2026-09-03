@@ -1856,6 +1856,68 @@ describe("performSessionRun", () => {
     expect(logLines).toContain("oracle session sess-1 --render");
   });
 
+  test("marks an indeterminate post-dispatch submission incomplete for exact-tab reattach", async () => {
+    const runtime = {
+      browserTransport: "cdp" as const,
+      chromePort: 9222,
+      chromeHost: "127.0.0.1",
+      chromeTargetId: "target-1",
+      tabUrl: "https://chatgpt.com/",
+      promptSubmitted: false,
+      browserDisposition: "recoverable" as const,
+      recoveryKind: "awaiting-response" as const,
+    };
+    const automationError = new BrowserAutomationError(
+      "Oracle emitted one potentially submitting input event but could not verify the exact committed user turn.",
+      {
+        stage: "submit-prompt",
+        code: "commit-indeterminate-after-dispatch",
+        submissionCommitted: false,
+        retrySafe: false,
+        runtime,
+      },
+    );
+    vi.mocked(runBrowserSessionExecution).mockRejectedValueOnce(automationError);
+
+    await performSessionRun({
+      sessionMeta: baseSessionMeta,
+      runOptions: baseRunOptions,
+      mode: "browser",
+      browserConfig: { chromePath: null },
+      cwd: "/tmp",
+      log,
+      write,
+      version: cliVersion,
+    });
+
+    const finalUpdate = sessionStoreMock.updateSession.mock.calls.at(-1)?.[1];
+    expect(finalUpdate).toMatchObject({
+      status: "error",
+      response: { status: "incomplete", incompleteReason: "incomplete-capture" },
+      browser: expect.objectContaining({ runtime }),
+      error: expect.objectContaining({
+        category: "browser-automation",
+        details: expect.objectContaining({
+          code: "commit-indeterminate-after-dispatch",
+          retrySafe: false,
+        }),
+      }),
+    });
+    expect(sessionStoreMock.updateModelRun).toHaveBeenCalledWith(
+      baseSessionMeta.id,
+      "gpt-5.2-pro",
+      expect.objectContaining({
+        status: "error",
+        response: { status: "incomplete", incompleteReason: "incomplete-capture" },
+      }),
+    );
+    const logLines = log.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(logLines).toContain(
+      "Prompt commit is indeterminate; marking capture incomplete for exact-tab reattach.",
+    );
+    expect(logLines).toContain("oracle session sess-1 --render");
+  });
+
   test("records runtime and guidance when cloudflare challenge is detected", async () => {
     const automationError = new BrowserAutomationError(
       "Cloudflare challenge detected. Complete the “Just a moment…” check in the open browser, then rerun.",

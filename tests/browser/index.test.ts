@@ -7,6 +7,7 @@ import {
   classifyPreservedBrowserErrorForTest,
   formatBrowserTurnTranscript,
   isLocalChromeHostForTest,
+  normalizeCopiedProfilePreservedErrorForTest,
   redactBrowserConfigForDebugLogForTest,
   resolveRemoteTabLeaseProfileDirForTest,
   runBrowserMode,
@@ -249,6 +250,29 @@ describe("browser run target cleanup", () => {
         usingCopiedProfile: true,
       }),
     ).toBe(false);
+  });
+
+  test("does not advertise an indeterminate copied-profile submission as recoverable", () => {
+    const error = new BrowserAutomationError("The exact tab remains recoverable.", {
+      stage: "submit-prompt",
+      code: "commit-indeterminate-after-dispatch",
+      submissionCommitted: false,
+      retrySafe: false,
+      recoverable: true,
+      runtime: { chromePort: 9222, chromeTargetId: "target-1" },
+    });
+
+    const normalized = normalizeCopiedProfilePreservedErrorForTest(error, "commit-ambiguous");
+
+    expect(normalized.message).toMatch(/cannot retain its temporary tab or profile/i);
+    expect(normalized.details).toMatchObject({
+      code: "commit-indeterminate-after-dispatch",
+      retrySafe: false,
+      recoverable: false,
+      reattachable: false,
+      copiedProfileRetained: false,
+      runtime: undefined,
+    });
   });
 
   test("keeps existing retention semantics for ordinary profiles", () => {

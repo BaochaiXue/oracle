@@ -955,6 +955,48 @@ describe("promptComposer", () => {
     }
   });
 
+  test.each(["trusted-click", "enter"] as const)(
+    "emits no submitting event when %s dispatch-boundary persistence fails",
+    async (method) => {
+      vi.useFakeTimers();
+      try {
+        const scenario = createSubmitDispatchScenario({ method, commitAtMs: null });
+        const onPromptDispatched = vi.fn(async () => {
+          throw new Error("runtime hint persistence failed");
+        });
+
+        const result = submitPrompt(
+          {
+            runtime: scenario.runtime as never,
+            input: scenario.input as never,
+            page: scenario.page as never,
+            baselineTurns: 0,
+            isSubmissionOwner: scenario.isSubmissionOwner,
+            onPromptDispatched,
+          },
+          "hello",
+          Object.assign(vi.fn(), { verbose: false }) as never,
+        );
+        const assertion = expect(result).rejects.toThrow("runtime hint persistence failed");
+        await vi.advanceTimersByTimeAsync(2_000);
+        await assertion;
+
+        expect(onPromptDispatched).toHaveBeenCalledTimes(1);
+        expect(scenario.dispatchCount()).toBe(0);
+        expect(
+          scenario.input.dispatchMouseEvent.mock.calls.filter(
+            ([event]) => event.type === "mousePressed",
+          ),
+        ).toHaveLength(0);
+        expect(
+          scenario.input.dispatchKeyEvent.mock.calls.filter(([event]) => event.type === "keyDown"),
+        ).toHaveLength(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   test("keeps a permanently retained draft after click indeterminate with one dispatch", async () => {
     vi.useFakeTimers();
     try {
@@ -1255,6 +1297,9 @@ describe("promptComposer", () => {
               result: { value: { composerFound: true, composerLength: 0, composerEmpty: true } },
             };
           }
+          if (expression.includes("oracle-owned-draft-cleanup-precheck")) {
+            return { result: { value: { matches: true } } };
+          }
           if (expression.includes("oracle-owned-draft-cleanup-verify")) {
             return { result: { value: { composerFound: true, empty: true } } };
           }
@@ -1314,6 +1359,7 @@ describe("promptComposer", () => {
           submissionDiagnostic: expect.objectContaining({
             composerMatchedPromptBeforeDispatch: true,
             ownedAttachmentCleanupAttempted: true,
+            ownedAttachmentSetVerified: true,
             ownedAttachmentCleanupSucceeded: true,
             ownedDraftCleanupAttempted: true,
             ownedDraftCleanupSucceeded: true,
@@ -1348,6 +1394,9 @@ describe("promptComposer", () => {
             return {
               result: { value: { composerFound: true, composerLength: 0, composerEmpty: true } },
             };
+          }
+          if (expression.includes("oracle-owned-draft-cleanup-precheck")) {
+            return { result: { value: { matches: false } } };
           }
           if (expression.includes("oracle-owned-draft-cleanup")) {
             return { result: { value: { cleared: false } } };
@@ -1400,9 +1449,10 @@ describe("promptComposer", () => {
           recoverable: true,
           cleanupVerified: false,
           submissionDiagnostic: expect.objectContaining({
-            ownedAttachmentCleanupAttempted: true,
-            ownedAttachmentCleanupSucceeded: true,
-            ownedDraftCleanupAttempted: true,
+            ownedAttachmentCleanupAttempted: false,
+            ownedAttachmentSetVerified: false,
+            ownedAttachmentCleanupSucceeded: false,
+            ownedDraftCleanupAttempted: false,
             ownedDraftCleanupSucceeded: false,
             potentiallySubmittingEventEmitted: false,
             retryEligible: false,
@@ -1413,7 +1463,7 @@ describe("promptComposer", () => {
       await vi.advanceTimersByTimeAsync(2_000);
       await assertion;
 
-      expect(cleanupOwnedAttachments).toHaveBeenCalledTimes(1);
+      expect(cleanupOwnedAttachments).not.toHaveBeenCalled();
       expect(input.dispatchMouseEvent).not.toHaveBeenCalled();
       expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
     } finally {
