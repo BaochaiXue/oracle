@@ -201,9 +201,12 @@ model reads commit history, issues, pull requests, and the files you chose not
 to attach. Dispatching without it wastes the strongest context channel Oracle
 has. The only exemption is a project with no GitHub remote at all.
 
-Name the project by its GitHub identity, never by the local folder. A checkout
-in `~/bit` whose remote is `Owner/neural-decoder` must be introduced to ChatGPT
-as `Owner/neural-decoder`; `bit` is not the project name.
+Name the project by its full GitHub identity, never by the local folder name
+alone. A checkout in `~/bit` whose remote is `git@github.com:BaochaiXue/bit.git`
+must be introduced to ChatGPT as `BaochaiXue/bit`. A bare `bit` is not an
+identity: GitHub holds many repositories with that name, and the connector needs
+the owner to open the right one. When the folder was renamed or cloned under a
+different name, the remote still decides.
 
 Resolve the identity from Git metadata before writing the prompt:
 
