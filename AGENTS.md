@@ -67,16 +67,19 @@ or maintainer-only release instructions.
   login/auth-seed migration input only after the applicable owner gate; never
   run an ordinary consultation directly against the seed and never copy a
   sandbox back into it.
-- Each turn attempt and purpose (`dispatch`, `at-risk`, `capture`, or `probe`)
-  owns one private disposable sandbox, one exact Chrome for Testing process,
-  one adapter, and at most one page. Browser resources are execution evidence,
-  never durable job truth.
+- Each turn attempt and purpose owns one private disposable sandbox, one exact
+  Chrome for Testing process, one adapter, and at most one page. Preparation,
+  verification, Send, and `dispatch-at-risk` commit observation are one
+  `dispatch` purpose and must reuse the exact same sandbox/key/lifetime; only
+  committed capture recovery and probe use distinct purpose-specific sandboxes.
+  Browser resources are execution evidence, never durable job truth.
 - Before Send, failure closes and removes the whole sandbox. Do not clear,
   adopt, digest-match, reclaim, or otherwise infer ownership of a composer
   draft or attachment.
 - After `dispatch-at-risk`, Send authority is permanently absent. Commit may be
-  observed only in the exact attempt sandbox; if that workspace cannot prove
-  the commit, preserve ledger truth as ambiguous and destroy browser resources.
+  observed only in the exact dispatch sandbox that emitted the potentially
+  submitting event; if that workspace cannot prove the commit, preserve ledger
+  truth as ambiguous and destroy browser resources.
 - Committed-capture recovery may create a fresh capture-only sandbox and
   navigate only from the durable submission receipt. It never fills the
   composer or emits Send.

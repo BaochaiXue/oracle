@@ -38,10 +38,11 @@ worker/browser, or submit a prompt.
 The accepted replacement keeps the v2 kernel, store, worker ledger, bundle,
 client, Batch, receipts, and adapter page semantics. A fixed profile becomes a
 login-only auth seed; each job attempt/purpose receives an owner-only disposable
-sandbox, exact process, adapter, and at most one page. Pre-Send failure,
-completion, and ambiguity all end by removing that workspace after ledger truth
-is saved. `dispatch-at-risk` has commit-observation authority only in its exact
-sandbox, and committed-capture recovery may use a fresh capture-only sandbox.
+sandbox, exact process, adapter, and at most one page. Preparation through
+`dispatch-at-risk` observation shares one exact dispatch sandbox/key/lifetime.
+Pre-Send failure, completion, and ambiguity all end by removing that workspace
+after ledger truth is saved; only committed-capture recovery or probe may create
+a fresh purpose-specific sandbox.
 The corrected source/reference and G4 deletion map is
 [`oracle-v2-browser-ownership-map.md`](oracle-v2-browser-ownership-map.md).
 

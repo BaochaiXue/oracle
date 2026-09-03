@@ -147,9 +147,11 @@ them. Projection failure is recorded and retried without rolling back an
 already committed external submission.
 
 The scheduler uses one dispatch mutex. Capture concurrency may remain bounded
-above one at the job layer, but browser ownership is never shared: each live
-dispatch, at-risk observation, capture recovery, or probe has its own sandbox,
-process, adapter, and at most one page.
+above one at the job layer, but browser ownership is never shared across jobs.
+Preparation, verification, Send, and at-risk observation for one turn share one
+exact dispatch sandbox/key/lifetime. A fresh committed-capture recovery or probe
+uses its own purpose-specific sandbox. Every sandbox has one process, one
+adapter, and at most one page.
 
 ## Browser and provider contract
 
@@ -333,8 +335,9 @@ D01-D20 acceptance set.
 pages, preserves recovery windows across jobs, and globally blocks the runner
 on any escaping job error. The accepted correction reclassifies that fixed
 profile as a login-only auth seed, creates one disposable sandbox/runtime/page
-per turn attempt and purpose, destroys terminal/unsent/ambiguous workspaces,
-and restricts at-risk recovery to commit observation in the exact sandbox.
+per turn attempt and purpose, keeps dispatch and at-risk observation in the
+same exact sandbox, destroys terminal/unsent/ambiguous workspaces, and permits a
+fresh sandbox only for committed-capture recovery or probe work.
 Kernel, store, worker ledger authority, bundle, client admission, receipts,
 model/effort requirements, and G3/G4 remain intact. T0 changes documentation
 authority only; no runtime behavior, local profile, or account state changes.
