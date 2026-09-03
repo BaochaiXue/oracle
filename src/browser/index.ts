@@ -1628,6 +1628,9 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
             stage: "conversation-identity",
             code: "conversation-id-unbound",
             promptSubmitted,
+            // Distinguishes "the route never changed" from "it changed but the
+            // committed turn stayed pending" from "the page could not be read".
+            diagnostics: activeConversationUrlMonitor.snapshot(),
           },
         );
       }
@@ -3383,6 +3386,9 @@ async function runRemoteBrowserMode(
             stage: "conversation-identity",
             code: "conversation-id-unbound",
             promptSubmitted,
+            // Distinguishes "the route never changed" from "it changed but the
+            // committed turn stayed pending" from "the page could not be read".
+            diagnostics: activeConversationUrlMonitor.snapshot(),
           },
         );
       }

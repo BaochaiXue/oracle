@@ -16,6 +16,7 @@ import { delay } from "../utils.js";
 import { logDomFailure } from "../domDebug.js";
 import { buildClickDispatcher } from "./domEvents.js";
 import { BrowserAutomationError } from "../../oracle/errors.js";
+import { PROMPT_TEXT_NORMALIZER_SOURCE } from "../promptTextNormalizer.js";
 
 const ENTER_KEY_EVENT = {
   key: "Enter",
@@ -920,13 +921,7 @@ async function attemptRetainedDraftPageRetry({
     const normalizeComposer = (value) => String(value ?? '')
       .replace(/\\r\\n?/g, '\\n')
       .replace(/\\u00a0/g, ' ');
-    const normalizeTurn = (value) => {
-      let text = String(value ?? '').toLowerCase();
-      text = text.replace(/\`\`\`[^\\n]*\\n([\\s\\S]*?)\`\`\`/g, ' $1 ');
-      text = text.replace(/\`\`\`/g, ' ');
-      text = text.replace(/\`([^\`]*)\`/g, '$1');
-      return text.replace(/\\s+/g, ' ').trim();
-    };
+    const normalizeTurn = ${PROMPT_TEXT_NORMALIZER_SOURCE};
     const normalizeOwner = (value) => {
       try {
         const url = new URL(String(value ?? ''), location.href);
@@ -1172,14 +1167,7 @@ async function verifyPromptCommitted(
 		    const editor = document.querySelector(${primarySelectorLiteral});
 		    const fallback = document.querySelector(${fallbackSelectorLiteral});
 		    const inputSelectors = ${inputSelectorsLiteral};
-	    const normalize = (value) => {
-	      let text = value?.toLowerCase?.() ?? '';
-	      // Strip markdown *markers* but keep content (ChatGPT renders fence markers differently).
-	      text = text.replace(/\`\`\`[^\\n]*\\n([\\s\\S]*?)\`\`\`/g, ' $1 ');
-	      text = text.replace(/\`\`\`/g, ' ');
-	      text = text.replace(/\`([^\`]*)\`/g, '$1');
-	      return text.replace(/\\s+/g, ' ').trim();
-		    };
+	    const normalize = ${PROMPT_TEXT_NORMALIZER_SOURCE};
 		    const normalizedPrompt = normalize(${encodedPrompt});
 		    const articles = ${buildConversationTurnListExpression()};
 		    const normalizedTurns = articles.map((node) => normalize(node?.innerText));

@@ -15,7 +15,7 @@ description: "Continue a saved ChatGPT browser conversation or an OpenAI / Azure
 
 ```bash
 # Initial run
-oracle --model gpt-5.5-pro --slug arch-review \
+oracle --engine browser --model gpt-5-pro --slug arch-review \
   -p "Audit the auth flow end-to-end" \
   --file "src/auth/**"
 
@@ -48,7 +48,7 @@ Browser resume is fail-closed: Oracle refuses to submit if the saved URL is not 
 When the parent used `--models a,b,c`, pick which lineage to continue from with `--followup-model`:
 
 ```bash
-oracle --followup arch-review --followup-model gpt-5.5-pro \
+oracle --followup arch-review --followup-model gpt-5.6-sol \
   -p "Continue from the Pro answer" \
   --file "src/auth/rate-limiter.ts"
 ```
@@ -73,7 +73,7 @@ If you try to follow up on an unsupported provider, Oracle errors clearly instea
 In browser mode, `--browser-follow-up` adds planned prompts to the _same ChatGPT conversation_ during one Oracle run:
 
 ```bash
-oracle --engine browser --model gpt-5.5-pro \
+oracle --engine browser --model gpt-5-pro \
   -p "Review this migration plan" --file docs/migration.md \
   --browser-follow-up "Challenge your previous recommendation" \
   --browser-follow-up "Give the final decision"
@@ -85,10 +85,10 @@ Each `--browser-follow-up` is sent after the previous turn completes. Not suppor
 
 ```
 Status    Model         Mode    Timestamp           Chars    Cost  Slug
-completed gpt-5.5-pro   api     05/06 09:00 AM      1800  $2.110  arch-review
-completed gpt-5.5-pro   api     05/06 09:14 AM      2200  $2.980  ├─ arch-review-rate-limiter
-running   gpt-5.5-pro   api     05/06 09:22 AM      1400       -  │  └─ arch-review-implementation
-pending   gpt-5.5-pro   api     05/06 09:25 AM       900       -  └─ arch-review-risk-check
+completed gpt-5-pro     br/bg    05/06 09:00 AM      1800  $2.110  arch-review
+completed gpt-5-pro     br/bg    05/06 09:14 AM      2200  $2.980  ├─ arch-review-rate-limiter
+running   gpt-5-pro     br/bg    05/06 09:22 AM      1400       -  │  └─ arch-review-implementation
+pending   gpt-5-pro     br/bg    05/06 09:25 AM       900       -  └─ arch-review-risk-check
 ```
 
 Children inherit the parent's slug prefix unless you pass `--slug` explicitly.

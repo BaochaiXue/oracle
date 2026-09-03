@@ -23,6 +23,7 @@ import {
 import { resolveBrowserConfig } from "./config.js";
 import { clearStaleChatGptConversationCookies, syncCookies } from "./cookies.js";
 import { CHATGPT_URL } from "./constants.js";
+import { PROMPT_TEXT_NORMALIZER_SOURCE } from "./promptTextNormalizer.js";
 import { buildConversationTurnListExpression } from "./conversationTurns.js";
 import { acquireProfileRunLock } from "./profileState.js";
 import { readDevToolsActivePortInfo } from "./detect.js";
@@ -756,13 +757,7 @@ async function verifyCommittedProTurnIdentity(
   const { result } = await Runtime.evaluate({
     expression: `(async () => {
       const expectedTurns = ${JSON.stringify(expectedTurns)};
-      const normalize = (value) => {
-        let text = String(value || '').toLowerCase();
-        text = text.replace(/\`\`\`[^\\n]*\\n([\\s\\S]*?)\`\`\`/g, ' $1 ');
-        text = text.replace(/\`\`\`/g, ' ');
-        text = text.replace(/\`([^\`]*)\`/g, '$1');
-        return text.replace(/\\s+/g, ' ').trim();
-      };
+      const normalize = ${PROMPT_TEXT_NORMALIZER_SOURCE};
       const turns = ${buildConversationTurnListExpression()};
       const userTextSha = async (node) => {
         if (!node) return null;

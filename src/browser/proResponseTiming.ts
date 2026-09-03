@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises";
 import type { BrowserRuntimeMetadata, ProResponseTimingReceipt } from "../sessionStore.js";
 import { BrowserAutomationError } from "../oracle/errors.js";
 import { normalizeThinkingTimeLevel } from "../oracle/thinkingTime.js";
+import { normalizePromptText } from "./promptTextNormalizer.js";
 import type { BrowserAttachment, BrowserAutomationConfig } from "./types.js";
 
 type ProResponseTimingConfig = Pick<
@@ -99,11 +100,7 @@ export function recordProResponseTiming(
 }
 
 export function normalizeProPromptIdentity(prompt: string): string {
-  let text = prompt.toLowerCase();
-  text = text.replace(/```[^\n]*\n([\s\S]*?)```/gu, " $1 ");
-  text = text.replace(/```/gu, " ");
-  text = text.replace(/`([^`]*)`/gu, "$1");
-  return text.replace(/\s+/gu, " ").trim();
+  return normalizePromptText(prompt);
 }
 
 export function hashProPromptIdentity(prompt: string): string {

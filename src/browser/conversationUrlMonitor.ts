@@ -5,8 +5,19 @@ import { BrowserAutomationError } from "../oracle/errors.js";
 
 export type ConversationUrlCandidateStatus = "verified" | "pending" | "mismatch";
 
+export interface ConversationUrlMonitorSnapshot {
+  lastObservedUrl: string | null;
+  lastCandidateUrl: string | null;
+  lastCandidateStatus: ConversationUrlCandidateStatus | null;
+  readErrorCount: number;
+  lastReadError: string | null;
+  boundConversationId: string | null;
+}
+
 export interface ConversationUrlMonitor {
   update: (label: string, timeoutMs?: number) => Promise<boolean>;
+  /** Read-only view of what the monitor has seen; safe to attach to errors. */
+  snapshot: () => ConversationUrlMonitorSnapshot;
   schedule: (label: string, timeoutMs?: number) => Promise<boolean>;
   guard: <T>(operation: () => Promise<T>) => Promise<T>;
   assertHealthy: () => void;
@@ -48,6 +59,11 @@ export function createConversationUrlMonitor(options: {
     resolveFailure = resolve;
   });
   const activePersists = new Set<Promise<void>>();
+  let lastObservedUrl: string | null = null;
+  let lastCandidateUrl: string | null = null;
+  let lastCandidateStatus: ConversationUrlCandidateStatus | null = null;
+  let readErrorCount = 0;
+  let lastReadError: string | null = null;
 
   const fail = (error: BrowserAutomationError): never => {
     if (!terminalError) {
@@ -63,6 +79,7 @@ export function createConversationUrlMonitor(options: {
 
   const observe = async (url: string, label: string): Promise<boolean> => {
     assertHealthy();
+    lastObservedUrl = url;
     const observedId = extractStableConversationIdFromUrl(url);
     if (!observedId) return false;
     if (boundId && observedId !== boundId) {
@@ -86,6 +103,8 @@ export function createConversationUrlMonitor(options: {
       const candidateStatus = options.validateCandidate
         ? await options.validateCandidate({ url, conversationId: observedId, label })
         : "verified";
+      lastCandidateUrl = url;
+      lastCandidateStatus = candidateStatus;
       if (candidateStatus === "pending") return false;
       if (candidateStatus === "mismatch") {
         return fail(
@@ -151,6 +170,8 @@ export function createConversationUrlMonitor(options: {
       } catch (error) {
         if (error instanceof BrowserAutomationError) throw error;
         // The page can navigate or disconnect between polls; keep trying until timeout.
+        readErrorCount += 1;
+        lastReadError = error instanceof Error ? error.message : String(error);
       }
       await wait(pollIntervalMs);
     }
@@ -181,6 +202,14 @@ export function createConversationUrlMonitor(options: {
 
   return {
     update,
+    snapshot: () => ({
+      lastObservedUrl,
+      lastCandidateUrl,
+      lastCandidateStatus,
+      readErrorCount,
+      lastReadError,
+      boundConversationId: boundId ?? null,
+    }),
     schedule,
     guard: async <T>(operation: () => Promise<T>): Promise<T> => {
       assertHealthy();

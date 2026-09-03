@@ -1,3 +1,4 @@
+import { PROMPT_TEXT_NORMALIZER_SOURCE } from "./promptTextNormalizer.js";
 import { CONVERSATION_TURN_CONTAINER_SELECTOR, CONVERSATION_TURN_SELECTOR } from "./constants.js";
 import type { ChromeClient } from "./types.js";
 
@@ -55,11 +56,8 @@ export function buildCommittedPromptIdentityExpression(identity: CommittedPrompt
       : node.querySelector?.('[data-message-author-role="user"], [data-turn="user"]');
     if (!roleNode) return 'mismatch';
     const messageNode = roleNode.querySelector?.('.whitespace-pre-wrap') || roleNode;
-    let normalized = String(messageNode.innerText || messageNode.textContent || '').toLowerCase();
-    normalized = normalized.replace(/\`\`\`[^\\n]*\\n([\\s\\S]*?)\`\`\`/g, ' $1 ');
-    normalized = normalized.replace(/\`\`\`/g, ' ');
-    normalized = normalized.replace(/\`([^\`]*)\`/g, '$1');
-    normalized = normalized.replace(/\\s+/g, ' ').trim();
+    const normalize = ${PROMPT_TEXT_NORMALIZER_SOURCE};
+    const normalized = normalize(messageNode.innerText || messageNode.textContent || '');
     if (!normalized) return 'pending';
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
     const actualSha256 = Array.from(new Uint8Array(digest))

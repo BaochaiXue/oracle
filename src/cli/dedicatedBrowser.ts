@@ -84,7 +84,7 @@ export interface DedicatedBrowserStatusResult {
   dedicatedBrowser: "ready" | "unavailable" | "ambiguous";
   generation: "current" | "compatible update pending" | "unavailable" | "ambiguous";
   consultations: { active: number; recoverable: number };
-  actionRequired: "none" | "sign in" | "close unverified browser";
+  actionRequired: "none" | "sign in" | "close unverified browser" | "wait: consultations active";
   promptSubmitted: false;
   inspection?: DedicatedChromeInspection;
   error?: string;
@@ -414,7 +414,17 @@ function statusFromInspection(
           ? "current"
           : "unavailable",
     consultations: counts,
-    actionRequired: ambiguous ? "close unverified browser" : initialized ? "none" : "sign in",
+    // An ambiguous owner is never a reason to close a browser that other
+    // agents' consultations are running in; the lease registry outranks the
+    // process inspection. (Tonight an inspection made ambiguous by a truncated
+    // `ps` line led an agent to SIGTERM a Chrome mid-answer.)
+    actionRequired: ambiguous
+      ? counts.active > 0 || counts.recoverable > 0
+        ? "wait: consultations active"
+        : "close unverified browser"
+      : initialized
+        ? "none"
+        : "sign in",
     promptSubmitted: false,
     inspection,
   };
@@ -679,3 +689,5 @@ export function printDedicatedBrowserSmokeResult(
     ].join("\n") + "\n",
   );
 }
+
+export const __test__ = { statusFromInspection };

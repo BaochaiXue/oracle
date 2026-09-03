@@ -291,3 +291,28 @@ describe("createConversationUrlMonitor", () => {
     await monitor.stop();
   });
 });
+
+describe("conversation url monitor snapshot", () => {
+  test("records observed urls, candidate status, and read errors for diagnostics", async () => {
+    const readUrl = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Target closed"))
+      .mockResolvedValueOnce("https://chatgpt.com/")
+      .mockResolvedValue("https://chatgpt.com/c/11111111-2222-4333-8444-555555555555");
+    const monitor = createConversationUrlMonitor({
+      readUrl,
+      persistUrl: async () => undefined,
+      logger: () => undefined,
+      validateCandidate: async () => "pending",
+      pollIntervalMs: 0,
+      wait: async () => undefined,
+    });
+    await monitor.update("test", 5);
+    const snapshot = monitor.snapshot();
+    expect(snapshot.readErrorCount).toBe(1);
+    expect(snapshot.lastReadError).toBe("Target closed");
+    expect(snapshot.lastObservedUrl).toBe("https://chatgpt.com/c/11111111-2222-4333-8444-555555555555");
+    expect(snapshot.lastCandidateStatus).toBe("pending");
+    expect(snapshot.boundConversationId).toBeNull();
+  });
+});
