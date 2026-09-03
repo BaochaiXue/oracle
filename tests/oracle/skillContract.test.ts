@@ -99,8 +99,8 @@ describe("canonical Oracle skill contract", () => {
     expect(skill).toContain("both pack the images into the archive");
     expect(skill).toContain("at most 10 attachments");
     // .gitignore applies to literals only in mixed expansion.
-    expect(skill).toContain("Literal paths alone bypass it");
-    expect(skill).toContain('`--file outputs/plot.png --file "src/**"` silently drops the plot');
+    expect(skill).toContain("`.gitignore` never drops a file you named literally.");
+    expect(skill).toContain("an explicit `!` exclusion still wins over a literal");
     expect(skill).toContain("--dry-run summary --files-report");
   });
 

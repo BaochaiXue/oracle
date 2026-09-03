@@ -81,6 +81,39 @@ describe("shouldDetachSession", () => {
     expect(result).toBe(false);
   });
 
+  test("detaches gpt-5.6-sol when the resolved browser tier is Pro", () => {
+    const result = shouldDetachSession({
+      engine: "browser",
+      model: "gpt-5.6-sol",
+      waitPreference: true,
+      disableDetachEnv: false,
+      effectiveBrowserPro: true,
+    });
+    expect(result).toBe(true);
+  });
+
+  test("keeps gpt-5-pro inline when the resolved browser tier is not Pro", () => {
+    const result = shouldDetachSession({
+      engine: "browser",
+      model: "gpt-5-pro",
+      waitPreference: false,
+      disableDetachEnv: false,
+      effectiveBrowserPro: false,
+    });
+    expect(result).toBe(false);
+  });
+
+  test("still detaches gpt-5-pro when its resolved default tier is Pro", () => {
+    const result = shouldDetachSession({
+      engine: "browser",
+      model: "gpt-5-pro",
+      waitPreference: false,
+      disableDetachEnv: false,
+      effectiveBrowserPro: true,
+    });
+    expect(result).toBe(true);
+  });
+
   test("stops the detached worker on explicit cancellation", () => {
     const kill = vi.fn();
 

@@ -159,6 +159,17 @@ export function guessMimeType(fileName: string): string {
     ".svg": "image/svg+xml",
     ".webp": "image/webp",
 
+    // Every video extension in MEDIA_EXTENSIONS (src/browser/prompt.ts) needs a
+    // real type here: this map is only consulted on the DataTransfer retry path,
+    // and a synthetic File typed application/octet-stream is what the composer
+    // sees when the native input assignment was not acknowledged.
+    ".mp4": "video/mp4",
+    ".m4v": "video/mp4",
+    ".mov": "video/quicktime",
+    ".mkv": "video/matroska",
+    ".webm": "video/webm",
+    ".avi": "video/x-msvideo",
+
     ".zip": "application/zip",
     ".tar": "application/x-tar",
     ".gz": "application/gzip",

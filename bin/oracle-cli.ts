@@ -54,6 +54,7 @@ import {
 import { copyToClipboard } from "../src/cli/clipboard.js";
 import { buildMarkdownBundle } from "../src/cli/markdownBundle.js";
 import { shouldDetachSession, stopDetachedWorker } from "../src/cli/detach.js";
+import { requiresProResponseTiming } from "../src/browser/proResponseTiming.js";
 import { applyHiddenAliases } from "../src/cli/hiddenAliases.js";
 import type { BrowserSessionRunnerDeps } from "../src/browser/sessionRunner.js";
 import { isMediaFile } from "../src/browser/prompt.js";
@@ -2608,6 +2609,10 @@ async function runRootCommand(options: CliOptions): Promise<void> {
         reasoningMode: resolvedOptions.reasoningMode,
         waitPreference,
         disableDetachEnv,
+        effectiveBrowserPro:
+          engine === "browser" && browserConfig
+            ? requiresProResponseTiming(browserConfig)
+            : undefined,
       });
   let lifecycle = buildSessionLifecycle({
     engine,
@@ -2944,6 +2949,10 @@ async function restartSession(sessionId: string, options: RestartCommandOptions)
         reasoningMode: runOptions.reasoningMode,
         waitPreference,
         disableDetachEnv,
+        effectiveBrowserPro:
+          engine === "browser" && browserConfig
+            ? requiresProResponseTiming(browserConfig)
+            : undefined,
       });
   let lifecycle = buildSessionLifecycle({
     engine,

@@ -9,18 +9,31 @@ export function shouldDetachSession({
   reasoningMode,
   waitPreference,
   disableDetachEnv,
+  effectiveBrowserPro,
 }: {
   engine: EngineMode;
   model: ModelName;
   reasoningMode?: ReasoningMode;
   waitPreference: boolean;
   disableDetachEnv: boolean;
+  /**
+   * Whether the resolved browser configuration actually runs at the Pro effort
+   * tier. Strict Pro selection, the Pro capture timeout, and Pro receipt
+   * validation all key on that resolved tier rather than on the model alias, so
+   * process lifetime must follow it too: `gpt-5.6-sol --browser-thinking-time
+   * pro` is Pro work that must survive a host cut-off, while `gpt-5-pro
+   * --browser-thinking-time extra-high` is not. When the caller cannot resolve
+   * the tier, the alias remains the fallback.
+   */
+  effectiveBrowserPro?: boolean;
 }): boolean {
   if (disableDetachEnv) return false;
   // Keep long local browser Pro work in a separate process even while the CLI
   // stays attached to its session log. If the foreground stream is interrupted,
   // the worker can still finish the browser run and persist the answer.
-  if (engine === "browser" && isProModel(model)) return true;
+  if (engine === "browser") {
+    return effectiveBrowserPro ?? isProModel(model);
+  }
   // For API runs, explicit --wait keeps execution in the foreground.
   if (waitPreference) return false;
   // Pro-tier API runs start detached by default.

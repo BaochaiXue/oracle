@@ -611,14 +611,13 @@ Constraints that apply to media in this fork:
   into the archive, and GPT receives one ZIP instead of pictures it can look at.
 - `--browser-attachments never` and `--browser-inline-files` fail on media,
   because media has no inline form. Leave attachments on `auto` or `always`.
-- `.gitignore` filtering depends on how `--file` is used. Literal paths alone
-  bypass it: `--file outputs/plot.png` attaches the plot even though `outputs/`
-  is ignored. Add any glob, exclusion, or directory to the same command and every
-  input, the literal included, goes through `.gitignore`, so `--file
-  outputs/plot.png --file "src/**"` silently drops the plot. Either pass figures
-  in a literal-only invocation, or copy them to a non-ignored path when globs
-  are needed, and confirm with `--dry-run summary --files-report` that each image
-  is listed as an upload before the real run.
+- `.gitignore` never drops a file you named literally. `--file outputs/plot.png`
+  attaches the plot even though `outputs/` is ignored, alone or next to globs
+  such as `--file "src/**"`. Files discovered through a glob or a directory
+  argument still go through `.gitignore`, and an explicit `!` exclusion still
+  wins over a literal. Name figures explicitly rather than through globs, and
+  confirm with `--dry-run summary --files-report` that each image is listed as
+  an upload before the real run.
 - Follow-ups accept `--file`, so a plot can be introduced mid-conversation as
   evidence in a rebuttal (see "Arguing with the model").
 

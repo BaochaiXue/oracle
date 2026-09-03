@@ -235,7 +235,15 @@ async function expandWithNativeGlob(partitioned: PartitionedFiles, cwd: string):
       : [];
   const matches = [...visibleMatches, ...explicitDotMatches];
   const resolved = matches.map((match) => path.resolve(cwd, match));
-  const filtered = resolved.filter((filePath) => !isGitignored(filePath, gitignoreSets));
+  // An exact literal path names one file on purpose, which is stronger consent
+  // than a glob match, and the literal-only fast path above never consults
+  // .gitignore at all. Mixed invocations must not behave differently just
+  // because a glob was added alongside: literals bypass only the .gitignore
+  // filter here. Explicit `!` exclusions were already applied by fast-glob.
+  const literalFiles = new Set(partitioned.literalFiles.map((entry) => path.resolve(cwd, entry)));
+  const filtered = resolved.filter(
+    (filePath) => literalFiles.has(filePath) || !isGitignored(filePath, gitignoreSets),
+  );
   return Array.from(new Set(filtered));
 }
 
