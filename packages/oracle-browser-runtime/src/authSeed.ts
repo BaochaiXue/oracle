@@ -232,12 +232,30 @@ export async function discardAuthSeedCandidate(input: {
   );
 }
 
+interface AuthSeedAcceptanceDependencies {
+  countRuntimeDirectoryEntries: typeof countRuntimeDirectoryEntries;
+}
+
 export async function acceptAuthSeedCandidate(input: {
   runtimeRoot: string;
   candidateRoot: string;
   cloneProof: AuthSeedCloneProofReceipt;
   lockTimeoutMs?: number;
 }): Promise<AuthSeedCertificationReceipt> {
+  return acceptAuthSeedCandidateWithDependencies(input, {
+    countRuntimeDirectoryEntries,
+  });
+}
+
+async function acceptAuthSeedCandidateWithDependencies(
+  input: {
+    runtimeRoot: string;
+    candidateRoot: string;
+    cloneProof: AuthSeedCloneProofReceipt;
+    lockTimeoutMs?: number;
+  },
+  dependencies: AuthSeedAcceptanceDependencies,
+): Promise<AuthSeedCertificationReceipt> {
   return withAuthSeedRefreshLock(
     input.runtimeRoot,
     async () => {
@@ -249,71 +267,73 @@ export async function acceptAuthSeedCandidate(input: {
       if ((await digestProfile(candidate.profileRealpath)) !== candidate.profileDigest) {
         throw new Error("Auth-seed candidate changed during clone isolation proof");
       }
-      const [attemptCount, quarantineCount] = await Promise.all([
-        countRuntimeDirectoryEntries(runtimeRoot, ATTEMPTS_DIRECTORY),
-        countRuntimeDirectoryEntries(runtimeRoot, "quarantine"),
-      ]);
-      if (attemptCount !== 0 || quarantineCount !== 0) {
-        throw new Error(
-          "Auth-seed candidate cannot be accepted while attempt sandbox or quarantine residue remains",
-        );
-      }
-      const candidatesRoot = await realpath(path.join(runtimeRoot, CANDIDATES_DIRECTORY));
-      await reclaimStaleCandidateStagingEntries(runtimeRoot, candidatesRoot);
-      const candidateEntries = await readdir(candidatesRoot);
-      if (candidateEntries.length !== 1 || candidateEntries[0] !== candidate.candidateId) {
-        throw new Error(
-          "Auth-seed candidate cannot be accepted while other candidate entries remain",
-        );
-      }
-      const paths = authSeedPaths(runtimeRoot);
-      if (await pathExists(paths.root)) {
-        throw new Error(
-          "An accepted auth seed already exists; refresh requires a later owner gate",
-        );
-      }
-      const runtimeRealpath = await realpath(runtimeRoot);
-      const finalRoot = path.join(runtimeRealpath, AUTH_SEED_DIRECTORY);
-      const finalProfile = path.join(finalRoot, "profile");
-      const acceptedAt = new Date().toISOString();
-      const generation = randomUUID();
-      const seed: AuthSeedReceipt = {
-        schemaVersion: "oracle.auth-seed.v1",
-        generation,
-        profileRealpath: finalProfile,
-        profileDigest: candidate.profileDigest,
-        acceptedAt,
-      };
-      const certification: AuthSeedCertificationReceipt = {
-        schemaVersion: "oracle.auth-seed-certification.v1",
-        runtimeId: ORACLE_BROWSER_RUNTIME_ID,
-        browserRuntimeId: input.cloneProof.browserRuntimeId,
-        transport: "direct-cdp",
-        seedGeneration: generation,
-        profileRealpath: finalProfile,
-        profileDigest: candidate.profileDigest,
-        executableRealpath: input.cloneProof.executableRealpath,
-        cloneProof: input.cloneProof,
-        certifiedAt: acceptedAt,
-      };
-      const seedReceiptPath = path.join(candidateRoot, "seed.json");
-      const certificationPath = path.join(candidateRoot, "certification.json");
-      await rm(seedReceiptPath, { force: true });
-      await rm(certificationPath, { force: true });
-      try {
-        await writeImmutablePrivateJson(seedReceiptPath, seed);
-        await writeImmutablePrivateJson(certificationPath, certification);
-        await rename(candidateRoot, finalRoot);
-      } catch (error) {
-        await rm(seedReceiptPath, { force: true }).catch(() => undefined);
-        await rm(certificationPath, { force: true }).catch(() => undefined);
-        throw error;
-      }
-      await rm(path.join(finalRoot, "candidate.json"), { force: true });
-      if ((await realpath(paths.profile)) !== finalProfile) {
-        throw new Error("Accepted auth-seed profile did not resolve to its recorded path");
-      }
-      return certification;
+      return withBrowserLockMutation(runtimeRoot, async () => {
+        const [attemptCount, quarantineCount] = await Promise.all([
+          dependencies.countRuntimeDirectoryEntries(runtimeRoot, ATTEMPTS_DIRECTORY),
+          dependencies.countRuntimeDirectoryEntries(runtimeRoot, "quarantine"),
+        ]);
+        if (attemptCount !== 0 || quarantineCount !== 0) {
+          throw new Error(
+            "Auth-seed candidate cannot be accepted while attempt sandbox or quarantine residue remains",
+          );
+        }
+        const candidatesRoot = await realpath(path.join(runtimeRoot, CANDIDATES_DIRECTORY));
+        await reclaimStaleCandidateStagingEntries(runtimeRoot, candidatesRoot);
+        const candidateEntries = await readdir(candidatesRoot);
+        if (candidateEntries.length !== 1 || candidateEntries[0] !== candidate.candidateId) {
+          throw new Error(
+            "Auth-seed candidate cannot be accepted while other candidate entries remain",
+          );
+        }
+        const paths = authSeedPaths(runtimeRoot);
+        if (await pathExists(paths.root)) {
+          throw new Error(
+            "An accepted auth seed already exists; refresh requires a later owner gate",
+          );
+        }
+        const runtimeRealpath = await realpath(runtimeRoot);
+        const finalRoot = path.join(runtimeRealpath, AUTH_SEED_DIRECTORY);
+        const finalProfile = path.join(finalRoot, "profile");
+        const acceptedAt = new Date().toISOString();
+        const generation = randomUUID();
+        const seed: AuthSeedReceipt = {
+          schemaVersion: "oracle.auth-seed.v1",
+          generation,
+          profileRealpath: finalProfile,
+          profileDigest: candidate.profileDigest,
+          acceptedAt,
+        };
+        const certification: AuthSeedCertificationReceipt = {
+          schemaVersion: "oracle.auth-seed-certification.v1",
+          runtimeId: ORACLE_BROWSER_RUNTIME_ID,
+          browserRuntimeId: input.cloneProof.browserRuntimeId,
+          transport: "direct-cdp",
+          seedGeneration: generation,
+          profileRealpath: finalProfile,
+          profileDigest: candidate.profileDigest,
+          executableRealpath: input.cloneProof.executableRealpath,
+          cloneProof: input.cloneProof,
+          certifiedAt: acceptedAt,
+        };
+        const seedReceiptPath = path.join(candidateRoot, "seed.json");
+        const certificationPath = path.join(candidateRoot, "certification.json");
+        await rm(seedReceiptPath, { force: true });
+        await rm(certificationPath, { force: true });
+        try {
+          await writeImmutablePrivateJson(seedReceiptPath, seed);
+          await writeImmutablePrivateJson(certificationPath, certification);
+          await rename(candidateRoot, finalRoot);
+        } catch (error) {
+          await rm(seedReceiptPath, { force: true }).catch(() => undefined);
+          await rm(certificationPath, { force: true }).catch(() => undefined);
+          throw error;
+        }
+        await rm(path.join(finalRoot, "candidate.json"), { force: true });
+        if ((await realpath(paths.profile)) !== finalProfile) {
+          throw new Error("Accepted auth-seed profile did not resolve to its recorded path");
+        }
+        return certification;
+      });
     },
     { timeoutMs: input.lockTimeoutMs },
   );
@@ -1011,3 +1031,14 @@ function isPathWithin(parent: string, candidate: string): boolean {
   const relative = path.relative(parent, candidate);
   return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
+
+export const authSeedTestHooks = {
+  acceptAuthSeedCandidateWithCount(
+    input: Parameters<typeof acceptAuthSeedCandidate>[0],
+    countEntries: AuthSeedAcceptanceDependencies["countRuntimeDirectoryEntries"],
+  ): Promise<AuthSeedCertificationReceipt> {
+    return acceptAuthSeedCandidateWithDependencies(input, {
+      countRuntimeDirectoryEntries: countEntries,
+    });
+  },
+};

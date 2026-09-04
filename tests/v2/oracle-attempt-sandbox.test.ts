@@ -24,6 +24,7 @@ import {
 } from "../../packages/chatgpt-adapter/src/index.js";
 import {
   acceptAuthSeedCandidate,
+  authSeedTestHooks,
   closeManagedBrowserOverCdp,
   cleanupAttemptSandbox,
   createAttemptSandbox,
@@ -398,6 +399,66 @@ describe("Oracle disposable attempt sandboxes", () => {
       }),
     ).rejects.toThrow(/quarantine residue remains/i);
     expect(readFileSync(path.join(foreignQuarantine, "keep"), "utf8")).toBe("foreign state\n");
+  });
+
+  test("serializes the combined residue check against sandbox quarantine moves", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_acceptance_cleanup_race",
+      turnAttemptId: "attempt_acceptance_cleanup_race",
+      purpose: "probe",
+    });
+    let attemptsCountStarted!: () => void;
+    let quarantineCountStarted!: () => void;
+    let releaseAttemptsCount!: () => void;
+    const attemptsCounting = new Promise<void>((resolve) => (attemptsCountStarted = resolve));
+    const quarantineCounting = new Promise<void>((resolve) => (quarantineCountStarted = resolve));
+    const attemptsCountReleased = new Promise<void>((resolve) => (releaseAttemptsCount = resolve));
+    const acceptance = authSeedTestHooks.acceptAuthSeedCandidateWithCount(
+      {
+        runtimeRoot,
+        candidateRoot: path.dirname(candidate.profileRealpath),
+        cloneProof: passingCloneProof(candidate.candidateId, candidate.profileDigest, {
+          cloneA: "deleted-clone-a",
+          cloneB: "deleted-clone-b",
+        }),
+      },
+      async (root, directoryName) => {
+        if (directoryName === "quarantine") {
+          quarantineCountStarted();
+          return 0;
+        }
+        attemptsCountStarted();
+        await attemptsCountReleased;
+        return readdirSync(path.join(root, directoryName)).length;
+      },
+    );
+    await Promise.all([attemptsCounting, quarantineCounting]);
+
+    let cleanupSettled = false;
+    const cleanup = cleanupAttemptSandbox({
+      runtimeRoot,
+      sandboxDirectory: sandbox.directory,
+      expectedOwner: sandbox.owner,
+      dependencies: { findProcessesUsingProfile: noProfileProcesses },
+    }).finally(() => {
+      cleanupSettled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(cleanupSettled).toBe(false);
+    expect(existsSync(sandbox.directory)).toBe(true);
+
+    releaseAttemptsCount();
+    await expect(acceptance).rejects.toThrow(/attempt sandbox.*residue remains/i);
+    await expect(cleanup).resolves.toMatchObject({ status: "deleted", processStatus: "none" });
+    expect(await listAttemptSandboxDirectories(runtimeRoot)).toEqual([]);
+    expect(await listAttemptQuarantineEntries(runtimeRoot)).toEqual([]);
   });
 
   test("requires the promoted candidate to be the only candidate entry", async () => {

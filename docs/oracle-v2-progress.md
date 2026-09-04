@@ -432,7 +432,9 @@ Fresh T1 source-candidate and live-gate evidence:
   that exact receipt-bound quarantine; unreceipted or invalid entries remain
   untouched and block seed acceptance. Acceptance and proof completion both
   require zero attempt and quarantine entries, and no cleanup decision reads
-  composer DOM;
+  composer DOM. The combined residue check and seed promotion share the same
+  cross-process mutation lock as the sandbox-to-quarantine move, so concurrent
+  cleanup cannot disappear between the two directory observations;
 - the real proof now waits for DOM readiness plus five seconds of unchanged
   composer/attachment/recovery state before classifying a clone as initially
   clean. Candidate creation accepts only the exact fixed `browser-profile`
@@ -450,7 +452,7 @@ Fresh T1 source-candidate and live-gate evidence:
 - process identity capture is opt-in for attempt runtimes only, so the current
   fixed-profile runtime and `CertifiedChatGptProvider` retain their pre-T1
   behavior. No provider dispatch integration or T2 runner change is present;
-- the focused attempt-sandbox suite passes forty-three tests, including delayed restored-state
+- the focused attempt-sandbox suite passes forty-four tests, including delayed restored-state
   detection, exact migration-source enforcement, abandoned-staging refusal,
   unreceipted-quarantine refusal, receipt-bound quarantine cleanup resumption,
   live late-restoration receipt propagation,
@@ -482,9 +484,9 @@ Fresh T1 source-candidate and live-gate evidence:
   either path. The fixed profile was not cleared, adopted, or overwritten;
 - `pnpm check`, `pnpm build`, `pnpm docs:check`, `pnpm public:check`,
   `pnpm test:packed-cli`, and `git diff --check` passed. `pnpm test` passed all
-  three partitions: process-serial had 85 passing and one skipped test,
+  three partitions: process-serial had 86 passing and one skipped test,
   browser-serial had 30 passing and one skipped test, and the parallel
-  partition had 2,054 passing and 32 skipped tests (2,169 passing and 34
+  partition had 2,054 passing and 32 skipped tests (2,170 passing and 34
   skipped across 197 files in total);
 - the real T1 gate is not certified. It requires one explicit fresh auth-seed
   login, then the same two-clone no-Send proof. Fixture success is not a

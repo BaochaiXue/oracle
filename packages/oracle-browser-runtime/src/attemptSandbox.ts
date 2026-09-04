@@ -374,7 +374,9 @@ export async function cleanupAttemptSandbox(input: {
       }
       const quarantine = await prepareAttemptSandboxQuarantine(runtimeRoot, sandbox, processStatus);
       try {
-        await rename(directoryRealpath, quarantine.quarantineDirectory);
+        await withBrowserLockMutation(runtimeRoot, () =>
+          rename(directoryRealpath, quarantine.quarantineDirectory),
+        );
       } catch (error) {
         return completed("blocked", processStatus, {
           error: `Sandbox quarantine failed before deletion: ${
