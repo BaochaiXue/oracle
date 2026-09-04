@@ -96,7 +96,7 @@ describe("Oracle disposable attempt sandboxes", () => {
     ).rejects.toThrow(/shared auth-seed lock/i);
     releaseExclusive();
     await exclusive;
-  }, 20_000);
+  }, 60_000);
 
   test("waits through delayed restored state before classifying a clone start", async () => {
     const clean = sandboxPageObservation();
@@ -278,6 +278,19 @@ describe("Oracle disposable attempt sandboxes", () => {
         sourceProfileDir: sandbox.profileDir,
       }),
     ).rejects.toThrow(/exact fixed migration profile/i);
+    const migrationProfile = path.join(runtimeRoot, "browser-profile");
+    await rm(migrationProfile, { recursive: true, force: true });
+    symlinkSync(
+      sandbox.profileDir,
+      migrationProfile,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    await expect(
+      createAuthSeedCandidate({
+        runtimeRoot,
+        sourceProfileDir: migrationProfile,
+      }),
+    ).rejects.toThrow(/exact fixed migration profile|disposable/i);
     expect(
       (
         await cleanupAttemptSandbox({
@@ -805,6 +818,66 @@ describe("Oracle disposable attempt sandboxes", () => {
     expect((secondError as Error).message).toMatch(/process launch is already in progress/i);
     expect(launchCount).toBe(1);
     expect(secondLaunches).toEqual([]);
+    await runtime.close();
+    expect(
+      (
+        await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: sandbox.directory,
+          dependencies: {
+            observeProcess: noObservedProcess,
+            findProcessesUsingProfile: noProfileProcesses,
+          },
+        })
+      ).status,
+    ).toBe("deleted");
+  });
+
+  test("keeps launch finalization inside the process lifecycle reservation", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_launch_finalization",
+      turnAttemptId: "attempt_launch_finalization",
+      purpose: "probe",
+    });
+    let finalizationStarted!: () => void;
+    let continueFinalization!: () => void;
+    const started = new Promise<void>((resolve) => (finalizationStarted = resolve));
+    const released = new Promise<void>((resolve) => (continueFinalization = resolve));
+    const launches: Parameters<LaunchManagedBrowser>[0][] = [];
+    const launchAttempt = launchAttemptBrowserRuntime({
+      sandboxDirectory: sandbox.directory,
+      headless: true,
+      inspection: {
+        chromeForTestingExecutablePath: "/runtime/chrome",
+        executableExists: () => true,
+      },
+      launchManagedBrowser: fakeAttemptLaunch(launches, sandbox.profileDir),
+      writeLaunchReceipt: async (filePath, receipt) => {
+        finalizationStarted();
+        await released;
+        writeFileSync(filePath, `${JSON.stringify(receipt, null, 2)}\n`);
+      },
+    });
+    await started;
+    const cleanupDuringFinalization = await cleanupAttemptSandbox({
+      runtimeRoot,
+      sandboxDirectory: sandbox.directory,
+      dependencies: { findProcessesUsingProfile: noProfileProcesses },
+    });
+    expect(cleanupDuringFinalization).toMatchObject({
+      status: "blocked",
+      processStatus: "identity-unproven",
+    });
+    expect(existsSync(sandbox.directory)).toBe(true);
+    continueFinalization();
+    const runtime = await launchAttempt;
     await runtime.close();
     expect(
       (

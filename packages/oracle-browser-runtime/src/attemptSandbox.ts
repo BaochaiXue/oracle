@@ -199,7 +199,7 @@ export async function withAttemptProcessLaunchReservation<T>(
   );
 }
 
-async function withAttemptProcessLifecycleReservation<T>(
+export async function withAttemptProcessLifecycleReservation<T>(
   sandbox: AttemptSandbox,
   operation: () => Promise<T>,
   busyMessage = "An attempt sandbox process lifecycle operation is already in progress",

@@ -401,30 +401,34 @@ Fresh T1 source-candidate and live-gate evidence:
   recovery page, closes any in-flight or already-returned alternate target,
   makes the late exact recovery page reattachable, and closes the whole runtime
   fail-safe if an alternate target cannot close; serializes Chrome launch and
-  cleanup through one atomic sandbox process-lifecycle reservation; revalidates
+  cleanup, including launch/close receipt publication, through one atomic
+  sandbox process-lifecycle reservation; revalidates
   the endpoint-reported browser PID and exact OS process identity before CDP
   close; removes `commit-recovery` as a separate sandbox purpose so at-risk
   observation must stay in the original `dispatch` workspace; and makes missing
   process receipts or failed process inspection block profile deletion unless a
-  profile-wide process scan proves absence;
+  profile-wide process scan proves absence. A failed current-process identity
+  lookup is no longer cached across later jobs;
 - the real proof now waits for DOM readiness plus five seconds of unchanged
   composer/attachment/recovery state before classifying a clone as initially
   clean. Candidate creation accepts only the exact fixed `browser-profile`
-  migration source, attempt creation atomically reserves one deterministic
-  directory per job/turn/purpose before copying regardless of seed generation,
-  concurrent page opens are rejected before a second target can be created,
-  and every attempt-root entry (including an abandoned hidden staging clone)
-  blocks seed acceptance;
+  migration source and rejects that path when its directory entry is a symlink
+  or junction into accepted/disposable state; attempt creation atomically
+  reserves one deterministic directory per job/turn/purpose before copying
+  regardless of seed generation, concurrent page opens are rejected before a
+  second target can be created, and every attempt-root entry (including an
+  abandoned hidden staging clone) blocks seed acceptance;
 - process identity capture is opt-in for attempt runtimes only, so the current
   fixed-profile runtime and `CertifiedChatGptProvider` retain their pre-T1
   behavior. No provider dispatch integration or T2 runner change is present;
-- the focused suite passes twenty-eight tests, including delayed restored-state
+- the focused suite passes twenty-nine tests, including delayed restored-state
   detection, exact migration-source enforcement, abandoned-staging refusal,
   cross-generation logical-attempt uniqueness, pre-launch process-slot and
   concurrent-open exclusion, clone failure before owner publication, immutable
   receipt rejection, dead-lock and PID-reuse recovery, exact-process mismatch,
   process-inspection fail-closed behavior, missing receipt/live-process refusal,
-  launch-versus-cleanup exclusion, exact dead-owner lifecycle-lock recovery,
+  launch-versus-cleanup exclusion, launch-finalization-versus-cleanup exclusion,
+  exact dead-owner lifecycle-lock recovery,
   reused-CDP-port refusal, restored-page reuse, late recovery reattachment
   without a second alternate target, alternate-close failure shutdown, and a
   real fixture browser that destroys dirty clone A, starts clone B clean,
@@ -440,9 +444,9 @@ Fresh T1 source-candidate and live-gate evidence:
   either path. The fixed profile was not cleared, adopted, or overwritten;
 - `pnpm check`, `pnpm build`, `pnpm docs:check`, `pnpm public:check`,
   `pnpm test:packed-cli`, and `git diff --check` passed. `pnpm test` passed all
-  three partitions: process-serial had 70 passing and one skipped test,
+  three partitions: process-serial had 71 passing and one skipped test,
   browser-serial had 30 passing and one skipped test, and the parallel
-  partition had 2,054 passing and 32 skipped tests (2,154 passing and 34
+  partition had 2,054 passing and 32 skipped tests (2,155 passing and 34
   skipped across 197 files in total);
 - the real T1 gate is not certified. It requires one explicit fresh auth-seed
   login, then the same two-clone no-Send proof. Fixture success is not a

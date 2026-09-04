@@ -80,15 +80,32 @@ export async function createAuthSeedCandidate(input: {
     async () => {
       const runtimeRoot = path.resolve(input.runtimeRoot);
       const migrationProfile = path.join(runtimeRoot, "browser-profile");
+      const runtimeRealpath = await realpath(runtimeRoot);
+      const migrationProfileEntry = await lstat(migrationProfile);
       const sourceProfileRealpath = await realpath(input.sourceProfileDir);
       const migrationProfileRealpath = await realpath(migrationProfile);
       if (
+        !migrationProfileEntry.isDirectory() ||
+        migrationProfileEntry.isSymbolicLink() ||
         path.resolve(input.sourceProfileDir) !== migrationProfile ||
-        sourceProfileRealpath !== migrationProfileRealpath
+        sourceProfileRealpath !== migrationProfileRealpath ||
+        migrationProfileRealpath !== path.join(runtimeRealpath, "browser-profile")
       ) {
         throw new Error(
           "Auth-seed candidates may be created only from the exact fixed migration profile",
         );
+      }
+      const forbiddenCloneRoots = [
+        path.join(runtimeRealpath, ATTEMPTS_DIRECTORY),
+        path.join(runtimeRealpath, CANDIDATES_DIRECTORY),
+        path.join(runtimeRealpath, AUTH_SEED_DIRECTORY),
+      ];
+      if (
+        forbiddenCloneRoots.some(
+          (root) => sourceProfileRealpath === root || isPathWithin(root, sourceProfileRealpath),
+        )
+      ) {
+        throw new Error("Auth-seed migration source resolves inside disposable or accepted state");
       }
       if (!(await stat(sourceProfileRealpath)).isDirectory()) {
         throw new Error("Auth-seed source profile is not a directory");
@@ -516,7 +533,7 @@ async function readSeedLockOwner(lockPath: string): Promise<AuthSeedLockOwnerObs
 }
 
 async function requireProcessStartTime(pid: number): Promise<string> {
-  const processStartTime = await observeLocalProcessStartTime(pid);
+  const processStartTime = await inspectLocalProcessStartTime(pid);
   if (!processStartTime) {
     throw new Error(`Auth-seed lock owner process ${pid} exited before lock publication`);
   }
@@ -524,11 +541,23 @@ async function requireProcessStartTime(pid: number): Promise<string> {
 }
 
 export async function getCurrentProcessStartTime(): Promise<string> {
-  currentProcessStartTime ??= requireProcessStartTime(process.pid);
-  return currentProcessStartTime;
+  if (currentProcessStartTime) return currentProcessStartTime;
+  const inspection = requireProcessStartTime(process.pid);
+  currentProcessStartTime = inspection;
+  try {
+    return await inspection;
+  } catch (error) {
+    if (currentProcessStartTime === inspection) currentProcessStartTime = undefined;
+    throw error;
+  }
 }
 
 export async function observeLocalProcessStartTime(pid: number): Promise<string | undefined> {
+  if (pid === process.pid && currentProcessStartTime) return currentProcessStartTime;
+  return inspectLocalProcessStartTime(pid);
+}
+
+async function inspectLocalProcessStartTime(pid: number): Promise<string | undefined> {
   if (!isProcessAlive(pid)) return undefined;
   try {
     const { stdout } =
@@ -539,7 +568,7 @@ export async function observeLocalProcessStartTime(pid: number): Promise<string 
               "-NoProfile",
               "-NonInteractive",
               "-Command",
-              `$p = Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}'; if ($null -ne $p) { $p.CreationDate.ToUniversalTime().ToString('O') }`,
+              `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if ($null -ne $p) { $p.StartTime.ToUniversalTime().ToString('O') }`,
             ],
             { maxBuffer: 64 * 1024 },
           )
@@ -754,4 +783,9 @@ async function pathExists(candidate: string): Promise<boolean> {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function isPathWithin(parent: string, candidate: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
