@@ -340,9 +340,9 @@ describe("Oracle disposable attempt sandboxes", () => {
     const sandbox = await first;
     expect(secondError).toBeInstanceOf(Error);
     expect((secondError as Error).message).toMatch(/already own an attempt sandbox/i);
-    expect(
-      (await listAttemptSandboxDirectories(runtimeRoot)).map((entry) => realpathSync(entry)),
-    ).toEqual([sandbox.directory]);
+    const activeSandboxes = await listAttemptSandboxDirectories(runtimeRoot);
+    expect(activeSandboxes).toHaveLength(1);
+    expect(path.basename(activeSandboxes[0]!)).toBe(sandbox.sandboxId);
     expect(
       (
         await cleanupAttemptSandbox({
