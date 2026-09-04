@@ -96,14 +96,25 @@ export async function launchAttemptBrowserRuntime(options: {
     sandbox,
     processReceipt,
     async openPage(url) {
-      if (openedPage) {
-        throw new Error("An attempt sandbox may own only one page during its lifetime");
-      }
       const preservedPages = launched.preservedPages();
       if (preservedPages.length > 1) {
         throw new Error("An attempt sandbox restored more than one preserved recovery page");
       }
-      preservedPage ??= preservedPages[0];
+      const currentPreservedPage = preservedPages[0];
+      if (openedPage) {
+        if (
+          openedPage.isClosed() &&
+          currentPreservedPage &&
+          currentPreservedPage !== openedPage &&
+          !currentPreservedPage.isClosed()
+        ) {
+          preservedPage = currentPreservedPage;
+          openedPage = currentPreservedPage;
+          return openedPage;
+        }
+        throw new Error("An attempt sandbox may own only one page during its lifetime");
+      }
+      preservedPage ??= currentPreservedPage;
       if (preservedPage) {
         if (preservedPage.isClosed()) {
           throw new Error(

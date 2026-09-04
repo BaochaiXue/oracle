@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import { createReadStream } from "node:fs";
 import {
   chmod,
@@ -16,6 +17,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { ORACLE_BROWSER_RUNTIME_ID } from "./types.js";
 import type {
   AuthSeedCandidateReceipt,
@@ -30,11 +32,14 @@ const ATTEMPTS_DIRECTORY = "attempts";
 const RUN_DIRECTORY = "run";
 const LOCK_DIRECTORY = "auth-seed.lock";
 const LOCK_POLL_MS = 25;
+const execFileAsync = promisify(execFile);
+let currentProcessStartTime: Promise<string> | undefined;
 
 interface AuthSeedLockOwner {
-  schemaVersion: "oracle.auth-seed-lock-owner.v1";
+  schemaVersion: "oracle.auth-seed-lock-owner.v2";
   token: string;
   pid: number;
+  processStartTime: string;
   mode: "shared" | "exclusive";
   createdAt: string;
 }
@@ -412,10 +417,12 @@ async function publishSeedLock(
   mode: AuthSeedLockOwner["mode"],
   token: string,
 ): Promise<() => Promise<void>> {
+  currentProcessStartTime ??= requireProcessStartTime(process.pid);
   const owner: AuthSeedLockOwner = {
-    schemaVersion: "oracle.auth-seed-lock-owner.v1",
+    schemaVersion: "oracle.auth-seed-lock-owner.v2",
     token,
     pid: process.pid,
+    processStartTime: await currentProcessStartTime,
     mode,
     createdAt: new Date().toISOString(),
   };
@@ -455,7 +462,8 @@ async function reclaimDeadReaderLocks(readersRoot: string): Promise<void> {
 async function reclaimDeadSeedLock(lockPath: string): Promise<boolean> {
   const observation = await readSeedLockOwner(lockPath);
   if (observation.status === "valid") {
-    if (isProcessAlive(observation.owner.pid)) return false;
+    const observedStartTime = await observeProcessStartTime(observation.owner.pid);
+    if (observedStartTime === observation.owner.processStartTime) return false;
   } else if (observation.status === "invalid") {
     return false;
   } else {
@@ -485,16 +493,56 @@ async function readSeedLockOwner(lockPath: string): Promise<AuthSeedLockOwnerObs
     return { status: "invalid" };
   }
   if (
-    owner.schemaVersion !== "oracle.auth-seed-lock-owner.v1" ||
+    owner.schemaVersion !== "oracle.auth-seed-lock-owner.v2" ||
     !owner.token ||
     !Number.isSafeInteger(owner.pid) ||
     owner.pid <= 0 ||
+    !owner.processStartTime ||
     !["shared", "exclusive"].includes(owner.mode) ||
     !owner.createdAt
   ) {
     return { status: "invalid" };
   }
   return { status: "valid", owner };
+}
+
+async function requireProcessStartTime(pid: number): Promise<string> {
+  const processStartTime = await observeProcessStartTime(pid);
+  if (!processStartTime) {
+    throw new Error(`Auth-seed lock owner process ${pid} exited before lock publication`);
+  }
+  return processStartTime;
+}
+
+async function observeProcessStartTime(pid: number): Promise<string | undefined> {
+  if (!isProcessAlive(pid)) return undefined;
+  try {
+    const { stdout } =
+      process.platform === "win32"
+        ? await execFileAsync(
+            "powershell.exe",
+            [
+              "-NoProfile",
+              "-NonInteractive",
+              "-Command",
+              `$p = Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}'; if ($null -ne $p) { $p.CreationDate.ToUniversalTime().ToString('O') }`,
+            ],
+            { maxBuffer: 64 * 1024 },
+          )
+        : await execFileAsync("ps", ["-p", String(pid), "-o", "lstart="], {
+            maxBuffer: 64 * 1024,
+          });
+    const value = String(stdout ?? "")
+      .replace(/\s+/gu, " ")
+      .trim();
+    if (value) return `${process.platform}:${value}`;
+    if (!isProcessAlive(pid)) return undefined;
+    throw new Error("process inspection returned no start time");
+  } catch (error) {
+    if (!isProcessAlive(pid)) return undefined;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Auth-seed lock process inspection failed: ${detail}`, { cause: error });
+  }
 }
 
 function isProcessAlive(pid: number): boolean {

@@ -396,21 +396,22 @@ Fresh T1 source-candidate and live-gate evidence:
   profile, arbitrary directories cannot impersonate a seed, and no sandbox
   copyback exists;
 - PR review hardening atomically publishes each clone/refresh lock as a
-  tokenized process-owner file and reclaims only recorded dead-process locks;
-  reuses an exact crash-restored recovery page and closes any in-flight
-  alternate target before returning it; and makes missing process receipts or
-  failed process inspection block profile deletion unless a profile-wide
-  process scan proves absence;
+  tokenized process-owner file with PID and process start time, and reclaims it
+  only after that exact owner is absent; reuses an exact crash-restored
+  recovery page, closes any in-flight or already-returned alternate target,
+  and makes the late exact recovery page reattachable; and makes missing
+  process receipts or failed process inspection block profile deletion unless
+  a profile-wide process scan proves absence;
 - process identity capture is opt-in for attempt runtimes only, so the current
   fixed-profile runtime and `CertifiedChatGptProvider` retain their pre-T1
   behavior. No provider dispatch integration or T2 runner change is present;
-- the focused suite passes sixteen tests, including clone failure before
-  atomic publication, immutable receipt rejection, dead-lock recovery,
-  exact-process mismatch, process-inspection fail-closed behavior, missing
-  receipt/live-process refusal, restored-page reuse without alternate target
-  creation, and a real fixture browser that destroys dirty clone A, starts
-  clone B clean, records zero Send, preserves the seed digest, and leaves zero
-  attempt residue;
+- the focused suite passes eighteen tests, including clone failure before
+  atomic publication, immutable receipt rejection, dead-lock and PID-reuse
+  recovery, exact-process mismatch, process-inspection fail-closed behavior,
+  missing receipt/live-process refusal, restored-page reuse and late recovery
+  reattachment without a second alternate target, and a real fixture browser
+  that destroys dirty clone A, starts clone B clean, records zero Send,
+  preserves the seed digest, and leaves zero attempt residue;
 - the owner-authorized real gate was attempted once with the stopped worker and
   unowned fixed profile. Clone A reported inherited browser state before model
   probing, prompt fill, attachment upload, or any submitting input action. The
@@ -422,9 +423,9 @@ Fresh T1 source-candidate and live-gate evidence:
   either path. The fixed profile was not cleared, adopted, or overwritten;
 - `pnpm check`, `pnpm build`, `pnpm docs:check`, `pnpm public:check`,
   `pnpm test:packed-cli`, and `git diff --check` passed. `pnpm test` passed all
-  three partitions: process-serial had 58 passing and one skipped test,
+  three partitions: process-serial had 60 passing and one skipped test,
   browser-serial had 30 passing and one skipped test, and the parallel
-  partition had 2,054 passing and 32 skipped tests (2,142 passing and 34
+  partition had 2,054 passing and 32 skipped tests (2,144 passing and 34
   skipped across 197 files in total);
 - the real T1 gate is not certified. It requires one explicit fresh auth-seed
   login, then the same two-clone no-Send proof. Fixture success is not a
@@ -513,7 +514,7 @@ Fresh T1 source-candidate and live-gate evidence:
 
 Preserve every historical canary, R8 review, bounded-dogfood job, fixed v2
 profile, and legacy dedicated profile without mutation; do not resend or create
-a duplicate. T1 source is awaiting review, but its real gate stopped correctly
+a duplicate. T1 source is tracked by PR #10, but its real gate stopped correctly
 because clone A inherited browser state from the old fixed profile. The next
 safe action is one explicit fresh auth-seed login/setup followed by the same
 two-clone no-Send proof. Do not clear or adopt the unknown old state, certify

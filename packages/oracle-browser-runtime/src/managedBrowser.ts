@@ -225,7 +225,6 @@ async function preserveManagedPage(
     return existing;
   }
   input.ownPage(page);
-  input.preservedPages.add(page);
   if (input.singlePageLifetime) {
     for (const owned of input.ownedPages) {
       if (owned !== page) {
@@ -233,6 +232,7 @@ async function preserveManagedPage(
       }
     }
   }
+  input.preservedPages.add(page);
   return page;
 }
 

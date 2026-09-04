@@ -244,6 +244,27 @@ describe("Oracle disposable attempt sandboxes", () => {
     );
   });
 
+  test("reclaims an auth-seed lock after its PID is reused", async () => {
+    const runtimeRoot = temporaryRoot();
+    const lockRoot = path.join(runtimeRoot, "run", "auth-seed.lock");
+    const exclusive = path.join(lockRoot, "exclusive");
+    mkdirSync(lockRoot, { recursive: true });
+    writeFileSync(
+      exclusive,
+      `${JSON.stringify({
+        schemaVersion: "oracle.auth-seed-lock-owner.v2",
+        token: "dead-owner-reused-pid",
+        pid: process.pid,
+        processStartTime: "not-the-current-process-start-time",
+        mode: "exclusive",
+        createdAt: new Date().toISOString(),
+      })}\n`,
+    );
+    await expect(withAuthSeedCloneLock(runtimeRoot, async () => "clone-ready")).resolves.toBe(
+      "clone-ready",
+    );
+  });
+
   test("publishes complete auth-seed lock ownership atomically", async () => {
     const runtimeRoot = temporaryRoot();
     await withAuthSeedCloneLock(runtimeRoot, async () => {
@@ -253,8 +274,9 @@ describe("Oracle disposable attempt sandboxes", () => {
       const lockPath = path.join(readersRoot, readers[0]!);
       expect(statSync(lockPath).isFile()).toBe(true);
       expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({
-        schemaVersion: "oracle.auth-seed-lock-owner.v1",
+        schemaVersion: "oracle.auth-seed-lock-owner.v2",
         pid: process.pid,
+        processStartTime: expect.any(String),
         mode: "shared",
       });
     });
@@ -262,8 +284,9 @@ describe("Oracle disposable attempt sandboxes", () => {
       const lockPath = path.join(runtimeRoot, "run", "auth-seed.lock", "exclusive");
       expect(statSync(lockPath).isFile()).toBe(true);
       expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({
-        schemaVersion: "oracle.auth-seed-lock-owner.v1",
+        schemaVersion: "oracle.auth-seed-lock-owner.v2",
         pid: process.pid,
+        processStartTime: expect.any(String),
         mode: "exclusive",
       });
     });
@@ -631,6 +654,63 @@ describe("Oracle disposable attempt sandboxes", () => {
     expect([...preservedPages]).toEqual([recovery.page]);
   });
 
+  test("reattaches a late recovery page after the first open has resolved", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_late_recovery_page",
+      turnAttemptId: "attempt_late_recovery_page",
+      purpose: "commit-recovery",
+    });
+    const ordinary = fakeClosablePage();
+    const recovery = fakeClosablePage();
+    let preservedPages: Page[] = [];
+    let alternateOpenCount = 0;
+    const runtime = await launchAttemptBrowserRuntime({
+      sandboxDirectory: sandbox.directory,
+      headless: true,
+      preserveWindowNames: ["oracle-v2-at-risk:late"],
+      inspection: {
+        chromeForTestingExecutablePath: "/runtime/chrome",
+        executableExists: () => true,
+      },
+      launchManagedBrowser: async (input) => ({
+        context: { pages: () => preservedPages } as unknown as BrowserContext,
+        browserVersion: "test-browser",
+        executablePath: input.executablePath,
+        restoredPageCount: 0,
+        preservedPages: () => preservedPages,
+        processIdentity: {
+          pid: 5353,
+          processStartTime: "Fri Sep 4 02:05:06 2026",
+          executableRealpath: input.executablePath,
+          profileRealpath: sandbox.profileDir,
+          debugHost: "127.0.0.1",
+          debugPort: 9866,
+        },
+        openPage: async () => {
+          alternateOpenCount += 1;
+          return ordinary.page;
+        },
+        close: async () => undefined,
+      }),
+    });
+    await expect(runtime.openPage("https://fixture.invalid/ordinary")).resolves.toBe(ordinary.page);
+    await ordinary.page.close({ runBeforeUnload: false });
+    preservedPages = [recovery.page];
+    await expect(runtime.openPage("https://fixture.invalid/recover")).resolves.toBe(recovery.page);
+    await expect(runtime.openPage("https://fixture.invalid/third")).rejects.toThrow(
+      /only one page/i,
+    );
+    expect(alternateOpenCount).toBe(1);
+    await runtime.close();
+  });
+
   test.skipIf(!findFixtureBrowserExecutable())(
     "destroys a dirty browser clone and starts the next clone clean with zero Send",
     async () => {
@@ -830,9 +910,10 @@ function writeDeadLockOwner(lockPath: string, mode: "shared" | "exclusive"): voi
   writeFileSync(
     lockPath,
     `${JSON.stringify({
-      schemaVersion: "oracle.auth-seed-lock-owner.v1",
+      schemaVersion: "oracle.auth-seed-lock-owner.v2",
       token: `dead-${mode}`,
       pid: 999_999,
+      processStartTime: "dead-process-start-time",
       mode,
       createdAt: new Date().toISOString(),
     })}\n`,
