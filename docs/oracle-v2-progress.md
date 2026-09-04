@@ -422,7 +422,17 @@ Fresh T1 source-candidate and live-gate evidence:
 - recovery-page preservation is reserved before any alternate-page close is
   awaited, so concurrent marked-page handlers cannot cross-close both exact
   recovery workspaces; a second live recovery page deterministically aborts the
-  whole single-page runtime as ambiguous;
+  whole single-page runtime as ambiguous. Any unowned page arriving after
+  startup reconciliation increments a live launch receipt before asynchronous
+  page handling; the two-clone proof rechecks that count before and after
+  browser close, so delayed restoration cannot certify a falsely clean clone;
+- cleanup first writes an immutable sandbox/owner/process-status quarantine
+  receipt and atomically removes the stopped sandbox from `attempts/`. If
+  recursive deletion is interrupted, the next proof invocation resumes only
+  that exact receipt-bound quarantine; unreceipted or invalid entries remain
+  untouched and block seed acceptance. Acceptance and proof completion both
+  require zero attempt and quarantine entries, and no cleanup decision reads
+  composer DOM;
 - the real proof now waits for DOM readiness plus five seconds of unchanged
   composer/attachment/recovery state before classifying a clone as initially
   clean. Candidate creation accepts only the exact fixed `browser-profile`
@@ -440,8 +450,10 @@ Fresh T1 source-candidate and live-gate evidence:
 - process identity capture is opt-in for attempt runtimes only, so the current
   fixed-profile runtime and `CertifiedChatGptProvider` retain their pre-T1
   behavior. No provider dispatch integration or T2 runner change is present;
-- the focused suite passes forty tests, including delayed restored-state
+- the focused attempt-sandbox suite passes forty-three tests, including delayed restored-state
   detection, exact migration-source enforcement, abandoned-staging refusal,
+  unreceipted-quarantine refusal, receipt-bound quarantine cleanup resumption,
+  live late-restoration receipt propagation,
   cross-generation logical-attempt uniqueness, pre-launch process-slot and
   concurrent-open exclusion, cleanup-safe ownership before interrupted profile
   cloning, immutable receipt rejection, dead-lock and PID-reuse recovery,
@@ -470,9 +482,9 @@ Fresh T1 source-candidate and live-gate evidence:
   either path. The fixed profile was not cleared, adopted, or overwritten;
 - `pnpm check`, `pnpm build`, `pnpm docs:check`, `pnpm public:check`,
   `pnpm test:packed-cli`, and `git diff --check` passed. `pnpm test` passed all
-  three partitions: process-serial had 82 passing and one skipped test,
+  three partitions: process-serial had 85 passing and one skipped test,
   browser-serial had 30 passing and one skipped test, and the parallel
-  partition had 2,054 passing and 32 skipped tests (2,166 passing and 34
+  partition had 2,054 passing and 32 skipped tests (2,169 passing and 34
   skipped across 197 files in total);
 - the real T1 gate is not certified. It requires one explicit fresh auth-seed
   login, then the same two-clone no-Send proof. Fixture success is not a

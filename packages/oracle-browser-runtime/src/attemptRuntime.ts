@@ -80,7 +80,9 @@ export async function launchAttemptBrowserRuntime(options: {
       profileDir: sandbox.profileDir,
       executablePath: launched.executablePath,
       browserVersion: launched.browserVersion,
-      restoredPageCount: launched.restoredPageCount,
+      get restoredPageCount() {
+        return launched.restoredPageCount;
+      },
       restartOrdinal: 1,
       automaticFallback: false,
       launchedAt: new Date().toISOString(),

@@ -39,6 +39,8 @@ export async function launchManagedChromeForTesting(
     const ownedPages = new Set<Page>();
     const preservedPages = new Set<Page>();
     const pendingMarkers = new Set<string>();
+    let startupReconciliationComplete = false;
+    let lateRestoredPageCount = 0;
     let closed = false;
     let closeAttempt: Promise<void> | undefined;
     let closeLateUnownedPage: (page: Page) => void;
@@ -74,17 +76,15 @@ export async function launchManagedChromeForTesting(
         abort: closeRuntime,
       });
     closeLateUnownedPage = (page: Page) => {
+      const arrivedAfterReconciliation = startupReconciliationComplete;
+      const potentiallyOwnedAtArrival = ownedPages.has(page) || pendingMarkers.has(page.url());
+      if (arrivedAfterReconciliation && !potentiallyOwnedAtArrival) lateRestoredPageCount += 1;
       void delay(50)
         .then(async () => {
-          if (
-            closed ||
-            closeAttempt ||
-            page.isClosed() ||
-            ownedPages.has(page) ||
-            pendingMarkers.has(page.url())
-          ) {
+          if (closed || closeAttempt || ownedPages.has(page) || pendingMarkers.has(page.url())) {
             return;
           }
+          if (page.isClosed()) return;
           let recoveryWindowName: string;
           try {
             recoveryWindowName = await readRecoveryWindowName(context, page);
@@ -116,6 +116,7 @@ export async function launchManagedChromeForTesting(
     const restoredPageCount = await closeRestoredBrowserPages(context, {
       preserveWindowNames: [...preserveWindowNames],
     });
+    startupReconciliationComplete = true;
     for (const page of context.pages()) {
       if (
         !page.isClosed() &&
@@ -128,7 +129,9 @@ export async function launchManagedChromeForTesting(
       context,
       browserVersion: browser.version(),
       executablePath: input.executablePath,
-      restoredPageCount,
+      get restoredPageCount() {
+        return restoredPageCount + lateRestoredPageCount;
+      },
       preservedPages: () => [...preservedPages].filter((page) => !page.isClosed()),
       ...(processIdentity ? { processIdentity } : {}),
       async openPage(url) {

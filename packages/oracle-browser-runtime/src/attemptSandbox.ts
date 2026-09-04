@@ -10,6 +10,7 @@ import {
   readdir,
   rename,
   rm,
+  rmdir,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
@@ -43,6 +44,7 @@ const QUARANTINE_DIRECTORY = "quarantine";
 const OWNER_RECEIPT = "owner.json";
 const PROCESS_RECEIPT = "process.json";
 const PROCESS_LIFECYCLE_RESERVATION = "process-lifecycle.json";
+const QUARANTINE_RECEIPT = "quarantine.json";
 const ATTEMPT_SHELLS_DIRECTORY = "attempt-shells";
 
 interface AttemptProcessLifecycleReservation {
@@ -55,8 +57,20 @@ interface AttemptProcessLifecycleReservation {
   createdAt: string;
 }
 
+interface AttemptSandboxQuarantineReceipt {
+  schemaVersion: "oracle.attempt-sandbox-quarantine.v1";
+  token: string;
+  sandboxId: string;
+  sourceDirectory: string;
+  quarantineDirectory: string;
+  owner: AttemptSandboxOwner;
+  processStatus: Exclude<AttemptSandboxCleanupReceipt["processStatus"], "identity-unproven">;
+  quarantinedAt: string;
+}
+
 export interface AttemptCleanupDependencies extends ProcessIdentityDependencies {
   findProcessesUsingProfile?: typeof findManagedBrowserProcessesUsingProfile;
+  removeQuarantinedSandbox?: (quarantineDirectory: string) => Promise<void>;
   closeWaitMs?: number;
   termWaitMs?: number;
   killWaitMs?: number;
@@ -86,16 +100,7 @@ export async function createAttemptSandbox(input: {
         throw new Error("An attempt sandbox cannot be used as an auth-seed source");
       }
       const seedGeneration = authSeedCloneSourceGeneration(seed);
-      const sandboxId = createHash("sha256")
-        .update(
-          JSON.stringify([
-            "oracle.attempt-sandbox-owner.v1",
-            input.jobId,
-            input.turnAttemptId,
-            input.purpose,
-          ]),
-        )
-        .digest("hex");
+      const sandboxId = attemptSandboxId(input);
       const finalDirectory = path.join(attemptsRealpath, sandboxId);
       const finalProfile = path.join(finalDirectory, "profile");
       const owner: AttemptSandboxOwner = {
@@ -367,29 +372,29 @@ export async function cleanupAttemptSandbox(input: {
       if (processReceipt) {
         await rm(path.join(directoryRealpath, PROCESS_RECEIPT), { force: true });
       }
+      const quarantine = await prepareAttemptSandboxQuarantine(runtimeRoot, sandbox, processStatus);
       try {
-        await rm(directoryRealpath, { recursive: true, force: false });
+        await rename(directoryRealpath, quarantine.quarantineDirectory);
+      } catch (error) {
+        return completed("blocked", processStatus, {
+          error: `Sandbox quarantine failed before deletion: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        });
+      }
+      try {
+        const removeQuarantinedSandbox = input.dependencies?.removeQuarantinedSandbox;
+        await withBrowserLockMutation(runtimeRoot, () =>
+          removeQuarantinedSandbox
+            ? removeQuarantinedSandbox(quarantine.quarantineDirectory)
+            : removeAttemptSandboxQuarantine(quarantine.quarantineDirectory, quarantine),
+        );
         return completed("deleted", processStatus);
       } catch (error) {
-        const quarantineRoot = path.join(runtimeRoot, QUARANTINE_DIRECTORY);
-        await ensurePrivateDirectory(quarantineRoot);
-        const quarantinePath = path.join(
-          await realpath(quarantineRoot),
-          `${sandboxId}.${randomUUID()}`,
-        );
-        try {
-          await rename(directoryRealpath, quarantinePath);
-          return completed("quarantined", processStatus, {
-            quarantinePath,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        } catch (quarantineError) {
-          return completed("blocked", processStatus, {
-            error: `Sandbox deletion and quarantine failed: ${
-              quarantineError instanceof Error ? quarantineError.message : String(quarantineError)
-            }`,
-          });
-        }
+        return completed("quarantined", processStatus, {
+          quarantinePath: quarantine.quarantineDirectory,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     });
   } catch (error) {
@@ -397,6 +402,160 @@ export async function cleanupAttemptSandbox(input: {
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+async function prepareAttemptSandboxQuarantine(
+  runtimeRoot: string,
+  sandbox: AttemptSandbox,
+  processStatus: Exclude<AttemptSandboxCleanupReceipt["processStatus"], "identity-unproven">,
+): Promise<AttemptSandboxQuarantineReceipt> {
+  const receiptPath = path.join(sandbox.directory, QUARANTINE_RECEIPT);
+  const existing = await readJson<AttemptSandboxQuarantineReceipt>(receiptPath);
+  if (existing) {
+    if (!(await matchesPreparedAttemptQuarantine(runtimeRoot, sandbox, existing))) {
+      throw new Error("Attempt sandbox quarantine receipt is invalid or belongs elsewhere");
+    }
+    return existing;
+  }
+  const quarantineRoot = await resolveAttemptQuarantineRoot(runtimeRoot, true);
+  const token = randomUUID();
+  const quarantine: AttemptSandboxQuarantineReceipt = {
+    schemaVersion: "oracle.attempt-sandbox-quarantine.v1",
+    token,
+    sandboxId: sandbox.sandboxId,
+    sourceDirectory: sandbox.directory,
+    quarantineDirectory: path.join(quarantineRoot, `${sandbox.sandboxId}.${token}`),
+    owner: sandbox.owner,
+    processStatus,
+    quarantinedAt: new Date().toISOString(),
+  };
+  await writeImmutablePrivateJson(receiptPath, quarantine);
+  return quarantine;
+}
+
+async function matchesPreparedAttemptQuarantine(
+  runtimeRoot: string,
+  sandbox: AttemptSandbox,
+  receipt: AttemptSandboxQuarantineReceipt,
+): Promise<boolean> {
+  if (!isAttemptSandboxQuarantineReceipt(receipt)) return false;
+  const quarantineRoot = await resolveAttemptQuarantineRoot(runtimeRoot, false);
+  return (
+    receipt.sandboxId === sandbox.sandboxId &&
+    attemptSandboxId(receipt.owner) === sandbox.sandboxId &&
+    receipt.sourceDirectory === sandbox.directory &&
+    receipt.owner.profileRealpath === sandbox.profileDir &&
+    path.dirname(receipt.quarantineDirectory) === quarantineRoot &&
+    path.basename(receipt.quarantineDirectory) === `${receipt.sandboxId}.${receipt.token}` &&
+    sameAttemptOwner(receipt.owner, sandbox.owner)
+  );
+}
+
+export async function reconcileAttemptSandboxQuarantines(runtimeRoot: string): Promise<void> {
+  const resolvedRuntimeRoot = path.resolve(runtimeRoot);
+  const quarantineRoot = path.join(resolvedRuntimeRoot, QUARANTINE_DIRECTORY);
+  if (!(await pathExists(quarantineRoot))) return;
+  const runtimeRealpath = await realpath(resolvedRuntimeRoot);
+  const quarantineRealpath = await resolveAttemptQuarantineRoot(runtimeRealpath, false);
+  await withBrowserLockMutation(runtimeRealpath, async () => {
+    for (const entry of await readdir(quarantineRealpath, { withFileTypes: true })) {
+      const quarantineDirectory = path.join(quarantineRealpath, entry.name);
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+      const directoryRealpath = await realpath(quarantineDirectory);
+      if (path.dirname(directoryRealpath) !== quarantineRealpath) continue;
+      const receipt = await readJson<AttemptSandboxQuarantineReceipt>(
+        path.join(directoryRealpath, QUARANTINE_RECEIPT),
+      ).catch(() => undefined);
+      if (!receipt) {
+        if (
+          /^[a-f0-9]{64}\.[a-f0-9-]{36}$/iu.test(entry.name) &&
+          (await readdir(directoryRealpath)).length === 0
+        ) {
+          await rmdir(directoryRealpath).catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== "ENOENT" && error.code !== "ENOTEMPTY") throw error;
+          });
+        }
+        continue;
+      }
+      if (!(await matchesMovedAttemptQuarantine(runtimeRealpath, directoryRealpath, receipt))) {
+        continue;
+      }
+      await removeAttemptSandboxQuarantine(directoryRealpath, receipt);
+    }
+  });
+}
+
+async function matchesMovedAttemptQuarantine(
+  runtimeRoot: string,
+  quarantineDirectory: string,
+  receipt: AttemptSandboxQuarantineReceipt,
+): Promise<boolean> {
+  if (!isAttemptSandboxQuarantineReceipt(receipt)) return false;
+  const quarantineRoot = await realpath(path.join(runtimeRoot, QUARANTINE_DIRECTORY));
+  const attemptsRoot = await realpath(path.join(runtimeRoot, ATTEMPTS_DIRECTORY));
+  const recordedSourceParent = await realpath(path.dirname(receipt.sourceDirectory)).catch(
+    () => undefined,
+  );
+  const recordedQuarantineRealpath = await realpath(receipt.quarantineDirectory).catch(
+    () => undefined,
+  );
+  return (
+    path.dirname(quarantineDirectory) === quarantineRoot &&
+    recordedQuarantineRealpath === quarantineDirectory &&
+    path.basename(quarantineDirectory) === `${receipt.sandboxId}.${receipt.token}` &&
+    recordedSourceParent === attemptsRoot &&
+    path.basename(receipt.sourceDirectory) === receipt.sandboxId &&
+    receipt.owner.profileRealpath === path.join(receipt.sourceDirectory, "profile") &&
+    attemptSandboxId(receipt.owner) === receipt.sandboxId
+  );
+}
+
+async function removeAttemptSandboxQuarantine(
+  quarantineDirectory: string,
+  expected: AttemptSandboxQuarantineReceipt,
+): Promise<void> {
+  const receiptPath = path.join(quarantineDirectory, QUARANTINE_RECEIPT);
+  for (const name of await readdir(quarantineDirectory)) {
+    if (name === QUARANTINE_RECEIPT) continue;
+    await rm(path.join(quarantineDirectory, name), { recursive: true, force: true });
+  }
+  const confirmed = await readJson<AttemptSandboxQuarantineReceipt>(receiptPath);
+  if (!confirmed || !sameAttemptQuarantineReceipt(confirmed, expected)) {
+    throw new Error("Attempt sandbox quarantine ownership changed during cleanup");
+  }
+  await rm(receiptPath, { force: false });
+  await rmdir(quarantineDirectory).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+  });
+}
+
+export async function listAttemptQuarantineEntries(runtimeRoot: string): Promise<string[]> {
+  const quarantineRoot = path.join(path.resolve(runtimeRoot), QUARANTINE_DIRECTORY);
+  if (!(await pathExists(quarantineRoot))) return [];
+  const quarantineRealpath = await resolveAttemptQuarantineRoot(runtimeRoot, false);
+  const entries = await readdir(quarantineRealpath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  });
+  return entries.map((entry) => path.join(quarantineRealpath, entry)).sort();
+}
+
+async function resolveAttemptQuarantineRoot(runtimeRoot: string, create: boolean): Promise<string> {
+  const resolvedRuntimeRoot = path.resolve(runtimeRoot);
+  if (create) await ensurePrivateDirectory(resolvedRuntimeRoot);
+  const runtimeRealpath = await realpath(resolvedRuntimeRoot);
+  const quarantineRoot = path.join(runtimeRealpath, QUARANTINE_DIRECTORY);
+  if (create) await ensurePrivateDirectory(quarantineRoot);
+  const entry = await lstat(quarantineRoot);
+  const quarantineRealpath = await realpath(quarantineRoot);
+  if (
+    !entry.isDirectory() ||
+    entry.isSymbolicLink() ||
+    path.dirname(quarantineRealpath) !== runtimeRealpath
+  ) {
+    throw new Error("Attempt quarantine root is not one exact directory under the runtime root");
+  }
+  return quarantineRealpath;
 }
 
 export async function listAttemptSandboxDirectories(runtimeRoot: string): Promise<string[]> {
@@ -498,6 +657,59 @@ function isAttemptSandboxOwner(value: unknown): value is AttemptSandboxOwner {
     owner.seedGeneration &&
     owner.profileRealpath &&
     owner.createdAt,
+  );
+}
+
+function attemptSandboxId(
+  owner: Pick<AttemptSandboxOwner, "jobId" | "turnAttemptId" | "purpose">,
+): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        "oracle.attempt-sandbox-owner.v1",
+        owner.jobId,
+        owner.turnAttemptId,
+        owner.purpose,
+      ]),
+    )
+    .digest("hex");
+}
+
+function isAttemptSandboxQuarantineReceipt(
+  value: unknown,
+): value is AttemptSandboxQuarantineReceipt {
+  const receipt = value as Partial<AttemptSandboxQuarantineReceipt> | undefined;
+  return Boolean(
+    receipt &&
+    receipt.schemaVersion === "oracle.attempt-sandbox-quarantine.v1" &&
+    typeof receipt.token === "string" &&
+    /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(receipt.token) &&
+    typeof receipt.sandboxId === "string" &&
+    /^[a-f0-9]{64}$/u.test(receipt.sandboxId) &&
+    typeof receipt.sourceDirectory === "string" &&
+    path.isAbsolute(receipt.sourceDirectory) &&
+    typeof receipt.quarantineDirectory === "string" &&
+    path.isAbsolute(receipt.quarantineDirectory) &&
+    isAttemptSandboxOwner(receipt.owner) &&
+    ["none", "already-stopped", "stopped"].includes(receipt.processStatus ?? "") &&
+    typeof receipt.quarantinedAt === "string" &&
+    receipt.quarantinedAt.length > 0,
+  );
+}
+
+function sameAttemptQuarantineReceipt(
+  left: AttemptSandboxQuarantineReceipt,
+  right: AttemptSandboxQuarantineReceipt,
+): boolean {
+  return (
+    left.schemaVersion === right.schemaVersion &&
+    left.token === right.token &&
+    left.sandboxId === right.sandboxId &&
+    left.sourceDirectory === right.sourceDirectory &&
+    left.quarantineDirectory === right.quarantineDirectory &&
+    sameAttemptOwner(left.owner, right.owner) &&
+    left.processStatus === right.processStatus &&
+    left.quarantinedAt === right.quarantinedAt
   );
 }
 

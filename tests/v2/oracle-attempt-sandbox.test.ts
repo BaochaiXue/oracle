@@ -31,12 +31,14 @@ import {
   discardAuthSeedCandidate,
   digestProfile,
   launchAttemptBrowserRuntime,
+  listAttemptQuarantineEntries,
   listAttemptSandboxDirectories,
   managedBrowserTestHooks,
   observeManagedBrowserProcess,
   readAuthSeed,
   readAuthSeedCertification,
   readAttemptSandbox,
+  reconcileAttemptSandboxQuarantines,
   withAuthSeedCloneLock,
   withAuthSeedRefreshLock,
   withAttemptProcessLifecycleReservation,
@@ -372,7 +374,30 @@ describe("Oracle disposable attempt sandboxes", () => {
           cloneB: "deleted-clone-b",
         }),
       }),
-    ).rejects.toThrow(/attempt sandboxes remain/i);
+    ).rejects.toThrow(/attempt sandbox.*residue remains/i);
+  });
+
+  test("blocks seed acceptance while unreceipted quarantine residue remains", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const foreignQuarantine = path.join(runtimeRoot, "quarantine", "unreceipted-residue");
+    mkdirSync(foreignQuarantine, { recursive: true });
+    writeFileSync(path.join(foreignQuarantine, "keep"), "foreign state\n");
+
+    await expect(
+      acceptAuthSeedCandidate({
+        runtimeRoot,
+        candidateRoot: path.dirname(candidate.profileRealpath),
+        cloneProof: passingCloneProof(candidate.candidateId, candidate.profileDigest, {
+          cloneA: "deleted-clone-a",
+          cloneB: "deleted-clone-b",
+        }),
+      }),
+    ).rejects.toThrow(/quarantine residue remains/i);
+    expect(readFileSync(path.join(foreignQuarantine, "keep"), "utf8")).toBe("foreign state\n");
   });
 
   test("requires the promoted candidate to be the only candidate entry", async () => {
@@ -904,6 +929,50 @@ describe("Oracle disposable attempt sandboxes", () => {
     expect(existsSync(sandbox.directory)).toBe(false);
   });
 
+  test("resumes receipt-bound sandbox quarantine deletion after an interrupted cleanup", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_quarantine_resume",
+      turnAttemptId: "attempt_quarantine_resume",
+      purpose: "probe",
+    });
+    writeFileSync(path.join(sandbox.profileDir, "partial-state"), "delete on resume\n");
+
+    const cleanup = await cleanupAttemptSandbox({
+      runtimeRoot,
+      sandboxDirectory: sandbox.directory,
+      expectedOwner: sandbox.owner,
+      dependencies: {
+        findProcessesUsingProfile: noProfileProcesses,
+        removeQuarantinedSandbox: async () => {
+          throw new Error("injected cleanup interruption");
+        },
+      },
+    });
+    expect(cleanup).toMatchObject({
+      status: "quarantined",
+      processStatus: "none",
+      error: "injected cleanup interruption",
+    });
+    expect(cleanup.quarantinePath).toEqual(expect.any(String));
+    expect(existsSync(sandbox.directory)).toBe(false);
+    expect(await listAttemptSandboxDirectories(runtimeRoot)).toEqual([]);
+    expect(await listAttemptQuarantineEntries(runtimeRoot)).toEqual([cleanup.quarantinePath]);
+    expect(existsSync(path.join(cleanup.quarantinePath!, "quarantine.json"))).toBe(true);
+    expect(existsSync(path.join(cleanup.quarantinePath!, "profile", "partial-state"))).toBe(true);
+
+    await reconcileAttemptSandboxQuarantines(runtimeRoot);
+
+    expect(await listAttemptQuarantineEntries(runtimeRoot)).toEqual([]);
+    expect(existsSync(cleanup.quarantinePath!)).toBe(false);
+  });
+
   test("launches only the marked sandbox and permits only one page", async () => {
     const runtimeRoot = temporaryRoot();
     const candidate = await createAuthSeedCandidate({
@@ -956,6 +1025,68 @@ describe("Oracle disposable attempt sandboxes", () => {
     await expect(writeAttemptProcessReceipt(sandbox, runtime.processReceipt)).rejects.toMatchObject(
       { code: "EEXIST" },
     );
+    expect(
+      (
+        await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: sandbox.directory,
+          dependencies: {
+            observeProcess: noObservedProcess,
+            findProcessesUsingProfile: noProfileProcesses,
+          },
+        })
+      ).status,
+    ).toBe("deleted");
+  });
+
+  test("keeps the attempt receipt live when a restored page arrives after launch", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_late_restored_receipt",
+      turnAttemptId: "attempt_late_restored_receipt",
+      purpose: "probe",
+    });
+    let restoredPageCount = 0;
+    const runtime = await launchAttemptBrowserRuntime({
+      sandboxDirectory: sandbox.directory,
+      headless: true,
+      inspection: {
+        chromeForTestingExecutablePath: "/runtime/chrome",
+        executableExists: () => true,
+      },
+      launchManagedBrowser: async (input) => ({
+        context: { pages: () => [] } as unknown as BrowserContext,
+        browserVersion: "test-browser",
+        executablePath: input.executablePath,
+        get restoredPageCount() {
+          return restoredPageCount;
+        },
+        preservedPages: () => [],
+        processIdentity: {
+          pid: 5152,
+          processStartTime: "Fri Sep 4 02:03:05 2026",
+          executableRealpath: input.executablePath,
+          profileRealpath: sandbox.profileDir,
+          debugHost: "127.0.0.1",
+          debugPort: 9667,
+        },
+        openPage: async () => fakeClosablePage().page,
+        close: async () => undefined,
+      }),
+    });
+    expect(runtime.receipt.restoredPageCount).toBe(0);
+    restoredPageCount = 1;
+    expect(runtime.receipt.restoredPageCount).toBe(1);
+    await runtime.close();
+    expect(
+      JSON.parse(readFileSync(path.join(sandbox.directory, "browser-runtime-launch.json"), "utf8")),
+    ).toMatchObject({ restoredPageCount: 1 });
     expect(
       (
         await cleanupAttemptSandbox({

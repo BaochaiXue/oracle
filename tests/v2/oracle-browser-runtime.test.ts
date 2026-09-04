@@ -279,6 +279,7 @@ describe("Oracle v2 certified browser runtime", () => {
           await session.detach();
         }
         await waitForPageCount(runtime.context, 0, 5_000);
+        expect(runtime.receipt.restoredPageCount).toBe(3);
 
         const [first, second] = await Promise.all([
           runtime.openPage(fixture.urlFor("exact-first")),
@@ -286,6 +287,7 @@ describe("Oracle v2 certified browser runtime", () => {
         ]);
         expect(new URL(first.url()).searchParams.get("job")).toBe("exact-first");
         expect(new URL(second.url()).searchParams.get("job")).toBe("exact-second");
+        expect(runtime.receipt.restoredPageCount).toBe(3);
         expect(runtime.context.pages().filter((page) => !page.isClosed())).toHaveLength(2);
         await Promise.all([first.close(), second.close()]);
       } finally {

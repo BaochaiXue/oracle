@@ -249,8 +249,14 @@ export async function acceptAuthSeedCandidate(input: {
       if ((await digestProfile(candidate.profileRealpath)) !== candidate.profileDigest) {
         throw new Error("Auth-seed candidate changed during clone isolation proof");
       }
-      if ((await countAttemptEntries(runtimeRoot)) !== 0) {
-        throw new Error("Auth-seed candidate cannot be accepted while attempt sandboxes remain");
+      const [attemptCount, quarantineCount] = await Promise.all([
+        countRuntimeDirectoryEntries(runtimeRoot, ATTEMPTS_DIRECTORY),
+        countRuntimeDirectoryEntries(runtimeRoot, "quarantine"),
+      ]);
+      if (attemptCount !== 0 || quarantineCount !== 0) {
+        throw new Error(
+          "Auth-seed candidate cannot be accepted while attempt sandbox or quarantine residue remains",
+        );
       }
       const candidatesRoot = await realpath(path.join(runtimeRoot, CANDIDATES_DIRECTORY));
       await reclaimStaleCandidateStagingEntries(runtimeRoot, candidatesRoot);
@@ -776,12 +782,26 @@ async function validateCandidateLocation(
   }
 }
 
-async function countAttemptEntries(runtimeRoot: string): Promise<number> {
-  const attemptsRoot = path.join(runtimeRoot, ATTEMPTS_DIRECTORY);
-  const entries = await readdir(attemptsRoot).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") return [];
+async function countRuntimeDirectoryEntries(
+  runtimeRoot: string,
+  directoryName: string,
+): Promise<number> {
+  const runtimeRealpath = await realpath(runtimeRoot);
+  const directory = path.join(runtimeRealpath, directoryName);
+  const entry = await lstat(directory).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
     throw error;
   });
+  if (!entry) return 0;
+  const directoryRealpath = await realpath(directory);
+  if (
+    !entry.isDirectory() ||
+    entry.isSymbolicLink() ||
+    path.dirname(directoryRealpath) !== runtimeRealpath
+  ) {
+    throw new Error(`${directoryName} is not one exact directory under the runtime root`);
+  }
+  const entries = await readdir(directoryRealpath);
   return entries.length;
 }
 

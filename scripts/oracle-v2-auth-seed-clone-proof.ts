@@ -21,8 +21,10 @@ import {
   discardAuthSeedCandidate,
   findManagedBrowserProcessesUsingProfile,
   launchAttemptBrowserRuntime,
+  listAttemptQuarantineEntries,
   listAttemptSandboxDirectories,
   readAuthSeed,
+  reconcileAttemptSandboxQuarantines,
   type AttemptSandboxCleanupReceipt,
   type AuthSeedCandidateReceipt,
   type AuthSeedCloneProofReceipt,
@@ -57,8 +59,11 @@ async function main(): Promise<void> {
   if (await readAuthSeed(runtimeRoot)) {
     throw new Error("An accepted auth seed already exists; this T1 command never replaces it");
   }
-  if ((await listAttemptSandboxDirectories(runtimeRoot)).length > 0) {
-    throw new Error("T1 clone proof refuses to run while an earlier attempt sandbox remains");
+  await reconcileAttemptSandboxQuarantines(runtimeRoot);
+  if ((await countAttemptResidue()).total > 0) {
+    throw new Error(
+      "T1 clone proof refuses to run while an earlier attempt sandbox or quarantine residue remains",
+    );
   }
 
   let candidate: AuthSeedCandidateReceipt | undefined;
@@ -72,7 +77,7 @@ async function main(): Promise<void> {
     const cloneA = await runClone(candidate, "a", marker, true);
     const cloneB = await runClone(candidate, "b", marker, false);
     const seedProfileDigestAfter = await digestProfile(candidate.profileRealpath);
-    const remainingAttemptCount = (await listAttemptSandboxDirectories(runtimeRoot)).length;
+    const remainingAttemptCount = (await countAttemptResidue()).total;
     await assertProfileUnused(candidate.profileRealpath, "auth-seed candidate");
     const sendEventCount = cloneA.sendEventCount + cloneB.sendEventCount;
     const proof: AuthSeedCloneProofReceipt = {
@@ -87,7 +92,10 @@ async function main(): Promise<void> {
       cloneB: cloneB.observation,
       cloneBCleanup: cloneB.cleanup,
       sendEventCount: expectZero(sendEventCount, "potential submission events"),
-      remainingAttemptCount: expectZero(remainingAttemptCount, "remaining attempt sandboxes"),
+      remainingAttemptCount: expectZero(
+        remainingAttemptCount,
+        "remaining attempt sandbox or quarantine entries",
+      ),
       completedAt: new Date().toISOString(),
     };
     if (
@@ -137,6 +145,22 @@ async function main(): Promise<void> {
       });
     }
   }
+}
+
+async function countAttemptResidue(): Promise<{
+  attempts: number;
+  quarantines: number;
+  total: number;
+}> {
+  const [attempts, quarantines] = await Promise.all([
+    listAttemptSandboxDirectories(runtimeRoot),
+    listAttemptQuarantineEntries(runtimeRoot),
+  ]);
+  return {
+    attempts: attempts.length,
+    quarantines: quarantines.length,
+    total: attempts.length + quarantines.length,
+  };
 }
 
 async function runClone(
@@ -219,6 +243,11 @@ async function runClone(
     if (monitor.count() !== 0) {
       throw new Error(`Clone ${suffix.toUpperCase()} observed a potential submission event`);
     }
+    if (runtime.receipt.restoredPageCount !== 0) {
+      throw new Error(
+        `Clone ${suffix.toUpperCase()} received a restored page after startup reconciliation`,
+      );
+    }
     const inheritedStateObserved = !initiallyClean;
     observation = {
       sandboxId: sandbox.sandboxId,
@@ -238,6 +267,11 @@ async function runClone(
     await runtime?.close().catch((error) => {
       operationError ??= error;
     });
+    if (runtime && runtime.receipt.restoredPageCount !== 0) {
+      operationError ??= new Error(
+        `Clone ${suffix.toUpperCase()} received a restored page after startup reconciliation`,
+      );
+    }
   }
   const cleanup = await cleanupAttemptSandbox({
     runtimeRoot,
