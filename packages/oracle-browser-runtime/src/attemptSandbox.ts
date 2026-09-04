@@ -21,6 +21,7 @@ import {
 } from "./authSeed.js";
 import {
   closeManagedBrowserOverCdp,
+  findManagedBrowserProcessesUsingProfile,
   managedBrowserProcessMatchesReceipt,
   observeManagedBrowserProcess,
   type ProcessIdentityDependencies,
@@ -40,6 +41,7 @@ const OWNER_RECEIPT = "owner.json";
 const PROCESS_RECEIPT = "process.json";
 
 export interface AttemptCleanupDependencies extends ProcessIdentityDependencies {
+  findProcessesUsingProfile?: typeof findManagedBrowserProcessesUsingProfile;
   closeWaitMs?: number;
   termWaitMs?: number;
   killWaitMs?: number;
@@ -231,6 +233,18 @@ export async function cleanupAttemptSandbox(input: {
           error: "Attempt process identity could not be proven; no signal or deletion was issued",
         });
       }
+    }
+    const profileProcesses = await (
+      input.dependencies?.findProcessesUsingProfile ?? findManagedBrowserProcessesUsingProfile
+    )(sandbox.profileDir);
+    if (profileProcesses.length > 0) {
+      return completed("blocked", "identity-unproven", {
+        error: processReceipt
+          ? "A live process still uses the attempt profile after exact-process cleanup; no deletion was issued"
+          : "Attempt sandbox has no process receipt but a live process still uses its profile; no signal or deletion was issued",
+      });
+    }
+    if (processReceipt) {
       await rm(path.join(directoryRealpath, PROCESS_RECEIPT), { force: true });
     }
     try {

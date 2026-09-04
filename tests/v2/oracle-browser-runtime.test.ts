@@ -180,6 +180,7 @@ describe("Oracle v2 certified browser runtime", () => {
         browserVersion: "test-browser",
         executablePath: input.executablePath,
         restoredPageCount: 0,
+        preservedPages: () => [],
         openPage: async () => ({}) as Page,
         close: async () => {
           closeAttempts += 1;
@@ -352,6 +353,7 @@ function fakeLaunch(launches: Parameters<LaunchManagedBrowser>[0][] = []): Launc
       browserVersion: "test-browser",
       executablePath: input.executablePath,
       restoredPageCount: 0,
+      preservedPages: () => [],
       openPage: async () => ({}) as Page,
       close: async () => undefined,
     };

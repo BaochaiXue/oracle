@@ -43,6 +43,7 @@ export interface LaunchedManagedBrowser {
   browserVersion: string;
   executablePath: string;
   restoredPageCount: number;
+  preservedPages(): readonly Page[];
   processIdentity?: ManagedBrowserProcessIdentity;
   openPage(url: string): Promise<Page>;
   close(): Promise<void>;

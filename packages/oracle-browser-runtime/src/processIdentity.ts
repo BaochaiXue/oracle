@@ -23,19 +23,35 @@ export interface ProcessIdentityDependencies {
   wait?: (milliseconds: number) => Promise<void>;
 }
 
+export interface ProcessInspectionDependencies {
+  execProcess?: (
+    file: string,
+    args: string[],
+    options: { maxBuffer: number },
+  ) => Promise<{ stdout?: string | Buffer }>;
+  processExists?: (pid: number) => Promise<boolean>;
+}
+
 export async function findManagedBrowserProcessesUsingProfile(
   profileDir: string,
 ): Promise<Array<{ pid: number; processStartTime: string }>> {
-  if (process.platform === "win32") return [];
+  if (process.platform === "win32") {
+    throw new Error("Managed browser profile process inspection is unavailable on Windows");
+  }
   const profileRealpath = await realpath(profileDir);
   const { stdout } = await execFileAsync(
     "ps",
     ["-axo", "pid=", "-o", "lstart=", "-o", "command="],
     { maxBuffer: 16 * 1024 * 1024 },
   );
-  return String(stdout ?? "")
+  const lines = String(stdout ?? "")
     .split("\n")
-    .map((line) => parseProcessObservation(line))
+    .filter((line) => line.trim());
+  const observations = lines.map((line) => parseProcessObservation(line));
+  if (observations.some((observation) => !observation)) {
+    throw new Error("Managed browser profile process inspection returned an unparseable row");
+  }
+  return observations
     .filter((observation): observation is ObservedManagedBrowserProcess =>
       Boolean(
         observation && commandFlagValue(observation.command, "--user-data-dir") === profileRealpath,
@@ -94,16 +110,27 @@ export async function captureManagedBrowserProcessIdentity(input: {
 export async function observeManagedBrowserProcess(
   pid: number,
   executablePath: string,
+  dependencies: ProcessInspectionDependencies = {},
 ): Promise<ObservedManagedBrowserProcess | undefined> {
-  if (!Number.isSafeInteger(pid) || pid <= 0 || process.platform === "win32") return undefined;
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    throw new Error("Managed browser process inspection requires a positive integer PID");
+  }
+  if (process.platform === "win32") {
+    throw new Error("Managed browser process inspection is unavailable on Windows");
+  }
+  const exists = dependencies.processExists ?? processExists;
+  if (!(await exists(pid))) return undefined;
   try {
-    const { stdout } = await execFileAsync(
+    const { stdout } = await (dependencies.execProcess ?? execFileAsync)(
       "ps",
       ["-p", String(pid), "-o", "pid=", "-o", "lstart=", "-o", "command="],
       { maxBuffer: 1024 * 1024 },
     );
     const parsed = parseProcessObservation(String(stdout ?? ""));
-    if (!parsed) return undefined;
+    if (!parsed) {
+      if (!(await exists(pid))) return undefined;
+      throw new Error("Managed browser process inspection returned an unparseable row");
+    }
     const executableRealpath =
       process.platform === "linux"
         ? await realpath(`/proc/${pid}/exe`).catch(() => undefined)
@@ -111,8 +138,22 @@ export async function observeManagedBrowserProcess(
           ? executablePath
           : undefined;
     return { ...parsed, ...(executableRealpath ? { executableRealpath } : {}) };
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (!(await exists(pid))) return undefined;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Managed browser process inspection failed: ${detail}`, { cause: error });
+  }
+}
+
+async function processExists(pid: number): Promise<boolean> {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return false;
+    if (code === "EPERM") return true;
+    throw error;
   }
 }
 

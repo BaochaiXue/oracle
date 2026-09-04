@@ -36,13 +36,21 @@ export async function launchManagedChromeForTesting(
     if (processIdentity) await input.onProcessIdentity?.(processIdentity);
     const preserveWindowNames = new Set(input.preserveWindowNames ?? []);
     const ownedPages = new Set<Page>();
+    const preservedPages = new Set<Page>();
     const pendingMarkers = new Set<string>();
     let closed = false;
     let closeAttempt: Promise<void> | undefined;
     const ownPage = (page: Page) => {
       if (ownedPages.has(page)) return;
       ownedPages.add(page);
-      page.once("close", () => ownedPages.delete(page));
+      page.once("close", () => {
+        ownedPages.delete(page);
+        preservedPages.delete(page);
+      });
+    };
+    const preservePage = (page: Page) => {
+      ownPage(page);
+      preservedPages.add(page);
     };
     const closeLateUnownedPage = (page: Page) => {
       void delay(50).then(async () => {
@@ -65,7 +73,7 @@ export async function launchManagedChromeForTesting(
           return;
         }
         if (preserveWindowNames.has(recoveryWindowName)) {
-          ownPage(page);
+          preservePage(page);
           return;
         }
         await page.close({ runBeforeUnload: false }).catch(() => undefined);
@@ -80,7 +88,7 @@ export async function launchManagedChromeForTesting(
         !page.isClosed() &&
         preserveWindowNames.has(await readRecoveryWindowName(context, page))
       ) {
-        ownPage(page);
+        preservePage(page);
       }
     }
     return {
@@ -88,6 +96,7 @@ export async function launchManagedChromeForTesting(
       browserVersion: browser.version(),
       executablePath: input.executablePath,
       restoredPageCount,
+      preservedPages: () => [...preservedPages].filter((page) => !page.isClosed()),
       ...(processIdentity ? { processIdentity } : {}),
       async openPage(url) {
         if (closed || closeAttempt) {
@@ -113,7 +122,7 @@ export async function launchManagedChromeForTesting(
             ownedPages,
             pendingMarkers,
             preserveWindowNames,
-            ownPage,
+            preservePage,
           );
           return page;
         } catch (error) {
@@ -170,7 +179,7 @@ async function closeCurrentlyUnownedPages(
   ownedPages: ReadonlySet<Page>,
   pendingMarkers: ReadonlySet<string>,
   preserveWindowNames: ReadonlySet<string>,
-  ownPage: (page: Page) => void,
+  preservePage: (page: Page) => void,
 ): Promise<void> {
   const unowned = context
     .pages()
@@ -186,7 +195,7 @@ async function closeCurrentlyUnownedPages(
       throw error;
     }
     if (preserveWindowNames.has(recoveryWindowName)) {
-      ownPage(page);
+      preservePage(page);
       continue;
     }
     await page.close({ runBeforeUnload: false }).catch(() => undefined);

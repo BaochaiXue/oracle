@@ -79,6 +79,12 @@ export async function launchAttemptBrowserRuntime(options: {
     throw error;
   }
 
+  const initialPreservedPages = launched.preservedPages();
+  if (initialPreservedPages.length > 1) {
+    await launched.close().catch(() => undefined);
+    throw new Error("An attempt sandbox restored more than one preserved recovery page");
+  }
+  let preservedPage = initialPreservedPages[0];
   let openedPage: Page | undefined;
   let browserClosed = false;
   let closeComplete = false;
@@ -91,6 +97,20 @@ export async function launchAttemptBrowserRuntime(options: {
     async openPage(url) {
       if (openedPage) {
         throw new Error("An attempt sandbox may own only one page during its lifetime");
+      }
+      const preservedPages = launched.preservedPages();
+      if (preservedPages.length > 1) {
+        throw new Error("An attempt sandbox restored more than one preserved recovery page");
+      }
+      preservedPage ??= preservedPages[0];
+      if (preservedPage) {
+        if (preservedPage.isClosed()) {
+          throw new Error(
+            "The exact preserved recovery page closed; refusing to open an alternate page",
+          );
+        }
+        openedPage = preservedPage;
+        return openedPage;
       }
       openedPage = await launched.openPage(url);
       return openedPage;
