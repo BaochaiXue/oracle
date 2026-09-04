@@ -115,7 +115,7 @@ export async function observeManagedBrowserProcess(
   if (!Number.isSafeInteger(pid) || pid <= 0) {
     throw new Error("Managed browser process inspection requires a positive integer PID");
   }
-  if (process.platform === "win32") {
+  if (process.platform === "win32" && !dependencies.execProcess) {
     throw new Error("Managed browser process inspection is unavailable on Windows");
   }
   const exists = dependencies.processExists ?? processExists;
