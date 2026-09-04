@@ -49,7 +49,9 @@ describe("Oracle v2 certified browser runtime", () => {
         return observations < 2 ? [] : restoredPages;
       },
       newCDPSession: fakeRecoveryMarkerSession,
-    } as unknown as Pick<BrowserContext, "newCDPSession" | "pages">;
+      on: () => context,
+      off: () => context,
+    } as unknown as Pick<BrowserContext, "newCDPSession" | "pages" | "on" | "off">;
 
     await expect(
       closeRestoredBrowserPages(context, { quietMs: 10, timeoutMs: 500, pollMs: 1 }),
@@ -74,7 +76,9 @@ describe("Oracle v2 certified browser runtime", () => {
     const context = {
       pages: () => [recoveryPage, ...stalePages],
       newCDPSession: fakeRecoveryMarkerSession,
-    } as unknown as Pick<BrowserContext, "newCDPSession" | "pages">;
+      on: () => context,
+      off: () => context,
+    } as unknown as Pick<BrowserContext, "newCDPSession" | "pages" | "on" | "off">;
 
     await expect(
       closeRestoredBrowserPages(context, {
@@ -86,6 +90,41 @@ describe("Oracle v2 certified browser runtime", () => {
     ).resolves.toBe(23);
     expect(recoveryPage.isClosed()).toBe(false);
     expect(stalePages.every((page) => page.isClosed())).toBe(true);
+  });
+
+  test("counts a restored page closed by another handler during startup reconciliation", async () => {
+    let closed = false;
+    const page = {
+      isClosed: () => closed,
+      close: async () => {
+        closed = true;
+      },
+    } as unknown as Page;
+    const listeners: Array<(candidate: Page) => void> = [];
+    const context = {
+      pages: () => [],
+      newCDPSession: fakeRecoveryMarkerSession,
+      on: (_event: "page", listener: (candidate: Page) => void) => {
+        listeners.push(listener);
+        return context;
+      },
+      off: (_event: "page", listener: (candidate: Page) => void) => {
+        const index = listeners.indexOf(listener);
+        if (index >= 0) listeners.splice(index, 1);
+        return context;
+      },
+    } as unknown as Pick<BrowserContext, "newCDPSession" | "pages" | "on" | "off">;
+    context.on("page", (candidate) => void candidate.close());
+
+    const reconciliation = closeRestoredBrowserPages(context, {
+      quietMs: 10,
+      timeoutMs: 500,
+      pollMs: 1,
+    });
+    for (const listener of listeners) listener(page);
+
+    await expect(reconciliation).resolves.toBe(1);
+    expect(page.isClosed()).toBe(true);
   });
 
   test("exposes one managed Chrome for Testing direct-CDP runtime", () => {

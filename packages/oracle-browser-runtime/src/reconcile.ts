@@ -8,7 +8,7 @@ export interface RestoredPageReconciliationOptions {
 }
 
 export async function closeRestoredBrowserPages(
-  context: Pick<BrowserContext, "newCDPSession" | "pages">,
+  context: Pick<BrowserContext, "newCDPSession" | "pages" | "on" | "off">,
   options: RestoredPageReconciliationOptions = {},
 ): Promise<number> {
   // Chrome on macOS can publish crash-restored targets several seconds after CDP attaches.
@@ -19,34 +19,45 @@ export async function closeRestoredBrowserPages(
   const startedAt = Date.now();
   let quietSince = startedAt;
   const closedPages = new Set<Page>();
+  const pagesArrivingDuringReconciliation = new Set<Page>();
+  const recordArrivingPage = (page: Page) => pagesArrivingDuringReconciliation.add(page);
+  context.on("page", recordArrivingPage);
 
-  while (true) {
-    let closedThisPass = 0;
-    for (const page of context.pages()) {
-      if (page.isClosed() || closedPages.has(page)) continue;
-      if (preserveWindowNames.has(await readRecoveryWindowName(context, page))) continue;
-      try {
-        await page.close({ runBeforeUnload: false });
-        closedPages.add(page);
-        closedThisPass += 1;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Could not close a restored Oracle browser target: ${message}`, {
-          cause: error,
-        });
+  try {
+    while (true) {
+      let closedThisPass = 0;
+      for (const page of context.pages()) {
+        if (page.isClosed() || closedPages.has(page)) continue;
+        if (preserveWindowNames.has(await readRecoveryWindowName(context, page))) {
+          pagesArrivingDuringReconciliation.delete(page);
+          continue;
+        }
+        try {
+          await page.close({ runBeforeUnload: false });
+          closedPages.add(page);
+          closedThisPass += 1;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(`Could not close a restored Oracle browser target: ${message}`, {
+            cause: error,
+          });
+        }
       }
+      if (closedThisPass > 0) {
+        quietSince = Date.now();
+      } else if (Date.now() - quietSince >= quietMs) {
+        return new Set([...closedPages, ...pagesArrivingDuringReconciliation]).size;
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
+        const observedCount = new Set([...closedPages, ...pagesArrivingDuringReconciliation]).size;
+        throw new Error(
+          `Oracle browser startup did not reach a restored-page quiet window after observing ${observedCount} targets`,
+        );
+      }
+      await delay(pollMs);
     }
-    if (closedThisPass > 0) {
-      quietSince = Date.now();
-    } else if (Date.now() - quietSince >= quietMs) {
-      return closedPages.size;
-    }
-    if (Date.now() - startedAt >= timeoutMs) {
-      throw new Error(
-        `Oracle browser startup did not reach a restored-page quiet window after closing ${closedPages.size} targets`,
-      );
-    }
-    await delay(pollMs);
+  } finally {
+    context.off("page", recordArrivingPage);
   }
 }
 

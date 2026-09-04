@@ -425,10 +425,13 @@ Fresh T1 source-candidate and live-gate evidence:
 - recovery-page preservation is reserved before any alternate-page close is
   awaited, so concurrent marked-page handlers cannot cross-close both exact
   recovery workspaces; a second live recovery page deterministically aborts the
-  whole single-page runtime as ambiguous. Any unowned page arriving after
-  startup reconciliation increments a live launch receipt before asynchronous
-  page handling; the two-clone proof rechecks that count before and after
-  browser close, so delayed restoration cannot certify a falsely clean clone;
+  whole single-page runtime as ambiguous. Startup reconciliation installs its
+  own synchronous page observer, so an unowned page that arrives and is closed
+  by another handler before the next scan is still counted. Any unowned page
+  arriving after reconciliation increments a live launch receipt before
+  asynchronous page handling; the two-clone proof rechecks that count before
+  and after browser close, so delayed restoration cannot certify a falsely
+  clean clone;
 - cleanup first writes an immutable sandbox/owner/process-status quarantine
   receipt and atomically removes the stopped sandbox from `attempts/`. If
   recursive deletion is interrupted, the next proof invocation resumes only
@@ -487,9 +490,9 @@ Fresh T1 source-candidate and live-gate evidence:
   either path. The fixed profile was not cleared, adopted, or overwritten;
 - `pnpm check`, `pnpm build`, `pnpm docs:check`, `pnpm public:check`,
   `pnpm test:packed-cli`, and `git diff --check` passed. `pnpm test` passed all
-  three partitions: process-serial had 86 passing and one skipped test,
+  three partitions: process-serial had 87 passing and one skipped test,
   browser-serial had 30 passing and one skipped test, and the parallel
-  partition had 2,054 passing and 32 skipped tests (2,170 passing and 34
+  partition had 2,054 passing and 32 skipped tests (2,171 passing and 34
   skipped across 197 files in total);
 - the real T1 gate is not certified. It requires one explicit fresh auth-seed
   login, then the same two-clone no-Send proof. Fixture success is not a

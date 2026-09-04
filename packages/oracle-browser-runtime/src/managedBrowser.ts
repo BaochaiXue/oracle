@@ -76,6 +76,8 @@ export async function launchManagedChromeForTesting(
         abort: closeRuntime,
       });
     closeLateUnownedPage = (page: Page) => {
+      // The startup reconciler has its own synchronous page observer. Only
+      // arrivals after it returns belong in this additional live count.
       const arrivedAfterReconciliation = startupReconciliationComplete;
       const potentiallyOwnedAtArrival = ownedPages.has(page) || pendingMarkers.has(page.url());
       if (arrivedAfterReconciliation && !potentiallyOwnedAtArrival) lateRestoredPageCount += 1;
