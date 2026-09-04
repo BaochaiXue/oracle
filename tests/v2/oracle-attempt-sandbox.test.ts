@@ -1263,6 +1263,28 @@ describe("Oracle disposable attempt sandboxes", () => {
     expect(managedBrowserTestHooks.findLivePreservedPage(preservedPages)).toBe(recovery.page);
   });
 
+  test("closes the browser runtime instead of choosing between recovery pages", async () => {
+    const first = fakeClosablePage();
+    const duplicate = fakeClosablePage();
+    const ownedPages = new Set<Page>([first.page]);
+    const preservedPages = new Set<Page>([first.page]);
+    let abortCount = 0;
+    await expect(
+      managedBrowserTestHooks.preserveManagedPage(duplicate.page, {
+        ownedPages,
+        preservedPages,
+        singlePageLifetime: true,
+        ownPage: (page) => ownedPages.add(page),
+        abort: async () => {
+          abortCount += 1;
+        },
+      }),
+    ).rejects.toThrow(/multiple live preserved recovery pages.*closed fail-safe/i);
+    expect(abortCount).toBe(1);
+    expect(first.closed()).toBe(false);
+    expect(duplicate.closed()).toBe(false);
+  });
+
   test("closes the browser runtime when an alternate page cannot close", async () => {
     const recovery = fakeClosablePage();
     const stubbornPage = {

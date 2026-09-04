@@ -282,8 +282,17 @@ async function preserveManagedPage(
 ): Promise<Page> {
   const existing = [...input.preservedPages].find((candidate) => !candidate.isClosed());
   if (input.singlePageLifetime && existing && existing !== page) {
-    await closePageForSingleLifetime(page, input.abort);
-    return existing;
+    try {
+      await input.abort();
+    } catch (abortError) {
+      throw new AggregateError(
+        [abortError],
+        "Found multiple live preserved recovery pages and could not close their browser runtime",
+      );
+    }
+    throw new Error(
+      "Found multiple live preserved recovery pages; the browser runtime was closed fail-safe",
+    );
   }
   input.ownPage(page);
   if (input.singlePageLifetime) {
