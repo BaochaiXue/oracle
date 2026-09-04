@@ -617,12 +617,13 @@ async function inspectLocalProcessStartTime(pid: number): Promise<string | undef
         ? await execFileAsync(
             "powershell.exe",
             [
+              "-NoLogo",
               "-NoProfile",
               "-NonInteractive",
               "-Command",
-              `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if ($null -ne $p) { $p.StartTime.ToUniversalTime().ToString('O') }`,
+              `try { [System.Diagnostics.Process]::GetProcessById(${pid}).StartTime.ToUniversalTime().ToString('O') } catch [System.ArgumentException] { }`,
             ],
-            { maxBuffer: 64 * 1024 },
+            { maxBuffer: 64 * 1024, timeout: 10_000, windowsHide: true },
           )
         : await execFileAsync("ps", ["-p", String(pid), "-o", "lstart="], {
             maxBuffer: 64 * 1024,
@@ -797,21 +798,28 @@ async function reclaimStaleCandidateStagingEntries(
     if (!entry.name.startsWith(".") || !entry.name.endsWith(".tmp")) continue;
     const stagingRoot = path.join(candidatesRoot, entry.name);
     const stagingEntry = await lstat(stagingRoot);
+    const stagingRealpath = await realpath(stagingRoot);
     if (
       !stagingEntry.isDirectory() ||
       stagingEntry.isSymbolicLink() ||
-      (await realpath(stagingRoot)) !== stagingRoot
+      path.dirname(stagingRealpath) !== candidatesRoot
     ) {
       continue;
     }
     const creation = await readJson<AuthSeedCandidateCreationReceipt>(
       path.join(stagingRoot, CANDIDATE_CREATION_RECEIPT),
     );
+    const recordedStagingRealpath = creation?.stagingRoot
+      ? await realpath(creation.stagingRoot).catch(() => undefined)
+      : undefined;
+    const recordedSourceRealpath = creation?.sourceProfileRealpath
+      ? await realpath(creation.sourceProfileRealpath).catch(() => undefined)
+      : undefined;
     if (
       !isAuthSeedCandidateCreationReceipt(creation) ||
       entry.name !== `.${creation.candidateId}.${creation.token}.tmp` ||
-      creation.stagingRoot !== stagingRoot ||
-      creation.sourceProfileRealpath !== expectedSourceProfile
+      recordedStagingRealpath !== stagingRealpath ||
+      recordedSourceRealpath !== expectedSourceProfile
     ) {
       continue;
     }
