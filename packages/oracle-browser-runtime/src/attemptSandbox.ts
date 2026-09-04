@@ -75,7 +75,6 @@ export async function createAttemptSandbox(input: {
         .update(
           JSON.stringify([
             "oracle.attempt-sandbox-owner.v1",
-            seedGeneration,
             input.jobId,
             input.turnAttemptId,
             input.purpose,

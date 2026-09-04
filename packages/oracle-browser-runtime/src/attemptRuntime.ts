@@ -87,6 +87,7 @@ export async function launchAttemptBrowserRuntime(options: {
   }
   let preservedPage = initialPreservedPages[0];
   let openedPage: Page | undefined;
+  let openAttempt: Promise<Page> | undefined;
   let browserClosed = false;
   let closeComplete = false;
   let closeAttempt: Promise<void> | undefined;
@@ -96,6 +97,9 @@ export async function launchAttemptBrowserRuntime(options: {
     sandbox,
     processReceipt,
     async openPage(url) {
+      if (openAttempt) {
+        throw new Error("An attempt sandbox page open is already in progress");
+      }
       const preservedPages = launched.preservedPages();
       if (preservedPages.length > 1) {
         throw new Error("An attempt sandbox restored more than one preserved recovery page");
@@ -124,8 +128,14 @@ export async function launchAttemptBrowserRuntime(options: {
         openedPage = preservedPage;
         return openedPage;
       }
-      openedPage = await launched.openPage(url);
-      return openedPage;
+      const attempt = launched.openPage(url);
+      openAttempt = attempt;
+      try {
+        openedPage = await attempt;
+        return openedPage;
+      } finally {
+        if (openAttempt === attempt) openAttempt = undefined;
+      }
     },
     async close() {
       if (closeComplete) return;

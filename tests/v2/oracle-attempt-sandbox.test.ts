@@ -354,6 +354,32 @@ describe("Oracle disposable attempt sandboxes", () => {
     ).toBe("deleted");
   });
 
+  test("keeps logical attempt uniqueness across seed generations", async () => {
+    const runtimeRoot = temporaryRoot();
+    const sourceProfileDir = seedSource(runtimeRoot);
+    const firstCandidate = await createAuthSeedCandidate({ runtimeRoot, sourceProfileDir });
+    const secondCandidate = await createAuthSeedCandidate({ runtimeRoot, sourceProfileDir });
+    const createInput = {
+      runtimeRoot,
+      jobId: "job_cross_generation",
+      turnAttemptId: "attempt_cross_generation",
+      purpose: "probe" as const,
+    };
+    const sandbox = await createAttemptSandbox({ ...createInput, seed: firstCandidate });
+    await expect(createAttemptSandbox({ ...createInput, seed: secondCandidate })).rejects.toThrow(
+      /already own an attempt sandbox/i,
+    );
+    expect(
+      (
+        await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: sandbox.directory,
+          dependencies: { findProcessesUsingProfile: noProfileProcesses },
+        })
+      ).status,
+    ).toBe("deleted");
+  });
+
   test("reclaims auth-seed locks whose recorded processes are dead", async () => {
     const runtimeRoot = temporaryRoot();
     const lockRoot = path.join(runtimeRoot, "run", "auth-seed.lock");
@@ -697,6 +723,66 @@ describe("Oracle disposable attempt sandboxes", () => {
         })
       ).status,
     ).toBe("deleted");
+  });
+
+  test("rejects a concurrent page open before creating a second target", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_concurrent_page",
+      turnAttemptId: "attempt_concurrent_page",
+      purpose: "probe",
+    });
+    const page = fakeClosablePage();
+    let openStarted!: () => void;
+    let continueOpen!: () => void;
+    const started = new Promise<void>((resolve) => (openStarted = resolve));
+    const released = new Promise<void>((resolve) => (continueOpen = resolve));
+    let targetCount = 0;
+    const runtime = await launchAttemptBrowserRuntime({
+      sandboxDirectory: sandbox.directory,
+      headless: true,
+      inspection: {
+        chromeForTestingExecutablePath: "/runtime/chrome",
+        executableExists: () => true,
+      },
+      launchManagedBrowser: async (input) => ({
+        context: { pages: () => [] } as unknown as BrowserContext,
+        browserVersion: "test-browser",
+        executablePath: input.executablePath,
+        restoredPageCount: 0,
+        preservedPages: () => [],
+        processIdentity: {
+          pid: 5454,
+          processStartTime: "Fri Sep 4 02:06:07 2026",
+          executableRealpath: input.executablePath,
+          profileRealpath: sandbox.profileDir,
+          debugHost: "127.0.0.1",
+          debugPort: 9966,
+        },
+        openPage: async () => {
+          targetCount += 1;
+          openStarted();
+          await released;
+          return page.page;
+        },
+        close: async () => undefined,
+      }),
+    });
+    const firstOpen = runtime.openPage("https://fixture.invalid/first");
+    await started;
+    await expect(runtime.openPage("https://fixture.invalid/second")).rejects.toThrow(
+      /already in progress/i,
+    );
+    continueOpen();
+    await expect(firstOpen).resolves.toBe(page.page);
+    expect(targetCount).toBe(1);
+    await runtime.close();
   });
 
   test("returns one restored recovery page without opening an alternate page", async () => {
