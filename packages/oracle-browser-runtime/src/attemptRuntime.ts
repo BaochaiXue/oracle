@@ -133,6 +133,9 @@ export async function launchAttemptBrowserRuntime(options: {
           }
           throw new Error("An attempt sandbox may own only one page during its lifetime");
         }
+        if (preservedPage?.isClosed() && currentPreservedPage && !currentPreservedPage.isClosed()) {
+          preservedPage = currentPreservedPage;
+        }
         preservedPage ??= currentPreservedPage;
         if (preservedPage) {
           if (preservedPage.isClosed()) {

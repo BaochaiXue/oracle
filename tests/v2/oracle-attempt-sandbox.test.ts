@@ -1110,6 +1110,61 @@ describe("Oracle disposable attempt sandboxes", () => {
     ).toBe("deleted");
   });
 
+  test("replaces a closed initial recovery page before the first open", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_initial_recovery_replacement",
+      turnAttemptId: "attempt_initial_recovery_replacement",
+      purpose: "dispatch",
+    });
+    const initial = fakeClosablePage();
+    const replacement = fakeClosablePage();
+    let preservedPages = [initial.page];
+    let alternateOpenCount = 0;
+    const runtime = await launchAttemptBrowserRuntime({
+      sandboxDirectory: sandbox.directory,
+      headless: true,
+      preserveWindowNames: ["oracle-v2-at-risk:replacement"],
+      inspection: {
+        chromeForTestingExecutablePath: "/runtime/chrome",
+        executableExists: () => true,
+      },
+      launchManagedBrowser: async (input) => ({
+        context: { pages: () => preservedPages } as unknown as BrowserContext,
+        browserVersion: "test-browser",
+        executablePath: input.executablePath,
+        restoredPageCount: 1,
+        preservedPages: () => preservedPages.filter((page) => !page.isClosed()),
+        processIdentity: {
+          pid: 5253,
+          processStartTime: "Fri Sep 4 02:04:06 2026",
+          executableRealpath: input.executablePath,
+          profileRealpath: sandbox.profileDir,
+          debugHost: "127.0.0.1",
+          debugPort: 9767,
+        },
+        openPage: async () => {
+          alternateOpenCount += 1;
+          return { isClosed: () => false } as unknown as Page;
+        },
+        close: async () => undefined,
+      }),
+    });
+    await initial.page.close({ runBeforeUnload: false });
+    preservedPages = [replacement.page];
+    await expect(runtime.openPage("https://fixture.invalid/recover")).resolves.toBe(
+      replacement.page,
+    );
+    expect(alternateOpenCount).toBe(0);
+    await runtime.close();
+  });
+
   test("late recovery selection closes an in-flight alternate target", async () => {
     const ordinary = fakeClosablePage();
     const recovery = fakeClosablePage();
