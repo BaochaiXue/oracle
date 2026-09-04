@@ -25,6 +25,18 @@ export interface ManagedBrowserLaunchInput {
   profileDir: string;
   headless: boolean;
   preserveWindowNames?: readonly string[];
+  singlePageLifetime?: boolean;
+  captureProcessIdentity?: boolean;
+  onProcessIdentity?: (identity: ManagedBrowserProcessIdentity) => Promise<void>;
+}
+
+export interface ManagedBrowserProcessIdentity {
+  pid: number;
+  processStartTime: string;
+  executableRealpath: string;
+  profileRealpath: string;
+  debugHost: "127.0.0.1";
+  debugPort: number;
 }
 
 export interface LaunchedManagedBrowser {
@@ -32,8 +44,114 @@ export interface LaunchedManagedBrowser {
   browserVersion: string;
   executablePath: string;
   restoredPageCount: number;
+  preservedPages(): readonly Page[];
+  processIdentity?: ManagedBrowserProcessIdentity;
   openPage(url: string): Promise<Page>;
   close(): Promise<void>;
+}
+
+export type AttemptSandboxPurpose = "dispatch" | "capture" | "probe";
+
+export interface AuthSeedCandidateReceipt {
+  schemaVersion: "oracle.auth-seed-candidate.v1";
+  candidateId: string;
+  sourceProfileRealpath: string;
+  profileRealpath: string;
+  profileDigest: string;
+  createdAt: string;
+}
+
+export interface AuthSeedReceipt {
+  schemaVersion: "oracle.auth-seed.v1";
+  generation: string;
+  profileRealpath: string;
+  profileDigest: string;
+  acceptedAt: string;
+}
+
+export interface CloneIsolationObservation {
+  sandboxId: string;
+  authenticated: boolean;
+  modelVerified: boolean;
+  effortVerified: boolean;
+  initiallyClean: boolean;
+  dirtyStateObserved: boolean;
+  inheritedStateObserved: boolean;
+  promptSubmitted: false;
+}
+
+export interface AuthSeedCloneProofReceipt {
+  schemaVersion: "oracle.auth-seed-clone-proof.v1";
+  candidateId: string;
+  seedProfileDigestBefore: string;
+  seedProfileDigestAfter: string;
+  browserRuntimeId: string;
+  executableRealpath: string;
+  cloneA: CloneIsolationObservation;
+  cloneACleanup: AttemptSandboxCleanupReceipt;
+  cloneB: CloneIsolationObservation;
+  cloneBCleanup: AttemptSandboxCleanupReceipt;
+  sendEventCount: 0;
+  remainingAttemptCount: 0;
+  completedAt: string;
+}
+
+export interface AuthSeedCertificationReceipt {
+  schemaVersion: "oracle.auth-seed-certification.v1";
+  runtimeId: typeof ORACLE_BROWSER_RUNTIME_ID;
+  browserRuntimeId: string;
+  transport: "direct-cdp";
+  seedGeneration: string;
+  profileRealpath: string;
+  profileDigest: string;
+  executableRealpath: string;
+  cloneProof: AuthSeedCloneProofReceipt;
+  certifiedAt: string;
+}
+
+export interface AttemptSandboxOwner {
+  schemaVersion: "oracle.attempt-sandbox-owner.v1";
+  jobId: string;
+  turnAttemptId: string;
+  purpose: AttemptSandboxPurpose;
+  seedGeneration: string;
+  profileRealpath: string;
+  createdAt: string;
+}
+
+export interface AttemptProcessReceipt {
+  schemaVersion: "oracle.attempt-process.v1";
+  jobId: string;
+  turnAttemptId: string;
+  profileRealpath: string;
+  executableRealpath: string;
+  pid: number;
+  processStartTime: string;
+  debugHost: "127.0.0.1";
+  debugPort: number;
+  startedAt: string;
+}
+
+export interface AttemptSandbox {
+  sandboxId: string;
+  directory: string;
+  profileDir: string;
+  owner: AttemptSandboxOwner;
+}
+
+export interface AttemptSandboxCleanupReceipt {
+  schemaVersion: "oracle.attempt-sandbox-cleanup.v1";
+  sandboxId: string;
+  status: "deleted" | "already-absent" | "quarantined" | "blocked";
+  processStatus: "none" | "already-stopped" | "stopped" | "identity-unproven";
+  completedAt: string;
+  quarantinePath?: string;
+  error?: string;
+}
+
+export interface OracleAttemptBrowserRuntime extends OracleBrowserRuntime {
+  sandbox: AttemptSandbox;
+  processReceipt: AttemptProcessReceipt;
 }
 
 export type LaunchManagedBrowser = (

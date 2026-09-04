@@ -11,6 +11,7 @@ import {
   closeRestoredBrowserPages,
   inspectOracleBrowserRuntime,
   launchOracleBrowserRuntime,
+  managedBrowserTestHooks,
   readRuntimeCertification,
   recordRuntimeAcceptance,
   sanitizeRuntimeObservationUrl,
@@ -49,7 +50,9 @@ describe("Oracle v2 certified browser runtime", () => {
         return observations < 2 ? [] : restoredPages;
       },
       newCDPSession: fakeRecoveryMarkerSession,
-    } as unknown as Pick<BrowserContext, "newCDPSession" | "pages">;
+      on: () => context,
+      off: () => context,
+    } as unknown as Pick<BrowserContext, "newCDPSession" | "pages" | "on" | "off">;
 
     await expect(
       closeRestoredBrowserPages(context, { quietMs: 10, timeoutMs: 500, pollMs: 1 }),
@@ -74,7 +77,9 @@ describe("Oracle v2 certified browser runtime", () => {
     const context = {
       pages: () => [recoveryPage, ...stalePages],
       newCDPSession: fakeRecoveryMarkerSession,
-    } as unknown as Pick<BrowserContext, "newCDPSession" | "pages">;
+      on: () => context,
+      off: () => context,
+    } as unknown as Pick<BrowserContext, "newCDPSession" | "pages" | "on" | "off">;
 
     await expect(
       closeRestoredBrowserPages(context, {
@@ -86,6 +91,67 @@ describe("Oracle v2 certified browser runtime", () => {
     ).resolves.toBe(23);
     expect(recoveryPage.isClosed()).toBe(false);
     expect(stalePages.every((page) => page.isClosed())).toBe(true);
+  });
+
+  test("counts a restored page closed by another handler during startup reconciliation", async () => {
+    let closed = false;
+    const page = {
+      isClosed: () => closed,
+      close: async () => {
+        closed = true;
+      },
+    } as unknown as Page;
+    const listeners: Array<(candidate: Page) => void> = [];
+    const context = {
+      pages: () => [],
+      newCDPSession: fakeRecoveryMarkerSession,
+      on: (_event: "page", listener: (candidate: Page) => void) => {
+        listeners.push(listener);
+        return context;
+      },
+      off: (_event: "page", listener: (candidate: Page) => void) => {
+        const index = listeners.indexOf(listener);
+        if (index >= 0) listeners.splice(index, 1);
+        return context;
+      },
+    } as unknown as Pick<BrowserContext, "newCDPSession" | "pages" | "on" | "off">;
+    context.on("page", (candidate) => void candidate.close());
+
+    const reconciliation = closeRestoredBrowserPages(context, {
+      quietMs: 10,
+      timeoutMs: 500,
+      pollMs: 1,
+    });
+    for (const listener of listeners) listener(page);
+
+    await expect(reconciliation).resolves.toBe(1);
+    expect(page.isClosed()).toBe(true);
+  });
+
+  test("latches a fatal state when late-page ambiguity and shutdown both fail", async () => {
+    const runtimeFailure: { error?: Error } = {};
+    let closeCount = 0;
+
+    await managedBrowserTestHooks.containManagedRuntimeFailure(
+      new Error("multiple live preserved recovery pages"),
+      {
+        singlePageLifetime: true,
+        runtimeFailure,
+        closeRuntime: async () => {
+          closeCount += 1;
+          throw new Error("CDP endpoint remained live");
+        },
+      },
+    );
+
+    expect(closeCount).toBe(1);
+    expect(() => managedBrowserTestHooks.assertManagedRuntimeHealthy(runtimeFailure)).toThrow(
+      /fatal state and could not close/i,
+    );
+    expect((runtimeFailure.error as AggregateError).errors).toEqual([
+      expect.objectContaining({ message: "multiple live preserved recovery pages" }),
+      expect.objectContaining({ message: "CDP endpoint remained live" }),
+    ]);
   });
 
   test("exposes one managed Chrome for Testing direct-CDP runtime", () => {
@@ -180,6 +246,7 @@ describe("Oracle v2 certified browser runtime", () => {
         browserVersion: "test-browser",
         executablePath: input.executablePath,
         restoredPageCount: 0,
+        preservedPages: () => [],
         openPage: async () => ({}) as Page,
         close: async () => {
           closeAttempts += 1;
@@ -277,7 +344,9 @@ describe("Oracle v2 certified browser runtime", () => {
         } finally {
           await session.detach();
         }
+        await waitForRestoredPageCount(runtime, 3, 5_000);
         await waitForPageCount(runtime.context, 0, 5_000);
+        expect(runtime.receipt.restoredPageCount).toBe(3);
 
         const [first, second] = await Promise.all([
           runtime.openPage(fixture.urlFor("exact-first")),
@@ -285,6 +354,7 @@ describe("Oracle v2 certified browser runtime", () => {
         ]);
         expect(new URL(first.url()).searchParams.get("job")).toBe("exact-first");
         expect(new URL(second.url()).searchParams.get("job")).toBe("exact-second");
+        expect(runtime.receipt.restoredPageCount).toBe(3);
         expect(runtime.context.pages().filter((page) => !page.isClosed())).toHaveLength(2);
         await Promise.all([first.close(), second.close()]);
       } finally {
@@ -352,6 +422,7 @@ function fakeLaunch(launches: Parameters<LaunchManagedBrowser>[0][] = []): Launc
       browserVersion: "test-browser",
       executablePath: input.executablePath,
       restoredPageCount: 0,
+      preservedPages: () => [],
       openPage: async () => ({}) as Page,
       close: async () => undefined,
     };
@@ -377,6 +448,22 @@ async function waitForPageCount(
     if (Date.now() >= deadline) {
       throw new Error(
         `Expected ${expected} runtime pages, observed ${context.pages().filter((page) => !page.isClosed()).length}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function waitForRestoredPageCount(
+  runtime: Awaited<ReturnType<typeof launchOracleBrowserRuntime>>,
+  expected: number,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (runtime.receipt.restoredPageCount !== expected) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Expected ${expected} restored runtime pages, observed ${runtime.receipt.restoredPageCount}`,
       );
     }
     await new Promise((resolve) => setTimeout(resolve, 25));

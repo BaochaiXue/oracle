@@ -228,10 +228,15 @@ describe("recoverConversationTab flow", () => {
     }));
 
     const { recoverConversationTab } = await import("../../src/browser/recoverConversation.js");
-    const recovered = await recoverConversationTab(remoteMeta, logger, {
-      existingEndpoint: { host: "127.0.0.1", port: 9222 },
-      readyTimeoutMs: 1,
-    });
+    const recovered = await recoverConversationTab(
+      remoteMeta,
+      logger,
+      {
+        existingEndpoint: { host: "127.0.0.1", port: 9222 },
+        readyTimeoutMs: 1,
+      },
+      ownershipDeps,
+    );
 
     expect(recovered.chrome).toBeNull();
     expect(acquireManualLoginChromeForRun).not.toHaveBeenCalled();
