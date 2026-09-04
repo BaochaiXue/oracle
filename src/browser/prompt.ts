@@ -436,6 +436,15 @@ async function assembleBrowserPromptInternal(
     .filter(Boolean)
     .join("\n\n")
     .trim();
+  if (
+    attachmentsPolicy === "never" &&
+    inlineComposerText.length > DEFAULT_BROWSER_INLINE_CHAR_BUDGET
+  ) {
+    throw new FileValidationError(
+      `Browser inline content is ${inlineComposerText.length.toLocaleString()} characters, above the ${DEFAULT_BROWSER_INLINE_CHAR_BUDGET.toLocaleString()}-character safe composer limit. Use --browser-attachments auto or always instead of forcing inline delivery.`,
+      { files: sections.map((section) => section.displayPath) },
+    );
+  }
   const selectedPlan =
     attachmentsPolicy === "always"
       ? uploadPlan
@@ -461,11 +470,15 @@ async function assembleBrowserPromptInternal(
   const resolvedBundleFormat = resolveBrowserBundleFormat(bundleFormat, {
     hasRawUploadFiles: rawUploadAttachments.length > 0,
   });
+  const autoBundleTextUploads =
+    selectedPlan.mode === "upload" &&
+    rawUploadAttachments.length === 0 &&
+    textBundleSources.length > 1;
   const shouldBundle = shouldWriteBrowserBundle(resolvedBundleFormat, {
     attachmentCount: attachments.length,
     bundleRequested,
     textSourceCount: textBundleSources.length,
-    textPlanShouldBundle: selectedPlan.shouldBundle,
+    textPlanShouldBundle: selectedPlan.shouldBundle || autoBundleTextUploads,
   });
   const composerText = (
     !shouldBundle && selectedPlan.inlineBlock
@@ -534,11 +547,15 @@ async function assembleBrowserPromptInternal(
     const fallbackBundleFormat = resolveBrowserBundleFormat(bundleFormat, {
       hasRawUploadFiles: rawUploadAttachments.length > 0,
     });
+    const autoBundleFallbackTextUploads =
+      uploadPlan.mode === "upload" &&
+      rawUploadAttachments.length === 0 &&
+      textBundleSources.length > 1;
     const fallbackShouldBundle = shouldWriteBrowserBundle(fallbackBundleFormat, {
       attachmentCount: fallbackAttachments.length,
       bundleRequested,
       textSourceCount: textBundleSources.length,
-      textPlanShouldBundle: uploadPlan.shouldBundle,
+      textPlanShouldBundle: uploadPlan.shouldBundle || autoBundleFallbackTextUploads,
     });
     if (fallbackShouldBundle) {
       const writtenBundle = await writeBrowserBundle(

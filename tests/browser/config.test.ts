@@ -48,7 +48,7 @@ describe("resolveBrowserConfig", () => {
     );
     expect(resolved.profileLockTimeoutMs).toBe(300_000);
     expect(resolved.timeoutMs).toBe(1_200_000);
-    expect(resolved.attachmentTimeoutMs).toBe(45_000);
+    expect(resolved.attachmentTimeoutMs).toBe(180_000);
     expect(resolved.maxConcurrentTabs).toBe(3);
     expect(resolved.researchMode).toBe("off");
   });

@@ -647,8 +647,16 @@ describe("promptComposer", () => {
         undefined,
         ["oracle-attach-verify.txt"],
       );
-      const assertion = expect(promise).rejects.toThrow(/after 45s/i);
-      await vi.advanceTimersByTimeAsync(46_000);
+      const assertion = expect(promise).rejects.toMatchObject({
+        message: expect.stringMatching(/after 180s/i),
+        details: expect.objectContaining({
+          code: "attachment-send-not-ready",
+          promptSubmitted: false,
+          submissionCommitted: false,
+          retrySafe: true,
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(181_000);
       await assertion;
     } finally {
       vi.useRealTimers();
@@ -658,8 +666,49 @@ describe("promptComposer", () => {
   test("only attachment sends get the longer send-button deadline", () => {
     expect(promptComposer.sendButtonTimeoutMs()).toBe(20_000);
     expect(promptComposer.sendButtonTimeoutMs([])).toBe(20_000);
-    expect(promptComposer.sendButtonTimeoutMs(["oracle-attach-verify.txt"])).toBe(45_000);
+    expect(promptComposer.sendButtonTimeoutMs(["oracle-attach-verify.txt"])).toBe(180_000);
     expect(promptComposer.sendButtonTimeoutMs(["oracle-attach-verify.txt"], 120_000)).toBe(120_000);
+  });
+
+  test("marks a large prompt rejected before commit as retry-safe", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = {
+        evaluate: vi.fn(async () => ({
+          result: {
+            value: {
+              baseline: 0,
+              turnsCount: 0,
+              userMatched: false,
+              hasNewTurn: false,
+              hasNewUserTurn: false,
+              stopVisible: false,
+              assistantVisible: false,
+              composerCleared: false,
+              inConversation: false,
+              editorValue: "",
+            },
+          },
+        })),
+      };
+      const promise = promptComposer.verifyPromptCommitted(
+        runtime as never,
+        "x".repeat(50_000),
+        150,
+      );
+      const assertion = expect(promise).rejects.toMatchObject({
+        details: expect.objectContaining({
+          code: "prompt-too-large",
+          promptSubmitted: false,
+          submissionCommitted: false,
+          retrySafe: true,
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(250);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("records dispatch before marking a verified prompt commit", async () => {

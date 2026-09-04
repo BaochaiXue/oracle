@@ -22,6 +22,42 @@ This fork reserves the canonical Oracle lane for ChatGPT GPT-5.6 Pro. Use
 OpenCLI separately for incidental Gemini queries; Oracle never dispatches or
 falls back to Gemini.
 
+## Non-negotiable browser dispatch gate
+
+Do not treat an installed `oracle` executable as a substitute for this skill.
+Before every real consultation, the agent must load the current skill and pass
+all gates below. If Oracle is absent from the active skill/plugin catalog, do
+not improvise a bare browser command or substitute another reviewer; refresh
+the installed plugin or start a new agent context first.
+
+1. Inspect `oracle status --hours 72` and recover the latest owned session for
+   the same task. A running, recoverable, or submitted-unverified turn forbids a
+   new root consultation.
+2. Resolve GitHub identity with `scripts/resolve-github-context.sh`. A successful
+   resolution requires the exact repository, branch, and commit in the prompt;
+   a local absolute path is never a repository identity.
+3. Choose transport before opening Chrome. For more than one text file or an
+   inline plan near 60,000 characters, use one text bundle:
+
+   ```bash
+   --browser-attachments auto \
+   --browser-bundle-files --browser-bundle-format text \
+   --browser-attachment-timeout 3m
+   ```
+
+   Keep images and other media as separate native attachments. Use a dry-run
+   summary only when file membership, size, or media routing is uncertain.
+
+4. Use the canonical direct-CDP Pro flags shown below. Do not omit them because
+   CLI defaults happen to look equivalent on one machine.
+5. Interpret the durable receipt, not the shell exit alone:
+   - `promptSubmitted:true`, `submitted-unverified`, or `retrySafe:false` means
+     the review was sent. Reattach that exact session; never paraphrase it into
+     a new "final" consultation.
+   - `promptSubmitted:false` with explicit `retrySafe:true` means nothing was
+     sent. Correct only the transport failure and retry the same task once.
+   - An unknown submission state is indeterminate and must not be resent.
+
 ## Main use case (browser, GPT-5.6)
 
 Use browser mode with GPT-5.6 when the ChatGPT account exposes it. Base Sol and
@@ -86,6 +122,9 @@ For the canonical GPT-5.6 Pro browser lane, use:
 ```bash
 oracle --engine browser --browser-transport cdp --model gpt-5-pro \
   --browser-thinking-time pro --browser-keep-browser \
+  --browser-attachments auto \
+  --browser-bundle-files --browser-bundle-format text \
+  --browser-attachment-timeout 3m \
   -p "<task>" --file "src/**"
 ```
 

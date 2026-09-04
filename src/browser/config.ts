@@ -1,6 +1,7 @@
 import {
   CHATGPT_URL,
   DEEP_RESEARCH_DEFAULT_TIMEOUT_MS,
+  DEFAULT_BROWSER_ATTACHMENT_TIMEOUT_MS,
   DEFAULT_MODEL_STRATEGY,
   DEFAULT_MODEL_TARGET,
   PRO_BROWSER_CAPTURE_ATTEMPT_TIMEOUT_MS,
@@ -40,7 +41,7 @@ export const DEFAULT_BROWSER_CONFIG: ResolvedBrowserConfig = {
   timeoutMs: 1_200_000,
   debugPort: null,
   inputTimeoutMs: 60_000,
-  attachmentTimeoutMs: 45_000,
+  attachmentTimeoutMs: DEFAULT_BROWSER_ATTACHMENT_TIMEOUT_MS,
   assistantRecheckDelayMs: 0,
   assistantRecheckTimeoutMs: 120_000,
   reuseChromeWaitMs: 10_000,

@@ -1753,7 +1753,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           }
           await delay(500);
         }
-        // Scale timeout based on number of files: base 45s + 20s per additional file.
+        // Scale the minimum wait by file count; the configured attachment timeout may be longer.
         const baseTimeout = config.inputTimeoutMs ?? 30_000;
         const perFileTimeout = 20_000;
         const waitBudget =

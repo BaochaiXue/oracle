@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ChromeClient, BrowserLogger } from "../types.js";
 import {
+  DEFAULT_BROWSER_ATTACHMENT_TIMEOUT_MS,
   INPUT_SELECTORS,
   PROMPT_PRIMARY_SELECTOR,
   PROMPT_FALLBACK_SELECTOR,
@@ -276,6 +277,9 @@ export async function submitPrompt(
       {
         stage: "submit-prompt",
         code: "prompt-too-large",
+        promptSubmitted: false,
+        submissionCommitted: false,
+        retrySafe: true,
         promptLength,
         observedLength,
       },
@@ -875,6 +879,9 @@ async function attemptSendButton(
       {
         stage: "submit-prompt",
         code: "attachment-send-not-ready",
+        promptSubmitted: false,
+        submissionCommitted: false,
+        retrySafe: true,
         attachmentNames,
         timeoutMs,
       },
@@ -1121,7 +1128,7 @@ function sendButtonTimeoutMs(
   }
   return typeof attachmentTimeoutMs === "number" && Number.isFinite(attachmentTimeoutMs)
     ? Math.max(1_000, attachmentTimeoutMs)
-    : 45_000;
+    : DEFAULT_BROWSER_ATTACHMENT_TIMEOUT_MS;
 }
 
 async function verifyPromptCommitted(
@@ -1326,6 +1333,9 @@ async function verifyPromptCommitted(
       {
         stage: "submit-prompt",
         code: "prompt-too-large",
+        promptSubmitted: false,
+        submissionCommitted: false,
+        retrySafe: true,
         promptLength: prompt.trim().length,
         timeoutMs,
       },

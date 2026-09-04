@@ -6,6 +6,7 @@ import type { ModelName, ThinkingTimeLevel } from "../oracle/types.js";
 import { normalizeThinkingTimeLevel } from "../oracle/thinkingTime.js";
 import {
   CHATGPT_URL,
+  DEFAULT_BROWSER_ATTACHMENT_TIMEOUT_MS,
   DEFAULT_MODEL_STRATEGY,
   DEFAULT_MODEL_TARGET,
   PRO_BROWSER_CAPTURE_ATTEMPT_TIMEOUT_MS,
@@ -25,7 +26,6 @@ import { assertOracleModelAllowed } from "../oracle/forkPolicy.js";
 
 const DEFAULT_BROWSER_TIMEOUT_MS = 1_200_000;
 const DEFAULT_BROWSER_INPUT_TIMEOUT_MS = 60_000;
-const DEFAULT_BROWSER_ATTACHMENT_TIMEOUT_MS = 45_000;
 const DEFAULT_BROWSER_RECHECK_TIMEOUT_MS = 120_000;
 const DEFAULT_BROWSER_AUTO_REATTACH_TIMEOUT_MS = 120_000;
 const DEFAULT_CHROME_PROFILE = "Default";

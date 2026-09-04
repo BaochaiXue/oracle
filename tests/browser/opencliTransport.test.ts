@@ -173,7 +173,7 @@ describe("OpenCliBrowserTransport", () => {
     expect(submitCall).toEqual(expect.arrayContaining(["--keep-tab", "true"]));
     expect(submitCall).toEqual(expect.arrayContaining(["--window", "background"]));
     expect(submitCall).toEqual(
-      expect.arrayContaining(["--timeout", "225", "--trace", "retain-on-failure"]),
+      expect.arrayContaining(["--timeout", "360", "--trace", "retain-on-failure"]),
     );
     expect(calls.some((args) => args[0] === "chatgpt" && args[1] === "model")).toBe(false);
     const waitCalls = calls.filter(

@@ -170,7 +170,7 @@ describe("assembleBrowserPrompt", () => {
     expect(result.fallback).toBeNull();
   });
 
-  test("legacy browserInlineFiles forces inline and disables auto fallback", async () => {
+  test("rejects oversized forced-inline content before opening the browser", async () => {
     const options = buildOptions({
       prompt: "Explain the bug",
       file: ["big.txt"],
@@ -178,16 +178,39 @@ describe("assembleBrowserPrompt", () => {
       browserAttachments: "auto",
     });
     const huge = "x".repeat(62_000);
-    const result = await assembleBrowserPrompt(options, {
-      cwd: "/repo",
-      readFilesImpl: async () => [{ path: "/repo/big.txt", content: huge }],
-      tokenizeImpl: fastTokenizer,
-    });
-    expect(result.attachmentsPolicy).toBe("never");
-    expect(result.attachmentMode).toBe("inline");
-    expect(result.attachments).toEqual([]);
-    expect(result.composerText).toContain("### File: big.txt");
-    expect(result.fallback).toBeNull();
+    await expect(
+      assembleBrowserPrompt(options, {
+        cwd: "/repo",
+        readFilesImpl: async () => [{ path: "/repo/big.txt", content: huge }],
+        tokenizeImpl: fastTokenizer,
+      }),
+    ).rejects.toThrow(/above the 60,000-character safe composer limit/i);
+  });
+
+  test("auto mode consolidates multiple large text files into one upload", async () => {
+    const fileNames = Array.from({ length: 6 }, (_, index) => `source-${index + 1}.txt`);
+    const result = await assembleBrowserPrompt(
+      buildOptions({
+        prompt: "Review the implementation",
+        file: fileNames,
+        browserAttachments: "auto",
+      }),
+      {
+        cwd: "/repo",
+        readFilesImpl: async (paths) =>
+          paths.map((entry) => ({
+            path: path.resolve("/repo", entry),
+            content: "x".repeat(12_000),
+          })),
+        tokenizeImpl: fastTokenizer,
+      },
+    );
+
+    expect(result.attachmentMode).toBe("bundle");
+    expect(result.attachments).toHaveLength(1);
+    expect(result.attachments[0]?.displayPath).toMatch(/\.txt$/u);
+    expect(result.bundled).toEqual(expect.objectContaining({ originalCount: 6, format: "text" }));
+    expect(result.composerText).toBe("Review the implementation");
   });
 
   test("respects custom cwd and multiple files", async () => {

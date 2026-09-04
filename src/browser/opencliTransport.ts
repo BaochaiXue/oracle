@@ -13,6 +13,7 @@ import type {
   SessionArtifact,
 } from "../sessionStore.js";
 import { computeFileSha256 } from "./artifacts.js";
+import { DEFAULT_BROWSER_ATTACHMENT_TIMEOUT_MS } from "./constants.js";
 import { acquireProfileRunLock } from "./profileState.js";
 import {
   elapsedSinceDispatch,
@@ -28,7 +29,6 @@ const MIN_OPENCLI_VERSION = [1, 8, 6] as const;
 const DEFAULT_LOCK_TIMEOUT_MS = 300_000;
 const COMMAND_TIMEOUT_MS = 60_000;
 const MODEL_TIMEOUT_MS = 120_000;
-const DEFAULT_ATTACHMENT_TIMEOUT_MS = 45_000;
 const ORACLE_WAIT_STABLE_SECONDS = 9;
 const OPENCLI_WINDOW_MODE = "background" as const;
 
@@ -491,7 +491,7 @@ async function submitAuthorizedFiles(
   const targetArgs = existingConversationId ? ["--conversation", targetUrl] : ["--new", "true"];
   const adapterTimeoutMs =
     MODEL_TIMEOUT_MS +
-    (config.attachmentTimeoutMs ?? DEFAULT_ATTACHMENT_TIMEOUT_MS) +
+    (config.attachmentTimeoutMs ?? DEFAULT_BROWSER_ATTACHMENT_TIMEOUT_MS) +
     COMMAND_TIMEOUT_MS;
   const adapterTimeoutSeconds = Math.ceil(adapterTimeoutMs / 1000);
   const rows = await runJsonCommand<

@@ -11,6 +11,18 @@ async function readSkill(): Promise<string> {
 }
 
 describe("canonical Oracle skill contract", () => {
+  test("fails closed before browser dispatch when the current skill or receipt is missing", async () => {
+    const skill = await readSkill();
+
+    expect(skill).toContain("## Non-negotiable browser dispatch gate");
+    expect(skill).toContain("Do not treat an installed `oracle` executable as a substitute");
+    expect(skill).toContain("A running, recoverable, or submitted-unverified turn forbids");
+    expect(skill).toContain("--browser-bundle-files --browser-bundle-format text");
+    expect(skill).toContain("--browser-attachment-timeout 3m");
+    expect(skill).toContain('never paraphrase it into a new "final" consultation');
+    expect(skill).toContain("An unknown submission state is indeterminate");
+  });
+
   test("advertises evidence-based debate in one same-task conversation", async () => {
     const skill = await readSkill();
 
