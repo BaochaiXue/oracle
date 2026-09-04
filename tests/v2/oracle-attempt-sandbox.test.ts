@@ -28,6 +28,7 @@ import {
   digestProfile,
   launchAttemptBrowserRuntime,
   listAttemptSandboxDirectories,
+  managedBrowserTestHooks,
   observeManagedBrowserProcess,
   readAuthSeed,
   readAuthSeedCertification,
@@ -229,18 +230,43 @@ describe("Oracle disposable attempt sandboxes", () => {
     const runtimeRoot = temporaryRoot();
     const lockRoot = path.join(runtimeRoot, "run", "auth-seed.lock");
     const exclusive = path.join(lockRoot, "exclusive");
-    mkdirSync(exclusive, { recursive: true });
+    mkdirSync(lockRoot, { recursive: true });
     writeDeadLockOwner(exclusive, "exclusive");
     await expect(withAuthSeedCloneLock(runtimeRoot, async () => "clone-ready")).resolves.toBe(
       "clone-ready",
     );
 
     const reader = path.join(lockRoot, "readers", "dead-reader");
-    mkdirSync(reader, { recursive: true });
+    mkdirSync(path.dirname(reader), { recursive: true });
     writeDeadLockOwner(reader, "shared");
     await expect(withAuthSeedRefreshLock(runtimeRoot, async () => "refresh-ready")).resolves.toBe(
       "refresh-ready",
     );
+  });
+
+  test("publishes complete auth-seed lock ownership atomically", async () => {
+    const runtimeRoot = temporaryRoot();
+    await withAuthSeedCloneLock(runtimeRoot, async () => {
+      const readersRoot = path.join(runtimeRoot, "run", "auth-seed.lock", "readers");
+      const readers = readdirSync(readersRoot);
+      expect(readers).toHaveLength(1);
+      const lockPath = path.join(readersRoot, readers[0]!);
+      expect(statSync(lockPath).isFile()).toBe(true);
+      expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({
+        schemaVersion: "oracle.auth-seed-lock-owner.v1",
+        pid: process.pid,
+        mode: "shared",
+      });
+    });
+    await withAuthSeedRefreshLock(runtimeRoot, async () => {
+      const lockPath = path.join(runtimeRoot, "run", "auth-seed.lock", "exclusive");
+      expect(statSync(lockPath).isFile()).toBe(true);
+      expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({
+        schemaVersion: "oracle.auth-seed-lock-owner.v1",
+        pid: process.pid,
+        mode: "exclusive",
+      });
+    });
   });
 
   test("rejects symlinked profile state instead of risking copyback outside the sandbox", async () => {
@@ -501,6 +527,7 @@ describe("Oracle disposable attempt sandboxes", () => {
         executablePath: "/runtime/chrome",
         profileDir: sandbox.profileDir,
         headless: true,
+        singlePageLifetime: true,
         captureProcessIdentity: true,
       },
     ]);
@@ -565,6 +592,7 @@ describe("Oracle disposable attempt sandboxes", () => {
         close: async () => undefined,
       }),
     });
+    expect(runtime.receipt.restoredPageCount).toBe(0);
     await expect(runtime.openPage("https://fixture.invalid/alternate")).resolves.toBe(recoveryPage);
     await expect(runtime.openPage("https://fixture.invalid/second")).rejects.toThrow(
       /only one page/i,
@@ -583,6 +611,24 @@ describe("Oracle disposable attempt sandboxes", () => {
         })
       ).status,
     ).toBe("deleted");
+  });
+
+  test("late recovery selection closes an in-flight alternate target", async () => {
+    const ordinary = fakeClosablePage();
+    const recovery = fakeClosablePage();
+    const ownedPages = new Set<Page>([ordinary.page]);
+    const preservedPages = new Set<Page>();
+    const selected = await managedBrowserTestHooks.preserveManagedPage(recovery.page, {
+      ownedPages,
+      preservedPages,
+      singlePageLifetime: true,
+      ownPage: (page) => ownedPages.add(page),
+    });
+    expect(selected).toBe(recovery.page);
+    expect(ordinary.closed()).toBe(true);
+    expect(recovery.closed()).toBe(false);
+    expect([...ownedPages].filter((page) => !page.isClosed())).toEqual([recovery.page]);
+    expect([...preservedPages]).toEqual([recovery.page]);
   });
 
   test.skipIf(!findFixtureBrowserExecutable())(
@@ -780,9 +826,9 @@ function fakeAttemptLaunch(
 const noProfileProcesses = async (): Promise<[]> => [];
 const noObservedProcess = async (): Promise<undefined> => undefined;
 
-function writeDeadLockOwner(directory: string, mode: "shared" | "exclusive"): void {
+function writeDeadLockOwner(lockPath: string, mode: "shared" | "exclusive"): void {
   writeFileSync(
-    path.join(directory, "owner.json"),
+    lockPath,
     `${JSON.stringify({
       schemaVersion: "oracle.auth-seed-lock-owner.v1",
       token: `dead-${mode}`,
@@ -791,4 +837,15 @@ function writeDeadLockOwner(directory: string, mode: "shared" | "exclusive"): vo
       createdAt: new Date().toISOString(),
     })}\n`,
   );
+}
+
+function fakeClosablePage(): { page: Page; closed: () => boolean } {
+  let closed = false;
+  const page = {
+    isClosed: () => closed,
+    close: async () => {
+      closed = true;
+    },
+  } as unknown as Page;
+  return { page, closed: () => closed };
 }

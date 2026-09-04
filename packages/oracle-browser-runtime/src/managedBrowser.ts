@@ -35,6 +35,7 @@ export async function launchManagedChromeForTesting(
       : undefined;
     if (processIdentity) await input.onProcessIdentity?.(processIdentity);
     const preserveWindowNames = new Set(input.preserveWindowNames ?? []);
+    const singlePageLifetime = input.singlePageLifetime ?? false;
     const ownedPages = new Set<Page>();
     const preservedPages = new Set<Page>();
     const pendingMarkers = new Set<string>();
@@ -48,10 +49,8 @@ export async function launchManagedChromeForTesting(
         preservedPages.delete(page);
       });
     };
-    const preservePage = (page: Page) => {
-      ownPage(page);
-      preservedPages.add(page);
-    };
+    const preservePage = (page: Page): Promise<Page> =>
+      preserveManagedPage(page, { ownedPages, preservedPages, singlePageLifetime, ownPage });
     const closeLateUnownedPage = (page: Page) => {
       void delay(50).then(async () => {
         if (
@@ -73,7 +72,7 @@ export async function launchManagedChromeForTesting(
           return;
         }
         if (preserveWindowNames.has(recoveryWindowName)) {
-          preservePage(page);
+          await preservePage(page);
           return;
         }
         await page.close({ runBeforeUnload: false }).catch(() => undefined);
@@ -88,7 +87,7 @@ export async function launchManagedChromeForTesting(
         !page.isClosed() &&
         preserveWindowNames.has(await readRecoveryWindowName(context, page))
       ) {
-        preservePage(page);
+        await preservePage(page);
       }
     }
     return {
@@ -102,6 +101,8 @@ export async function launchManagedChromeForTesting(
         if (closed || closeAttempt) {
           throw new Error("Managed Chrome for Testing runtime is closing or closed");
         }
+        const preserved = [...preservedPages].find((page) => !page.isClosed());
+        if (singlePageLifetime && preserved) return preserved;
         const marker = `about:blank#oracle-v2-target-${randomUUID()}`;
         pendingMarkers.add(marker);
         const session = await browser!.newBrowserCDPSession();
@@ -124,6 +125,13 @@ export async function launchManagedChromeForTesting(
             preserveWindowNames,
             preservePage,
           );
+          const recovered = [...preservedPages].find((candidate) => !candidate.isClosed());
+          if (singlePageLifetime && recovered) {
+            if (recovered !== page && !page.isClosed()) {
+              await page.close({ runBeforeUnload: false }).catch(() => undefined);
+            }
+            return recovered;
+          }
           return page;
         } catch (error) {
           if (targetId) {
@@ -179,7 +187,7 @@ async function closeCurrentlyUnownedPages(
   ownedPages: ReadonlySet<Page>,
   pendingMarkers: ReadonlySet<string>,
   preserveWindowNames: ReadonlySet<string>,
-  preservePage: (page: Page) => void,
+  preservePage: (page: Page) => Promise<Page>,
 ): Promise<void> {
   const unowned = context
     .pages()
@@ -195,11 +203,37 @@ async function closeCurrentlyUnownedPages(
       throw error;
     }
     if (preserveWindowNames.has(recoveryWindowName)) {
-      preservePage(page);
+      await preservePage(page);
       continue;
     }
     await page.close({ runBeforeUnload: false }).catch(() => undefined);
   }
+}
+
+async function preserveManagedPage(
+  page: Page,
+  input: {
+    ownedPages: Set<Page>;
+    preservedPages: Set<Page>;
+    singlePageLifetime: boolean;
+    ownPage: (page: Page) => void;
+  },
+): Promise<Page> {
+  const existing = [...input.preservedPages].find((candidate) => !candidate.isClosed());
+  if (input.singlePageLifetime && existing && existing !== page) {
+    await page.close({ runBeforeUnload: false }).catch(() => undefined);
+    return existing;
+  }
+  input.ownPage(page);
+  input.preservedPages.add(page);
+  if (input.singlePageLifetime) {
+    for (const owned of input.ownedPages) {
+      if (owned !== page) {
+        await owned.close({ runBeforeUnload: false }).catch(() => undefined);
+      }
+    }
+  }
+  return page;
 }
 
 async function launchOwnedBrowser(input: ManagedBrowserLaunchInput): Promise<LauncherHandle> {
@@ -356,3 +390,7 @@ function resolveMacAppBundle(executablePath: string): string | undefined {
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
+
+export const managedBrowserTestHooks = {
+  preserveManagedPage,
+};

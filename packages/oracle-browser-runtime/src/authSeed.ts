@@ -29,9 +29,7 @@ const CANDIDATES_DIRECTORY = "auth-seed-candidates";
 const ATTEMPTS_DIRECTORY = "attempts";
 const RUN_DIRECTORY = "run";
 const LOCK_DIRECTORY = "auth-seed.lock";
-const LOCK_OWNER_RECEIPT = "owner.json";
 const LOCK_POLL_MS = 25;
-const LOCK_OWNER_PUBLICATION_GRACE_MS = 1_000;
 
 interface AuthSeedLockOwner {
   schemaVersion: "oracle.auth-seed-lock-owner.v1";
@@ -363,8 +361,10 @@ async function acquireSeedLock(
 ): Promise<() => Promise<void>> {
   const lockRoot = path.join(path.resolve(runtimeRoot), RUN_DIRECTORY, LOCK_DIRECTORY);
   const readersRoot = path.join(lockRoot, "readers");
+  const stagingRoot = path.join(lockRoot, "staging");
   const exclusivePath = path.join(lockRoot, "exclusive");
   await ensurePrivateDirectory(readersRoot);
+  await ensurePrivateDirectory(stagingRoot);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
     if (mode === "shared") {
@@ -377,7 +377,7 @@ async function acquireSeedLock(
       }
       const token = randomUUID();
       const readerPath = path.join(readersRoot, token);
-      const release = await publishSeedLock(readerPath, mode, token);
+      const release = await publishSeedLock(readerPath, stagingRoot, mode, token);
       if (!(await pathExists(exclusivePath))) {
         return release;
       }
@@ -389,7 +389,7 @@ async function acquireSeedLock(
       const token = randomUUID();
       let release: (() => Promise<void>) | undefined;
       try {
-        release = await publishSeedLock(exclusivePath, mode, token);
+        release = await publishSeedLock(exclusivePath, stagingRoot, mode, token);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
         await delay(LOCK_POLL_MS);
@@ -408,10 +408,10 @@ async function acquireSeedLock(
 
 async function publishSeedLock(
   lockPath: string,
+  stagingRoot: string,
   mode: AuthSeedLockOwner["mode"],
   token: string,
 ): Promise<() => Promise<void>> {
-  await mkdir(lockPath, { mode: 0o700 });
   const owner: AuthSeedLockOwner = {
     schemaVersion: "oracle.auth-seed-lock-owner.v1",
     token,
@@ -419,19 +419,16 @@ async function publishSeedLock(
     mode,
     createdAt: new Date().toISOString(),
   };
+  const temporary = path.join(stagingRoot, `${token}.${randomUUID()}.tmp`);
   try {
-    await writeFile(
-      path.join(lockPath, LOCK_OWNER_RECEIPT),
-      `${JSON.stringify(owner, null, 2)}\n`,
-      {
-        encoding: "utf8",
-        mode: 0o600,
-        flag: "wx",
-      },
-    );
-  } catch (error) {
-    await rm(lockPath, { recursive: true, force: true }).catch(() => undefined);
-    throw error;
+    await writeFile(temporary, `${JSON.stringify(owner, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+    });
+    await link(temporary, lockPath);
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined);
   }
   return async () => releaseSeedLock(lockPath, token);
 }
@@ -446,7 +443,7 @@ async function releaseSeedLock(lockPath: string, token: string): Promise<void> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     throw error;
   }
-  await rm(quarantine, { recursive: true, force: true });
+  await rm(quarantine, { force: true });
 }
 
 async function reclaimDeadReaderLocks(readersRoot: string): Promise<void> {
@@ -462,12 +459,7 @@ async function reclaimDeadSeedLock(lockPath: string): Promise<boolean> {
   } else if (observation.status === "invalid") {
     return false;
   } else {
-    const lockStat = await stat(lockPath).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") return undefined;
-      throw error;
-    });
-    if (!lockStat) return true;
-    if (Date.now() - lockStat.mtimeMs < LOCK_OWNER_PUBLICATION_GRACE_MS) return false;
+    return true;
   }
   const quarantine = `${lockPath}.stale-${randomUUID()}`;
   try {
@@ -476,17 +468,15 @@ async function reclaimDeadSeedLock(lockPath: string): Promise<boolean> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
     throw error;
   }
-  await rm(quarantine, { recursive: true, force: true });
+  await rm(quarantine, { force: true });
   return true;
 }
 
 async function readSeedLockOwner(lockPath: string): Promise<AuthSeedLockOwnerObservation> {
-  const raw = await readFile(path.join(lockPath, LOCK_OWNER_RECEIPT), "utf8").catch(
-    (error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") return undefined;
-      throw error;
-    },
-  );
+  const raw = await readFile(lockPath, "utf8").catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  });
   if (raw === undefined) return { status: "missing" };
   let owner: AuthSeedLockOwner;
   try {

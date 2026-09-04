@@ -395,15 +395,16 @@ Fresh T1 source-candidate and live-gate evidence:
   one-page attempt runtime. The accepted seed cannot be launched as a job
   profile, arbitrary directories cannot impersonate a seed, and no sandbox
   copyback exists;
-- PR review hardening gives each clone/refresh lock a tokenized process owner
-  receipt and reclaims only recorded dead-process locks; binds an exact
-  crash-restored recovery page before `openPage` can create a target; and makes
-  missing process receipts or failed process inspection block profile deletion
-  unless a profile-wide process scan proves absence;
+- PR review hardening atomically publishes each clone/refresh lock as a
+  tokenized process-owner file and reclaims only recorded dead-process locks;
+  reuses an exact crash-restored recovery page and closes any in-flight
+  alternate target before returning it; and makes missing process receipts or
+  failed process inspection block profile deletion unless a profile-wide
+  process scan proves absence;
 - process identity capture is opt-in for attempt runtimes only, so the current
   fixed-profile runtime and `CertifiedChatGptProvider` retain their pre-T1
   behavior. No provider dispatch integration or T2 runner change is present;
-- the focused suite passes fourteen tests, including clone failure before
+- the focused suite passes sixteen tests, including clone failure before
   atomic publication, immutable receipt rejection, dead-lock recovery,
   exact-process mismatch, process-inspection fail-closed behavior, missing
   receipt/live-process refusal, restored-page reuse without alternate target
@@ -421,9 +422,9 @@ Fresh T1 source-candidate and live-gate evidence:
   either path. The fixed profile was not cleared, adopted, or overwritten;
 - `pnpm check`, `pnpm build`, `pnpm docs:check`, `pnpm public:check`,
   `pnpm test:packed-cli`, and `git diff --check` passed. `pnpm test` passed all
-  three partitions: process-serial had 56 passing and one skipped test,
+  three partitions: process-serial had 58 passing and one skipped test,
   browser-serial had 30 passing and one skipped test, and the parallel
-  partition had 2,054 passing and 32 skipped tests (2,140 passing and 34
+  partition had 2,054 passing and 32 skipped tests (2,142 passing and 34
   skipped across 197 files in total);
 - the real T1 gate is not certified. It requires one explicit fresh auth-seed
   login, then the same two-clone no-Send proof. Fixture success is not a

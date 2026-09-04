@@ -36,6 +36,7 @@ export async function launchAttemptBrowserRuntime(options: {
     executablePath: inspection.executablePath,
     profileDir: sandbox.profileDir,
     headless: options.headless ?? false,
+    singlePageLifetime: true,
     captureProcessIdentity: true,
     ...(!options.launchManagedBrowser
       ? {

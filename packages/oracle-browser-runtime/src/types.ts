@@ -25,6 +25,7 @@ export interface ManagedBrowserLaunchInput {
   profileDir: string;
   headless: boolean;
   preserveWindowNames?: readonly string[];
+  singlePageLifetime?: boolean;
   captureProcessIdentity?: boolean;
   onProcessIdentity?: (identity: ManagedBrowserProcessIdentity) => Promise<void>;
 }
