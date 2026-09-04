@@ -11,6 +11,13 @@ async function readSkill(): Promise<string> {
 }
 
 describe("canonical Oracle skill contract", () => {
+  test("advertises evidence-based debate in one same-task conversation", async () => {
+    const skill = await readSkill();
+
+    expect(skill).toContain("Challenge wrong or over-defensive answers");
+    expect(skill).toContain("one same-task ChatGPT conversation until evidence-based consensus");
+  });
+
   test("pins the GPT-5.6 Pro direct-CDP browser lane without provider fallback", async () => {
     const skill = await readSkill();
 
@@ -93,8 +100,13 @@ describe("canonical Oracle skill contract", () => {
     expect(skill).toContain("running or recoverable, reattach and wait");
     expect(skill).toContain("follow up from the latest child");
     expect(skill).toContain("context compaction, or process restart is not a new investigation");
+    expect(skill).toContain("Treat `-r2`, `-r3`, `-round2`, `-followup`, `-rebuttal`");
+    expect(skill).toContain("a proposed command without `--followup` must");
+    expect(skill).toContain("stop before Send and be rewritten against the latest child");
+    expect(skill).toContain("Updating the file on disk cannot rewrite an");
+    expect(skill).toContain("already-running agent's context");
     expect(skill).toContain("confirm that the child's conversation id equals the parent's");
-    expect(skill).toContain("Re-invoke the skill at the start of each consultation");
+    expect(skill).toContain("At the first Oracle action of every agent turn, reload the");
     expect(skill).toContain("Open a new conversation only when the current one cannot continue");
     expect(skill).toContain(
       "Preference for another phrasing, a fresh start, or a cleaner transcript is not a reason.",

@@ -1,6 +1,6 @@
 ---
 name: oracle
-description: "Second-opinion review from ChatGPT GPT-5.6 Pro with real repository context: hard bugs, stuck investigations, design and refactor decisions. Bundles a prompt plus selected files, and always names the project GitHub owner/repository so the connector can read it."
+description: "Debate hard bugs, stuck investigations, designs, and refactors with ChatGPT GPT-5.6 Pro using real repository context. Challenge wrong or over-defensive answers and keep one same-task ChatGPT conversation until evidence-based consensus."
 ---
 
 # Oracle (CLI) — best use
@@ -179,6 +179,14 @@ follow up from the latest child. Create a new root only when no same-task
 lineage exists or one of the explicit exceptions below applies. A new agent
 turn, context compaction, or process restart is not a new investigation.
 
+Treat `-r2`, `-r3`, `-round2`, `-followup`, `-rebuttal`, and similar slug
+suffixes as continuation intent, not permission to create another root. When a
+matching owned lineage exists, a proposed command without `--followup` must
+stop before Send and be rewritten against the latest child. Copying the old
+answer into a fresh prompt is not an equivalent substitute for continuing the
+conversation. A deliberately independent blind review belongs in a separately
+declared task or Batch lane, not an ordinary "round 2" root.
+
 ```bash
 oracle --followup <session-id-or-slug> \
   -p "You claimed X. src/foo.ts:42 does Y, and the attached test fails as shown. Revise." \
@@ -201,10 +209,14 @@ same ChatGPT thread. After every follow-up, confirm that the child's
 conversation id equals the parent's; if it differs, a new conversation was
 opened by mistake and the parent must be resumed instead.
 
-This skill changes. An agent whose context still holds an older copy will act
-on stale rules (an earlier version said runs were one-shot and never mentioned
-follow-ups). Re-invoke the skill at the start of each consultation rather than
-relying on text loaded in a previous task.
+This skill changes. At the first Oracle action of every agent turn, reload the
+currently installed `SKILL.md` through that host's skill mechanism instead of
+relying on text retained from an older context. If the active skill catalog
+does not expose Oracle, the agent has not received the current policy: it must
+not claim otherwise or dispatch from memory. Refresh the catalog or start a
+fresh agent context when possible; if direct file access is available, read the
+installed skill before proceeding. Updating the file on disk cannot rewrite an
+already-running agent's context.
 
 Open a new conversation only when the current one cannot continue: browser
 resume fails closed because the saved URL is not a recoverable ChatGPT
