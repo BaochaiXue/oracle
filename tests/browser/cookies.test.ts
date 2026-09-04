@@ -56,7 +56,11 @@ describe("clearStaleChatGptConversationCookies", () => {
 
     await clearStaleChatGptConversationCookies(Network, Target, logger);
 
-    expect(deleteCookies).toHaveBeenCalledWith({ name: "conv_key_WEB", domain: "chatgpt.com", path: "/" });
+    expect(deleteCookies).toHaveBeenCalledWith({
+      name: "conv_key_WEB",
+      domain: "chatgpt.com",
+      path: "/",
+    });
   });
 
   test("deletes only stale ChatGPT conversation keys", async () => {

@@ -25,12 +25,16 @@ describe("canonical Oracle skill contract", () => {
     const skill = await readSkill();
 
     expect(skill).toContain("## GitHub repository context (mandatory)");
-    expect(skill).toContain("Use the connected GitHub app/connector to inspect the exact repository");
+    expect(skill).toContain(
+      "Use the connected GitHub app/connector to inspect the exact repository",
+    );
     expect(skill).toContain("`OWNER/REPOSITORY`");
     // The identity comes from Git metadata, never from the local folder name,
     // and the raw remote URL (which may carry a token) is never printed.
     expect(skill).toContain("never by the local folder");
-    expect(skill).toContain("This repository identity comes from Git metadata, not the local directory name.");
+    expect(skill).toContain(
+      "This repository identity comes from Git metadata, not the local directory name.",
+    );
     expect(skill).not.toContain("git -C <repo> remote -v");
     expect(skill).toContain("emits owner/repo only");
     expect(skill).toContain("The only exemption is a project with no GitHub remote at all.");
@@ -38,7 +42,9 @@ describe("canonical Oracle skill contract", () => {
     expect(skill).toContain("`OWNER/REPOSITORY` on branch `BRANCH` at commit `COMMIT`");
     expect(skill).toContain("git -C <repo> rev-parse --abbrev-ref HEAD");
     expect(skill).toContain("Read that branch, not the default branch, wherever they differ.");
-    expect(skill).toContain("Never place a raw remote URL, embedded credentials, access token, or private");
+    expect(skill).toContain(
+      "Never place a raw remote URL, embedded credentials, access token, or private",
+    );
   });
 
   test("states detach semantics honestly so host timeouts are read correctly", async () => {
@@ -82,12 +88,20 @@ describe("canonical Oracle skill contract", () => {
     expect(skill).toContain("Continue the exchange until consensus");
     expect(skill).toContain("### Stay in one conversation");
     expect(skill).toContain("oracle --followup <session-id-or-slug>");
-    expect(skill).toContain("An Oracle *session* is not a ChatGPT *conversation*.");
+    expect(skill).toContain("An Oracle _session_ is not a ChatGPT _conversation_.");
+    expect(skill).toContain("Before creating any root session");
+    expect(skill).toContain("running or recoverable, reattach and wait");
+    expect(skill).toContain("follow up from the latest child");
+    expect(skill).toContain("context compaction, or process restart is not a new investigation");
     expect(skill).toContain("confirm that the child's conversation id equals the parent's");
     expect(skill).toContain("Re-invoke the skill at the start of each consultation");
     expect(skill).toContain("Open a new conversation only when the current one cannot continue");
-    expect(skill).toContain("Preference for another phrasing, a fresh start, or a cleaner transcript is not a reason.");
-    expect(skill).not.toContain("Oracle runs are one-shot; the model does not remember prior runs.");
+    expect(skill).toContain(
+      "Preference for another phrasing, a fresh start, or a cleaner transcript is not a reason.",
+    );
+    expect(skill).not.toContain(
+      "Oracle runs are one-shot; the model does not remember prior runs.",
+    );
   });
 
   test("tells the agent to show GPT-5.6 Pro visual evidence and names the media traps", async () => {
@@ -102,9 +116,12 @@ describe("canonical Oracle skill contract", () => {
     // Interpretation is not guaranteed; PDF figures must be rendered to PNG.
     expect(skill).toContain("Oracle guarantees only the upload");
     // Raw uploads are uncapped by default (tests/browser/prompt.test.ts locks this).
-    expect(skill).toContain("Raw media and archive uploads are uncapped unless a limit is set explicitly");
+    expect(skill).toContain(
+      "Raw media and archive uploads are uncapped unless a limit is set explicitly",
+    );
     // ZIP swallows media; only the text bundle keeps images as separate uploads.
-    expect(skill).toContain("--browser-bundle-files --browser-bundle-format text");
+    expect(skill).toContain("pass `--browser-bundle-files` with");
+    expect(skill).toContain("`--browser-bundle-format text`");
     expect(skill).toContain("both pack the images into the archive");
     expect(skill).toContain("at most 10 attachments");
     // .gitignore applies to literals only in mixed expansion.
@@ -118,7 +135,9 @@ describe("canonical Oracle skill contract", () => {
 
     expect(skill).toContain("## Sharing one Chrome across agents");
     expect(skill).toContain("Never `kill`, `pkill`, or signal the Chrome process");
-    expect(skill).toContain("Never run `smoke` or `setup` while any consultation is active or recoverable.");
+    expect(skill).toContain(
+      "Never run `smoke` or `setup` while any consultation is active or recoverable.",
+    );
     expect(skill).toContain("`smoke` is a first-install validator, not a repair tool");
     expect(skill).toContain('browser.browserLifetime: "persistent"');
     // Setup is the one browser without a CDP endpoint; the human closes it whole.

@@ -1337,7 +1337,9 @@ async function verifyPromptCommitted(
   // Sending again would duplicate it, so this is terminal and recoverable,
   // with promptSubmitted:true, and it never completes a Pro receipt or a
   // committed prompt digest: identity stays unverified.
-  const submittedUnverified = Boolean(probe?.hasNewUserTurn === true && probe.composerCleared === true);
+  const submittedUnverified = Boolean(
+    probe?.hasNewUserTurn === true && probe.composerCleared === true,
+  );
   if (submittedUnverified) {
     throw new BrowserAutomationError(
       "A new user turn was committed and the composer cleared, but Oracle could not verify the exact prompt identity. The review was sent; recover this session and do not submit it again.",

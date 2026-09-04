@@ -171,6 +171,14 @@ and surface it to the operator rather than looping.
 For one agent working one task, the default is a single ChatGPT conversation
 extended turn by turn. Continue it with `--followup` on the stored session:
 
+Before creating any root session, check the task's recorded Oracle lineage and
+run `oracle status --hours 72` for that task's slug. If its latest owned session
+is running or recoverable, reattach and wait without submitting another turn.
+If it is completed and the new question advances the same investigation,
+follow up from the latest child. Create a new root only when no same-task
+lineage exists or one of the explicit exceptions below applies. A new agent
+turn, context compaction, or process restart is not a new investigation.
+
 ```bash
 oracle --followup <session-id-or-slug> \
   -p "You claimed X. src/foo.ts:42 does Y, and the attached test fails as shown. Revise." \
@@ -184,7 +192,7 @@ the lineage in `oracle status` stays linear. New evidence can be attached with
 `--file` on any turn. When the follow-up turns are known in advance, plan them
 in the initial run with repeated `--browser-follow-up "<prompt>"` instead.
 
-An Oracle *session* is not a ChatGPT *conversation*. Every turn, including a
+An Oracle _session_ is not a ChatGPT _conversation_. Every turn, including a
 `--followup` turn, gets its own session id and its own row in `oracle status`;
 that is bookkeeping, not a new chat. The conversation identity is
 `browser.runtime.conversationId` in the session's `meta.json` (also the
@@ -407,8 +415,8 @@ Oracle session lineage and never operates on a session it did not create.
 - Never `oracle session <id> --live|--harvest`, `--followup`, or `restart` a
   session whose slug or lineage is not yours. Reading another agent's session
   is allowed only through `oracle session <id>` as a read-only snapshot.
-- After a host cut-off, find your own work by slug in `oracle status --hours
-  72`, not by picking the most recent session; another agent's run may be newer.
+- After a host cut-off, use `oracle status --hours 72` to find your own work by
+  slug. Do not pick the most recent session; another agent's run may be newer.
 - One task, one conversation. Do not open a second conversation for the same
   task while the first is `running` or `recoverable`; two live conversations on
   one task is how an agent loses track of which answer is authoritative.
@@ -633,9 +641,10 @@ Constraints that apply to media in this fork:
   `--max-file-size-bytes <bytes>` when attaching large or sensitive media; do
   not rely on a default that does not exist for these files.
 - One browser turn accepts at most 10 attachments. When source files must be
-  bundled alongside figures, use `--browser-bundle-files --browser-bundle-format
-  text`: the text bundle becomes one attachment and every image stays a separate
-  native upload, so `1 + number of figures` must be at most 10. Do not use
+  bundled alongside figures, pass `--browser-bundle-files` with
+  `--browser-bundle-format text`. The text bundle becomes one attachment and
+  every image stays a separate native upload, so `1 + number of figures` must
+  be at most 10. Do not use
   `zip` or leave the format on `auto` with media present: both pack the images
   into the archive, and GPT receives one ZIP instead of pictures it can look at.
 - `--browser-attachments never` and `--browser-inline-files` fail on media,

@@ -572,7 +572,10 @@ async function readLinuxProcIdentity(pid: number): Promise<LinuxProcIdentity | n
   // comm is parenthesized and may itself contain spaces or ')'; split after the last ')'.
   const close = raw.lastIndexOf(")");
   if (close < 0) return null;
-  const fields = raw.slice(close + 2).trim().split(/\s+/u);
+  const fields = raw
+    .slice(close + 2)
+    .trim()
+    .split(/\s+/u);
   const state = fields[0];
   const startTicks = fields[19];
   if (!state || !startTicks) return null;

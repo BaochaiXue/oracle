@@ -311,7 +311,9 @@ describe("conversation url monitor snapshot", () => {
     const snapshot = monitor.snapshot();
     expect(snapshot.readErrorCount).toBe(1);
     expect(snapshot.lastReadError).toBe("Target closed");
-    expect(snapshot.lastObservedUrl).toBe("https://chatgpt.com/c/11111111-2222-4333-8444-555555555555");
+    expect(snapshot.lastObservedUrl).toBe(
+      "https://chatgpt.com/c/11111111-2222-4333-8444-555555555555",
+    );
     expect(snapshot.lastCandidateStatus).toBe("pending");
     expect(snapshot.boundConversationId).toBeNull();
   });

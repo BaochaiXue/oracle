@@ -34,6 +34,8 @@ describe("prompt text normalizer", () => {
   });
 
   test("content words still distinguish prompts", () => {
-    expect(normalizePromptText("**fix** the bug")).not.toBe(normalizePromptText("**fix** the test"));
+    expect(normalizePromptText("**fix** the bug")).not.toBe(
+      normalizePromptText("**fix** the test"),
+    );
   });
 });

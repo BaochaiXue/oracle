@@ -22,8 +22,11 @@ import {
   closeTab,
   ensureChromePageTargetAfterClose,
 } from "./chromeLifecycle.js";
-import { clearStaleChatGptConversationCookies,
-  shouldSkipStaleConversationCookieCleanup, syncCookies } from "./cookies.js";
+import {
+  clearStaleChatGptConversationCookies,
+  shouldSkipStaleConversationCookieCleanup,
+  syncCookies,
+} from "./cookies.js";
 import {
   navigateToChatGPT,
   navigateToPromptReadyWithFallback,
