@@ -791,7 +791,7 @@ async function reclaimStaleCandidateStagingEntries(
   if (path.dirname(candidatesRoot) !== runtimeRealpath) {
     throw new Error("Auth-seed candidates root is outside the exact runtime root");
   }
-  const expectedSourceProfile = path.join(runtimeRealpath, "browser-profile");
+  const expectedSourceProfile = await realpath(path.join(runtimeRealpath, "browser-profile"));
   const entries = await readdir(candidatesRoot, { withFileTypes: true });
   for (const entry of entries) {
     if (!entry.name.startsWith(".") || !entry.name.endsWith(".tmp")) continue;
