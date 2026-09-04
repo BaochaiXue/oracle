@@ -400,17 +400,20 @@ Fresh T1 source-candidate and live-gate evidence:
   only after that exact owner is absent; reuses an exact crash-restored
   recovery page, closes any in-flight or already-returned alternate target,
   makes a late or pre-first-open replacement exact recovery page reattachable,
-  and closes the whole runtime fail-safe if an alternate target or a failed-open
-  target cannot close;
-  serializes Chrome launch and cleanup, including launch/close receipt
-  publication, through one atomic sandbox process-lifecycle reservation;
-  revalidates
-  the endpoint-reported browser PID and exact OS process identity before CDP
+  returns the exact preserved page when its arrival interrupts ordinary target
+  navigation, and closes the whole runtime fail-safe if an alternate target or
+  a failed-open target cannot close; serializes Chrome launch and cleanup,
+  including launch/close receipt publication, through one atomic sandbox
+  process-lifecycle reservation; revalidates the endpoint-reported browser PID
+  and exact OS process identity before CDP
   close; removes `commit-recovery` as a separate sandbox purpose so at-risk
   observation must stay in the original `dispatch` workspace; and makes missing
   process receipts or failed process inspection block profile deletion unless a
   profile-wide process scan proves absence. A failed current-process identity
-  lookup is no longer cached across later jobs;
+  lookup is no longer cached across later jobs. Auth-seed and attempt-lifecycle
+  lock publication, token revalidation, reclamation, and release share a short
+  runtime-root SQLite mutation lock, which the OS releases on process death, so
+  a stale observer cannot rename a newly published live replacement;
 - the real proof now waits for DOM readiness plus five seconds of unchanged
   composer/attachment/recovery state before classifying a clone as initially
   clean. Candidate creation accepts only the exact fixed `browser-profile`
@@ -423,13 +426,14 @@ Fresh T1 source-candidate and live-gate evidence:
 - process identity capture is opt-in for attempt runtimes only, so the current
   fixed-profile runtime and `CertifiedChatGptProvider` retain their pre-T1
   behavior. No provider dispatch integration or T2 runner change is present;
-- the focused suite passes thirty-one tests, including delayed restored-state
+- the focused suite passes thirty-three tests, including delayed restored-state
   detection, exact migration-source enforcement, abandoned-staging refusal,
   cross-generation logical-attempt uniqueness, pre-launch process-slot and
   concurrent-open exclusion, clone failure before owner publication, immutable
   receipt rejection, dead-lock and PID-reuse recovery, exact-process mismatch,
   process-inspection fail-closed behavior, missing receipt/live-process refusal,
   launch-versus-cleanup exclusion, launch-finalization-versus-cleanup exclusion,
+  token-conditional auth/lifecycle stale-lock recovery under a live winner,
   exact dead-owner lifecycle-lock recovery,
   reused-CDP-port refusal, restored-page reuse, pre-first-open and late recovery
   reattachment without a second alternate target, alternate/failed-open close
@@ -447,9 +451,9 @@ Fresh T1 source-candidate and live-gate evidence:
   either path. The fixed profile was not cleared, adopted, or overwritten;
 - `pnpm check`, `pnpm build`, `pnpm docs:check`, `pnpm public:check`,
   `pnpm test:packed-cli`, and `git diff --check` passed. `pnpm test` passed all
-  three partitions: process-serial had 73 passing and one skipped test,
+  three partitions: process-serial had 75 passing and one skipped test,
   browser-serial had 30 passing and one skipped test, and the parallel
-  partition had 2,054 passing and 32 skipped tests (2,157 passing and 34
+  partition had 2,054 passing and 32 skipped tests (2,159 passing and 34
   skipped across 197 files in total);
 - the real T1 gate is not certified. It requires one explicit fresh auth-seed
   login, then the same two-clone no-Send proof. Fixture success is not a

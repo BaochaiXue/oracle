@@ -37,6 +37,7 @@ import {
   readAuthSeedCertification,
   withAuthSeedCloneLock,
   withAuthSeedRefreshLock,
+  withAttemptProcessLifecycleReservation,
   writeAttemptProcessReceipt,
   type AuthSeedCloneProofReceipt,
   type LaunchManagedBrowser,
@@ -409,6 +410,30 @@ describe("Oracle disposable attempt sandboxes", () => {
     writeDeadLockOwner(reader, "shared");
     await expect(withAuthSeedRefreshLock(runtimeRoot, async () => "refresh-ready")).resolves.toBe(
       "refresh-ready",
+    );
+  });
+
+  test("does not displace the live winner after dead auth-lock reclamation", async () => {
+    const runtimeRoot = temporaryRoot();
+    const exclusive = path.join(runtimeRoot, "run", "auth-seed.lock", "exclusive");
+    mkdirSync(path.dirname(exclusive), { recursive: true });
+    writeDeadLockOwner(exclusive, "exclusive");
+    let winnerEntered!: () => void;
+    let releaseWinner!: () => void;
+    const entered = new Promise<void>((resolve) => (winnerEntered = resolve));
+    const released = new Promise<void>((resolve) => (releaseWinner = resolve));
+    const winner = withAuthSeedRefreshLock(runtimeRoot, async () => {
+      winnerEntered();
+      await released;
+    });
+    await entered;
+    await expect(
+      withAuthSeedRefreshLock(runtimeRoot, async () => undefined, { timeoutMs: 75 }),
+    ).rejects.toThrow(/exclusive auth-seed lock/i);
+    releaseWinner();
+    await winner;
+    await expect(withAuthSeedCloneLock(runtimeRoot, async () => "next-job")).resolves.toBe(
+      "next-job",
     );
   });
 
@@ -985,6 +1010,59 @@ describe("Oracle disposable attempt sandboxes", () => {
     expect(existsSync(sandbox.directory)).toBe(false);
   });
 
+  test("does not displace the live winner after dead lifecycle reclamation", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_lifecycle_reclaim_winner",
+      turnAttemptId: "attempt_lifecycle_reclaim_winner",
+      purpose: "probe",
+    });
+    writeFileSync(
+      path.join(sandbox.directory, "process-lifecycle.json"),
+      `${JSON.stringify({
+        schemaVersion: "oracle.attempt-process-lifecycle.v1",
+        token: "dead-lifecycle-contended",
+        jobId: sandbox.owner.jobId,
+        turnAttemptId: sandbox.owner.turnAttemptId,
+        pid: 999_999,
+        processStartTime: "dead-process-start-time",
+        createdAt: new Date().toISOString(),
+      })}\n`,
+    );
+    let winnerEntered!: () => void;
+    let releaseWinner!: () => void;
+    const entered = new Promise<void>((resolve) => (winnerEntered = resolve));
+    const released = new Promise<void>((resolve) => (releaseWinner = resolve));
+    const winner = withAttemptProcessLifecycleReservation(sandbox, async () => {
+      winnerEntered();
+      await released;
+    });
+    await entered;
+    await expect(
+      withAttemptProcessLifecycleReservation(sandbox, async () => undefined),
+    ).rejects.toThrow(/lifecycle operation is already in progress/i);
+    releaseWinner();
+    await winner;
+    await expect(
+      withAttemptProcessLifecycleReservation(sandbox, async () => "next-job"),
+    ).resolves.toBe("next-job");
+    expect(
+      (
+        await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: sandbox.directory,
+          dependencies: { findProcessesUsingProfile: noProfileProcesses },
+        })
+      ).status,
+    ).toBe("deleted");
+  });
+
   test("rejects a concurrent page open before creating a second target", async () => {
     const runtimeRoot = temporaryRoot();
     const candidate = await createAuthSeedCandidate({
@@ -1182,6 +1260,7 @@ describe("Oracle disposable attempt sandboxes", () => {
     expect(recovery.closed()).toBe(false);
     expect([...ownedPages].filter((page) => !page.isClosed())).toEqual([recovery.page]);
     expect([...preservedPages]).toEqual([recovery.page]);
+    expect(managedBrowserTestHooks.findLivePreservedPage(preservedPages)).toBe(recovery.page);
   });
 
   test("closes the browser runtime when an alternate page cannot close", async () => {

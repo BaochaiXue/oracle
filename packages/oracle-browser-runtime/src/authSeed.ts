@@ -18,6 +18,7 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { withBrowserLockMutation } from "./lockMutation.js";
 import { ORACLE_BROWSER_RUNTIME_ID } from "./types.js";
 import type {
   AuthSeedCandidateReceipt,
@@ -399,39 +400,39 @@ async function acquireSeedLock(
   await ensurePrivateDirectory(stagingRoot);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
-    if (mode === "shared") {
-      if (await pathExists(exclusivePath)) {
-        await reclaimDeadSeedLock(exclusivePath);
+    const acquired = await withBrowserLockMutation(runtimeRoot, async () => {
+      if (mode === "shared") {
+        if (await pathExists(exclusivePath)) {
+          await reclaimDeadSeedLock(exclusivePath);
+        }
+        if (await pathExists(exclusivePath)) return undefined;
+        const token = randomUUID();
+        const lockPath = path.join(readersRoot, token);
+        await publishSeedLock(lockPath, stagingRoot, mode, token);
+        return { lockPath, token };
       }
-      if (await pathExists(exclusivePath)) {
-        await delay(LOCK_POLL_MS);
-        continue;
-      }
-      const token = randomUUID();
-      const readerPath = path.join(readersRoot, token);
-      const release = await publishSeedLock(readerPath, stagingRoot, mode, token);
-      if (!(await pathExists(exclusivePath))) {
-        return release;
-      }
-      await release();
-    } else {
       if (await pathExists(exclusivePath)) {
         await reclaimDeadSeedLock(exclusivePath);
       }
       const token = randomUUID();
-      let release: (() => Promise<void>) | undefined;
       try {
-        release = await publishSeedLock(exclusivePath, stagingRoot, mode, token);
+        await publishSeedLock(exclusivePath, stagingRoot, mode, token);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        await delay(LOCK_POLL_MS);
-        continue;
+        return undefined;
       }
       await reclaimDeadReaderLocks(readersRoot);
       if ((await readdir(readersRoot)).length === 0) {
-        return release;
+        return { lockPath: exclusivePath, token };
       }
-      await release();
+      await releaseSeedLock(exclusivePath, token);
+      return undefined;
+    });
+    if (acquired) {
+      return () =>
+        withBrowserLockMutation(runtimeRoot, () =>
+          releaseSeedLock(acquired.lockPath, acquired.token),
+        );
     }
     await delay(LOCK_POLL_MS);
   }
@@ -443,7 +444,7 @@ async function publishSeedLock(
   stagingRoot: string,
   mode: AuthSeedLockOwner["mode"],
   token: string,
-): Promise<() => Promise<void>> {
+): Promise<void> {
   const owner: AuthSeedLockOwner = {
     schemaVersion: "oracle.auth-seed-lock-owner.v2",
     token,
@@ -463,7 +464,6 @@ async function publishSeedLock(
   } finally {
     await rm(temporary, { force: true }).catch(() => undefined);
   }
-  return async () => releaseSeedLock(lockPath, token);
 }
 
 async function releaseSeedLock(lockPath: string, token: string): Promise<void> {
@@ -494,6 +494,10 @@ async function reclaimDeadSeedLock(lockPath: string): Promise<boolean> {
     return false;
   } else {
     return true;
+  }
+  const confirmed = await readSeedLockOwner(lockPath);
+  if (confirmed.status !== "valid" || confirmed.owner.token !== observation.owner.token) {
+    return false;
   }
   const quarantine = `${lockPath}.stale-${randomUUID()}`;
   try {

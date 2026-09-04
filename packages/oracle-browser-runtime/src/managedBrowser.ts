@@ -135,7 +135,7 @@ export async function launchManagedChromeForTesting(
         if (closed || closeAttempt) {
           throw new Error("Managed Chrome for Testing runtime is closing or closed");
         }
-        const preserved = [...preservedPages].find((page) => !page.isClosed());
+        const preserved = findLivePreservedPage(preservedPages);
         if (singlePageLifetime && preserved) return preserved;
         const marker = `about:blank#oracle-v2-target-${randomUUID()}`;
         pendingMarkers.add(marker);
@@ -169,6 +169,8 @@ export async function launchManagedChromeForTesting(
           }
           return page;
         } catch (error) {
+          const recovered = findLivePreservedPage(preservedPages);
+          if (singlePageLifetime && recovered) return recovered;
           if (targetId) {
             const exactTargetId = targetId;
             if (singlePageLifetime) {
@@ -262,6 +264,10 @@ async function closeCurrentlyUnownedPages(
       await page.close({ runBeforeUnload: false }).catch(() => undefined);
     }
   }
+}
+
+function findLivePreservedPage(preservedPages: ReadonlySet<Page>): Page | undefined {
+  return [...preservedPages].find((page) => !page.isClosed());
 }
 
 async function preserveManagedPage(
@@ -494,5 +500,6 @@ function delay(milliseconds: number): Promise<void> {
 
 export const managedBrowserTestHooks = {
   closeFailedAttemptTarget,
+  findLivePreservedPage,
   preserveManagedPage,
 };

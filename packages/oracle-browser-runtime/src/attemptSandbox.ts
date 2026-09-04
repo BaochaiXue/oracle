@@ -21,6 +21,7 @@ import {
   withAuthSeedCloneLock,
   type AuthSeedCloneSource,
 } from "./authSeed.js";
+import { withBrowserLockMutation } from "./lockMutation.js";
 import {
   closeManagedBrowserOverCdp,
   findManagedBrowserProcessesUsingProfile,
@@ -209,6 +210,7 @@ export async function withAttemptProcessLifecycleReservation<T>(
     throw new Error("Attempt sandbox ownership changed before process lifecycle reservation");
   }
   const reservationPath = path.join(current.directory, PROCESS_LIFECYCLE_RESERVATION);
+  const runtimeRoot = path.dirname(path.dirname(current.directory));
   const reservation: AttemptProcessLifecycleReservation = {
     schemaVersion: "oracle.attempt-process-lifecycle.v1",
     token: randomUUID(),
@@ -218,22 +220,26 @@ export async function withAttemptProcessLifecycleReservation<T>(
     processStartTime: await getCurrentProcessStartTime(),
     createdAt: new Date().toISOString(),
   };
-  while (true) {
+  const acquired = await withBrowserLockMutation(runtimeRoot, async () => {
     try {
       await writeExclusivePrivateJson(reservationPath, reservation);
-      break;
+      return true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (await reclaimStaleAttemptProcessLifecycleReservation(reservationPath, current.owner)) {
-        continue;
+      if (!(await reclaimStaleAttemptProcessLifecycleReservation(reservationPath, current.owner))) {
+        return false;
       }
-      throw new Error(busyMessage);
+      await writeExclusivePrivateJson(reservationPath, reservation);
+      return true;
     }
-  }
+  });
+  if (!acquired) throw new Error(busyMessage);
   try {
     return await operation();
   } finally {
-    await releaseAttemptProcessLifecycleReservation(reservationPath, reservation.token);
+    await withBrowserLockMutation(runtimeRoot, () =>
+      releaseAttemptProcessLifecycleReservation(reservationPath, reservation.token),
+    );
   }
 }
 
@@ -584,6 +590,10 @@ async function reclaimStaleAttemptProcessLifecycleReservation(
       ? await getCurrentProcessStartTime()
       : await observeLocalProcessStartTime(reservation.pid);
   if (observedStartTime === reservation.processStartTime) return false;
+  const confirmed = await readJson<AttemptProcessLifecycleReservation>(reservationPath);
+  if (!isAttemptProcessLifecycleReservation(confirmed) || confirmed.token !== reservation.token) {
+    return false;
+  }
   const stalePath = `${reservationPath}.stale-${reservation.token}-${randomUUID()}`;
   try {
     await rename(reservationPath, stalePath);
