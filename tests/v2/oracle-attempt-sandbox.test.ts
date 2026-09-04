@@ -1155,6 +1155,21 @@ describe("Oracle disposable attempt sandboxes", () => {
     expect(preservedPages.size).toBe(0);
   });
 
+  test("closes the browser runtime when a failed open target cannot close", async () => {
+    let abortCount = 0;
+    await expect(
+      managedBrowserTestHooks.closeFailedAttemptTarget(
+        async () => {
+          throw new Error("fixture target close failure");
+        },
+        async () => {
+          abortCount += 1;
+        },
+      ),
+    ).rejects.toThrow(/browser runtime was closed fail-safe/i);
+    expect(abortCount).toBe(1);
+  });
+
   test("reattaches a late recovery page after the first open has resolved", async () => {
     const runtimeRoot = temporaryRoot();
     const candidate = await createAuthSeedCandidate({

@@ -170,7 +170,19 @@ export async function launchManagedChromeForTesting(
           return page;
         } catch (error) {
           if (targetId) {
-            await session.send("Target.closeTarget", { targetId }).catch(() => undefined);
+            const exactTargetId = targetId;
+            if (singlePageLifetime) {
+              await closeFailedAttemptTarget(
+                async () =>
+                  (await session.send("Target.closeTarget", { targetId: exactTargetId }))
+                    .success === true,
+                closeRuntime,
+              );
+            } else {
+              await session
+                .send("Target.closeTarget", { targetId: exactTargetId })
+                .catch(() => undefined);
+            }
           }
           throw error;
         } finally {
@@ -296,6 +308,30 @@ async function closePageForSingleLifetime(page: Page, abort: () => Promise<void>
     }
     throw new Error(
       "Could not close an alternate attempt page; the browser runtime was closed fail-safe",
+      { cause: error },
+    );
+  }
+}
+
+async function closeFailedAttemptTarget(
+  closeTarget: () => Promise<boolean>,
+  abort: () => Promise<void>,
+): Promise<void> {
+  try {
+    if (!(await closeTarget())) {
+      throw new Error("target remained open after close request");
+    }
+  } catch (error) {
+    try {
+      await abort();
+    } catch (abortError) {
+      throw new AggregateError(
+        [error, abortError],
+        "Could not close a failed attempt target or its browser runtime",
+      );
+    }
+    throw new Error(
+      "Could not close a failed attempt target; the browser runtime was closed fail-safe",
       { cause: error },
     );
   }
@@ -457,5 +493,6 @@ function delay(milliseconds: number): Promise<void> {
 }
 
 export const managedBrowserTestHooks = {
+  closeFailedAttemptTarget,
   preserveManagedPage,
 };
