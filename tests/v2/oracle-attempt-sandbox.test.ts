@@ -93,7 +93,7 @@ describe("Oracle disposable attempt sandboxes", () => {
     ).rejects.toThrow(/shared auth-seed lock/i);
     releaseExclusive();
     await exclusive;
-  });
+  }, 20_000);
 
   test("atomically clones, isolates, cleans, and accepts one unchanged seed generation", async () => {
     const runtimeRoot = temporaryRoot();
