@@ -186,9 +186,11 @@ The auth seed is login/setup input only. A pre-Send failure destroys the whole
 sandbox without clearing, adopting, or inspecting a draft for ownership. A
 completed or ambiguous job persists ledger truth and then destroys its browser
 workspace. `dispatch-at-risk` may observe commit only in its exact sandbox and
-has zero Send authority. A committed-capture recovery may create a fresh
-capture-only sandbox and navigate from the durable submission receipt. Garbage
-collection consults job state, the sandbox owner marker, and exact process
+has zero Send authority. Multiple live recovery candidates or failed ambiguity
+containment poison that attempt runtime permanently, so later page-open and
+preserved-page operations reject. A committed-capture recovery may create a
+fresh capture-only sandbox and navigate from the durable submission receipt.
+Garbage collection consults job state, the sandbox owner marker, and exact process
 identity only; composer DOM never grants cleanup or Send authority. Because a
 persisted PID can be recycled between observation and signal delivery,
 cross-process GC never signals it directly: it may request `Browser.close`

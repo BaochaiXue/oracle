@@ -44,6 +44,11 @@ export async function launchManagedChromeForTesting(
     let closed = false;
     let closeAttempt: Promise<void> | undefined;
     let closeLateUnownedPage: (page: Page) => void;
+    const runtimeFailure: { error?: Error } = {};
+    const returnHealthyPage = (page: Page): Page => {
+      assertManagedRuntimeHealthy(runtimeFailure);
+      return page;
+    };
     const closeRuntime = async (): Promise<void> => {
       if (closed) return;
       if (closeAttempt) return closeAttempt;
@@ -110,9 +115,13 @@ export async function launchManagedChromeForTesting(
             await page.close({ runBeforeUnload: false }).catch(() => undefined);
           }
         })
-        .catch(async () => {
-          await closeRuntime().catch(() => undefined);
-        });
+        .catch((error) =>
+          containManagedRuntimeFailure(error, {
+            singlePageLifetime,
+            runtimeFailure,
+            closeRuntime,
+          }),
+        );
     };
     context.on("page", closeLateUnownedPage);
     const restoredPageCount = await closeRestoredBrowserPages(context, {
@@ -134,14 +143,18 @@ export async function launchManagedChromeForTesting(
       get restoredPageCount() {
         return restoredPageCount + lateRestoredPageCount;
       },
-      preservedPages: () => [...preservedPages].filter((page) => !page.isClosed()),
+      preservedPages: () => {
+        assertManagedRuntimeHealthy(runtimeFailure);
+        return [...preservedPages].filter((page) => !page.isClosed());
+      },
       ...(processIdentity ? { processIdentity } : {}),
       async openPage(url) {
+        assertManagedRuntimeHealthy(runtimeFailure);
         if (closed || closeAttempt) {
           throw new Error("Managed Chrome for Testing runtime is closing or closed");
         }
         const preserved = findLivePreservedPage(preservedPages);
-        if (singlePageLifetime && preserved) return preserved;
+        if (singlePageLifetime && preserved) return returnHealthyPage(preserved);
         const marker = `about:blank#oracle-v2-target-${randomUUID()}`;
         pendingMarkers.add(marker);
         const session = await browser!.newBrowserCDPSession();
@@ -170,12 +183,12 @@ export async function launchManagedChromeForTesting(
             if (recovered !== page && !page.isClosed()) {
               await closePageForSingleLifetime(page, closeRuntime);
             }
-            return recovered;
+            return returnHealthyPage(recovered);
           }
-          return page;
+          return returnHealthyPage(page);
         } catch (error) {
           const recovered = findLivePreservedPage(preservedPages);
-          if (singlePageLifetime && recovered) return recovered;
+          if (singlePageLifetime && recovered) return returnHealthyPage(recovered);
           if (targetId) {
             const exactTargetId = targetId;
             if (singlePageLifetime) {
@@ -198,7 +211,16 @@ export async function launchManagedChromeForTesting(
         }
       },
       async close() {
-        await closeRuntime();
+        try {
+          await closeRuntime();
+        } catch (error) {
+          if (!runtimeFailure.error) throw error;
+          throw new AggregateError(
+            [runtimeFailure.error, toError(error)],
+            "Managed browser runtime entered a fatal state and still could not close",
+          );
+        }
+        assertManagedRuntimeHealthy(runtimeFailure);
       },
     };
   } catch (error) {
@@ -517,8 +539,41 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+async function containManagedRuntimeFailure(
+  error: unknown,
+  input: {
+    singlePageLifetime: boolean;
+    runtimeFailure: { error?: Error };
+    closeRuntime: () => Promise<void>;
+  },
+): Promise<void> {
+  if (!input.singlePageLifetime) {
+    await input.closeRuntime().catch(() => undefined);
+    return;
+  }
+  input.runtimeFailure.error ??= toError(error);
+  try {
+    await input.closeRuntime();
+  } catch (closeError) {
+    input.runtimeFailure.error = new AggregateError(
+      [input.runtimeFailure.error, toError(closeError)],
+      "Managed attempt runtime entered a fatal state and could not close",
+    );
+  }
+}
+
+function assertManagedRuntimeHealthy(runtimeFailure: { error?: Error }): void {
+  if (runtimeFailure.error) throw runtimeFailure.error;
+}
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
 export const managedBrowserTestHooks = {
   closeFailedAttemptTarget,
+  containManagedRuntimeFailure,
   findLivePreservedPage,
   preserveManagedPage,
+  assertManagedRuntimeHealthy,
 };

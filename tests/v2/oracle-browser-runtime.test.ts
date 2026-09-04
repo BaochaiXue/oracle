@@ -11,6 +11,7 @@ import {
   closeRestoredBrowserPages,
   inspectOracleBrowserRuntime,
   launchOracleBrowserRuntime,
+  managedBrowserTestHooks,
   readRuntimeCertification,
   recordRuntimeAcceptance,
   sanitizeRuntimeObservationUrl,
@@ -125,6 +126,32 @@ describe("Oracle v2 certified browser runtime", () => {
 
     await expect(reconciliation).resolves.toBe(1);
     expect(page.isClosed()).toBe(true);
+  });
+
+  test("latches a fatal state when late-page ambiguity and shutdown both fail", async () => {
+    const runtimeFailure: { error?: Error } = {};
+    let closeCount = 0;
+
+    await managedBrowserTestHooks.containManagedRuntimeFailure(
+      new Error("multiple live preserved recovery pages"),
+      {
+        singlePageLifetime: true,
+        runtimeFailure,
+        closeRuntime: async () => {
+          closeCount += 1;
+          throw new Error("CDP endpoint remained live");
+        },
+      },
+    );
+
+    expect(closeCount).toBe(1);
+    expect(() => managedBrowserTestHooks.assertManagedRuntimeHealthy(runtimeFailure)).toThrow(
+      /fatal state and could not close/i,
+    );
+    expect((runtimeFailure.error as AggregateError).errors).toEqual([
+      expect.objectContaining({ message: "multiple live preserved recovery pages" }),
+      expect.objectContaining({ message: "CDP endpoint remained live" }),
+    ]);
   });
 
   test("exposes one managed Chrome for Testing direct-CDP runtime", () => {

@@ -94,7 +94,9 @@ or maintainer-only release instructions.
 - After `dispatch-at-risk`, Send authority is permanently absent. Commit may be
   observed only in the exact dispatch sandbox that emitted the potentially
   submitting event; if that workspace cannot prove the commit, preserve ledger
-  truth as ambiguous and destroy browser resources.
+  truth as ambiguous and destroy browser resources. Multiple live recovery
+  candidates or failed ambiguity containment latch the attempt runtime into a
+  fatal state; no later page-open or preserved-page operation may succeed.
 - Committed-capture recovery may create a fresh capture-only sandbox and
   navigate only from the durable submission receipt. It never fills the
   composer or emits Send.

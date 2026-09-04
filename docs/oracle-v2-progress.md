@@ -431,7 +431,10 @@ Fresh T1 source-candidate and live-gate evidence:
   arriving after reconciliation increments a live launch receipt before
   asynchronous page handling; the two-clone proof rechecks that count before
   and after browser close, so delayed restoration cannot certify a falsely
-  clean clone;
+  clean clone. If late recovery ambiguity and shutdown fail together, the
+  attempt runtime latches both errors as a sticky fatal state; later page-open,
+  preserved-page, and close operations reject instead of continuing through
+  the first recovery page;
 - cleanup first writes an immutable sandbox/owner/process-status quarantine
   receipt and atomically removes the stopped sandbox from `attempts/`. If
   recursive deletion is interrupted, the next proof invocation resumes only
@@ -490,9 +493,9 @@ Fresh T1 source-candidate and live-gate evidence:
   either path. The fixed profile was not cleared, adopted, or overwritten;
 - `pnpm check`, `pnpm build`, `pnpm docs:check`, `pnpm public:check`,
   `pnpm test:packed-cli`, and `git diff --check` passed. `pnpm test` passed all
-  three partitions: process-serial had 87 passing and one skipped test,
+  three partitions: process-serial had 88 passing and one skipped test,
   browser-serial had 30 passing and one skipped test, and the parallel
-  partition had 2,054 passing and 32 skipped tests (2,171 passing and 34
+  partition had 2,054 passing and 32 skipped tests (2,172 passing and 34
   skipped across 197 files in total);
 - the real T1 gate is not certified. It requires one explicit fresh auth-seed
   login, then the same two-clone no-Send proof. Fixture success is not a
