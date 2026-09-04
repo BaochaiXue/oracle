@@ -41,6 +41,22 @@ export async function launchManagedChromeForTesting(
     const pendingMarkers = new Set<string>();
     let closed = false;
     let closeAttempt: Promise<void> | undefined;
+    let closeLateUnownedPage: (page: Page) => void;
+    const closeRuntime = async (): Promise<void> => {
+      if (closed) return;
+      if (closeAttempt) return closeAttempt;
+      const attempt = (async () => {
+        await closeOwnedBrowser(browser!, launcher, endpoint);
+        context.off("page", closeLateUnownedPage);
+        closed = true;
+      })();
+      closeAttempt = attempt;
+      try {
+        await attempt;
+      } finally {
+        if (closeAttempt === attempt) closeAttempt = undefined;
+      }
+    };
     const ownPage = (page: Page) => {
       if (ownedPages.has(page)) return;
       ownedPages.add(page);
@@ -50,33 +66,51 @@ export async function launchManagedChromeForTesting(
       });
     };
     const preservePage = (page: Page): Promise<Page> =>
-      preserveManagedPage(page, { ownedPages, preservedPages, singlePageLifetime, ownPage });
-    const closeLateUnownedPage = (page: Page) => {
-      void delay(50).then(async () => {
-        if (
-          closed ||
-          closeAttempt ||
-          page.isClosed() ||
-          ownedPages.has(page) ||
-          pendingMarkers.has(page.url())
-        ) {
-          return;
-        }
-        let recoveryWindowName: string;
-        try {
-          recoveryWindowName = await readRecoveryWindowName(context, page);
-        } catch {
-          // A late-restored page can still be an exact recovery target. Leave it
-          // open when its marker cannot yet be inspected rather than risk losing
-          // durable at-risk work.
-          return;
-        }
-        if (preserveWindowNames.has(recoveryWindowName)) {
-          await preservePage(page);
-          return;
-        }
-        await page.close({ runBeforeUnload: false }).catch(() => undefined);
+      preserveManagedPage(page, {
+        ownedPages,
+        preservedPages,
+        singlePageLifetime,
+        ownPage,
+        abort: closeRuntime,
       });
+    closeLateUnownedPage = (page: Page) => {
+      void delay(50)
+        .then(async () => {
+          if (
+            closed ||
+            closeAttempt ||
+            page.isClosed() ||
+            ownedPages.has(page) ||
+            pendingMarkers.has(page.url())
+          ) {
+            return;
+          }
+          let recoveryWindowName: string;
+          try {
+            recoveryWindowName = await readRecoveryWindowName(context, page);
+          } catch {
+            if (singlePageLifetime) {
+              await closeRuntime();
+              return;
+            }
+            // A late-restored page can still be an exact recovery target. Leave it
+            // open when its marker cannot yet be inspected rather than risk losing
+            // durable at-risk work.
+            return;
+          }
+          if (preserveWindowNames.has(recoveryWindowName)) {
+            await preservePage(page);
+            return;
+          }
+          if (singlePageLifetime) {
+            await closePageForSingleLifetime(page, closeRuntime);
+          } else {
+            await page.close({ runBeforeUnload: false }).catch(() => undefined);
+          }
+        })
+        .catch(async () => {
+          await closeRuntime().catch(() => undefined);
+        });
     };
     context.on("page", closeLateUnownedPage);
     const restoredPageCount = await closeRestoredBrowserPages(context, {
@@ -124,11 +158,12 @@ export async function launchManagedChromeForTesting(
             pendingMarkers,
             preserveWindowNames,
             preservePage,
+            singlePageLifetime ? closeRuntime : undefined,
           );
           const recovered = [...preservedPages].find((candidate) => !candidate.isClosed());
           if (singlePageLifetime && recovered) {
             if (recovered !== page && !page.isClosed()) {
-              await page.close({ runBeforeUnload: false }).catch(() => undefined);
+              await closePageForSingleLifetime(page, closeRuntime);
             }
             return recovered;
           }
@@ -144,19 +179,7 @@ export async function launchManagedChromeForTesting(
         }
       },
       async close() {
-        if (closed) return;
-        if (closeAttempt) return closeAttempt;
-        const attempt = (async () => {
-          await closeOwnedBrowser(browser!, launcher, endpoint);
-          context.off("page", closeLateUnownedPage);
-          closed = true;
-        })();
-        closeAttempt = attempt;
-        try {
-          await attempt;
-        } finally {
-          if (closeAttempt === attempt) closeAttempt = undefined;
-        }
+        await closeRuntime();
       },
     };
   } catch (error) {
@@ -188,6 +211,7 @@ async function closeCurrentlyUnownedPages(
   pendingMarkers: ReadonlySet<string>,
   preserveWindowNames: ReadonlySet<string>,
   preservePage: (page: Page) => Promise<Page>,
+  abort?: () => Promise<void>,
 ): Promise<void> {
   const unowned = context
     .pages()
@@ -200,13 +224,31 @@ async function closeCurrentlyUnownedPages(
       if (page.isClosed()) {
         continue;
       }
+      if (abort) {
+        try {
+          await abort();
+        } catch (abortError) {
+          throw new AggregateError(
+            [error, abortError],
+            "Could not classify an extra attempt page or close its browser runtime",
+          );
+        }
+        throw new Error(
+          "Could not classify an extra attempt page; the browser runtime was closed fail-safe",
+          { cause: error },
+        );
+      }
       throw error;
     }
     if (preserveWindowNames.has(recoveryWindowName)) {
       await preservePage(page);
       continue;
     }
-    await page.close({ runBeforeUnload: false }).catch(() => undefined);
+    if (abort) {
+      await closePageForSingleLifetime(page, abort);
+    } else {
+      await page.close({ runBeforeUnload: false }).catch(() => undefined);
+    }
   }
 }
 
@@ -217,23 +259,46 @@ async function preserveManagedPage(
     preservedPages: Set<Page>;
     singlePageLifetime: boolean;
     ownPage: (page: Page) => void;
+    abort: () => Promise<void>;
   },
 ): Promise<Page> {
   const existing = [...input.preservedPages].find((candidate) => !candidate.isClosed());
   if (input.singlePageLifetime && existing && existing !== page) {
-    await page.close({ runBeforeUnload: false }).catch(() => undefined);
+    await closePageForSingleLifetime(page, input.abort);
     return existing;
   }
   input.ownPage(page);
   if (input.singlePageLifetime) {
     for (const owned of input.ownedPages) {
       if (owned !== page) {
-        await owned.close({ runBeforeUnload: false }).catch(() => undefined);
+        await closePageForSingleLifetime(owned, input.abort);
       }
     }
   }
   input.preservedPages.add(page);
   return page;
+}
+
+async function closePageForSingleLifetime(page: Page, abort: () => Promise<void>): Promise<void> {
+  try {
+    await page.close({ runBeforeUnload: false });
+    if (!page.isClosed()) {
+      throw new Error("page remained open after close completed");
+    }
+  } catch (error) {
+    try {
+      await abort();
+    } catch (abortError) {
+      throw new AggregateError(
+        [error, abortError],
+        "Could not close an alternate attempt page or its browser runtime",
+      );
+    }
+    throw new Error(
+      "Could not close an alternate attempt page; the browser runtime was closed fail-safe",
+      { cause: error },
+    );
+  }
 }
 
 async function launchOwnedBrowser(input: ManagedBrowserLaunchInput): Promise<LauncherHandle> {

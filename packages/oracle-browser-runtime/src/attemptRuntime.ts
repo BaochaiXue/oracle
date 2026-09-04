@@ -1,6 +1,10 @@
 import path from "node:path";
 import type { Page } from "playwright-core";
-import { readAttemptSandbox, writeAttemptProcessReceipt } from "./attemptSandbox.js";
+import {
+  readAttemptSandbox,
+  withAttemptProcessLaunchReservation,
+  writeAttemptProcessReceipt,
+} from "./attemptSandbox.js";
 import { inspectOracleBrowserRuntime } from "./discovery.js";
 import { launchManagedChromeForTesting } from "./managedBrowser.js";
 import { ORACLE_BROWSER_RUNTIME_ID } from "./types.js";
@@ -30,35 +34,42 @@ export async function launchAttemptBrowserRuntime(options: {
   if (inspection.availability !== "available" || !inspection.executablePath) {
     throw new Error(`Managed Chrome for Testing runtime is unavailable: ${inspection.reason}`);
   }
+  const executablePath = inspection.executablePath;
   const launch = options.launchManagedBrowser ?? launchManagedChromeForTesting;
-  let processReceipt: AttemptProcessReceipt | undefined;
-  const launched = await launch({
-    executablePath: inspection.executablePath,
-    profileDir: sandbox.profileDir,
-    headless: options.headless ?? false,
-    singlePageLifetime: true,
-    captureProcessIdentity: true,
-    ...(!options.launchManagedBrowser
-      ? {
-          onProcessIdentity: async (identity) => {
-            processReceipt = await writeAttemptProcessReceipt(sandbox, identity);
-          },
-        }
-      : {}),
-    ...(options.preserveWindowNames?.length
-      ? { preserveWindowNames: [...options.preserveWindowNames] }
-      : {}),
+  const launchResult = await withAttemptProcessLaunchReservation(sandbox, async () => {
+    let recordedProcessReceipt: AttemptProcessReceipt | undefined;
+    const active = await launch({
+      executablePath,
+      profileDir: sandbox.profileDir,
+      headless: options.headless ?? false,
+      singlePageLifetime: true,
+      captureProcessIdentity: true,
+      ...(!options.launchManagedBrowser
+        ? {
+            onProcessIdentity: async (identity) => {
+              recordedProcessReceipt = await writeAttemptProcessReceipt(sandbox, identity);
+            },
+          }
+        : {}),
+      ...(options.preserveWindowNames?.length
+        ? { preserveWindowNames: [...options.preserveWindowNames] }
+        : {}),
+    });
+    if (!active.processIdentity) {
+      await active.close().catch(() => undefined);
+      throw new Error("Attempt runtime launch did not return an exact process identity");
+    }
+    try {
+      const processReceipt =
+        recordedProcessReceipt ??
+        (await writeAttemptProcessReceipt(sandbox, active.processIdentity));
+      return { launched: active, processReceipt };
+    } catch (error) {
+      await active.close().catch(() => undefined);
+      throw error;
+    }
   });
-  if (!launched.processIdentity) {
-    await launched.close().catch(() => undefined);
-    throw new Error("Attempt runtime launch did not return an exact process identity");
-  }
-  try {
-    processReceipt ??= await writeAttemptProcessReceipt(sandbox, launched.processIdentity);
-  } catch (error) {
-    await launched.close().catch(() => undefined);
-    throw error;
-  }
+  const { launched, processReceipt } = launchResult;
   const receipt: RuntimeLaunchReceipt = {
     schemaVersion: "oracle.browser-runtime-launch.v2",
     runtimeId: ORACLE_BROWSER_RUNTIME_ID,

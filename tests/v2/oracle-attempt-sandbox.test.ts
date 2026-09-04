@@ -725,6 +725,90 @@ describe("Oracle disposable attempt sandboxes", () => {
     ).toBe("deleted");
   });
 
+  test("reserves process ownership before a concurrent browser launch", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_concurrent_process",
+      turnAttemptId: "attempt_concurrent_process",
+      purpose: "probe",
+    });
+    let launchStarted!: () => void;
+    let continueLaunch!: () => void;
+    const started = new Promise<void>((resolve) => (launchStarted = resolve));
+    const released = new Promise<void>((resolve) => (continueLaunch = resolve));
+    let launchCount = 0;
+    const launchManagedBrowser: LaunchManagedBrowser = async (input) => {
+      launchCount += 1;
+      launchStarted();
+      await released;
+      return {
+        context: { pages: () => [] } as unknown as BrowserContext,
+        browserVersion: "test-browser",
+        executablePath: input.executablePath,
+        restoredPageCount: 0,
+        preservedPages: () => [],
+        processIdentity: {
+          pid: 5555,
+          processStartTime: "Fri Sep 4 02:07:08 2026",
+          executableRealpath: input.executablePath,
+          profileRealpath: sandbox.profileDir,
+          debugHost: "127.0.0.1",
+          debugPort: 9977,
+        },
+        openPage: async () => fakeClosablePage().page,
+        close: async () => undefined,
+      };
+    };
+    const firstLaunch = launchAttemptBrowserRuntime({
+      sandboxDirectory: sandbox.directory,
+      headless: true,
+      inspection: {
+        chromeForTestingExecutablePath: "/runtime/chrome",
+        executableExists: () => true,
+      },
+      launchManagedBrowser,
+    });
+    await started;
+    const secondLaunches: Parameters<LaunchManagedBrowser>[0][] = [];
+    const secondError = await launchAttemptBrowserRuntime({
+      sandboxDirectory: sandbox.directory,
+      headless: true,
+      inspection: {
+        chromeForTestingExecutablePath: "/runtime/chrome",
+        executableExists: () => true,
+      },
+      launchManagedBrowser: async (input) => {
+        launchCount += 1;
+        return fakeAttemptLaunch(secondLaunches, sandbox.profileDir)(input);
+      },
+    }).catch((error: unknown) => error);
+    continueLaunch();
+    const runtime = await firstLaunch;
+    expect(secondError).toBeInstanceOf(Error);
+    expect((secondError as Error).message).toMatch(/process launch is already in progress/i);
+    expect(launchCount).toBe(1);
+    expect(secondLaunches).toEqual([]);
+    await runtime.close();
+    expect(
+      (
+        await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: sandbox.directory,
+          dependencies: {
+            observeProcess: noObservedProcess,
+            findProcessesUsingProfile: noProfileProcesses,
+          },
+        })
+      ).status,
+    ).toBe("deleted");
+  });
+
   test("rejects a concurrent page open before creating a second target", async () => {
     const runtimeRoot = temporaryRoot();
     const candidate = await createAuthSeedCandidate({
@@ -796,7 +880,7 @@ describe("Oracle disposable attempt sandboxes", () => {
       seed: candidate,
       jobId: "job_recovery_page",
       turnAttemptId: "attempt_recovery_page",
-      purpose: "commit-recovery",
+      purpose: "dispatch",
     });
     const recoveryPage = { isClosed: () => false } as unknown as Page;
     let alternateOpenCount = 0;
@@ -860,12 +944,39 @@ describe("Oracle disposable attempt sandboxes", () => {
       preservedPages,
       singlePageLifetime: true,
       ownPage: (page) => ownedPages.add(page),
+      abort: async () => undefined,
     });
     expect(selected).toBe(recovery.page);
     expect(ordinary.closed()).toBe(true);
     expect(recovery.closed()).toBe(false);
     expect([...ownedPages].filter((page) => !page.isClosed())).toEqual([recovery.page]);
     expect([...preservedPages]).toEqual([recovery.page]);
+  });
+
+  test("closes the browser runtime when an alternate page cannot close", async () => {
+    const recovery = fakeClosablePage();
+    const stubbornPage = {
+      isClosed: () => false,
+      close: async () => {
+        throw new Error("fixture close failure");
+      },
+    } as unknown as Page;
+    const ownedPages = new Set<Page>([stubbornPage]);
+    const preservedPages = new Set<Page>();
+    let abortCount = 0;
+    await expect(
+      managedBrowserTestHooks.preserveManagedPage(recovery.page, {
+        ownedPages,
+        preservedPages,
+        singlePageLifetime: true,
+        ownPage: (page) => ownedPages.add(page),
+        abort: async () => {
+          abortCount += 1;
+        },
+      }),
+    ).rejects.toThrow(/browser runtime was closed fail-safe/i);
+    expect(abortCount).toBe(1);
+    expect(preservedPages.size).toBe(0);
   });
 
   test("reattaches a late recovery page after the first open has resolved", async () => {
@@ -879,7 +990,7 @@ describe("Oracle disposable attempt sandboxes", () => {
       seed: candidate,
       jobId: "job_late_recovery_page",
       turnAttemptId: "attempt_late_recovery_page",
-      purpose: "commit-recovery",
+      purpose: "dispatch",
     });
     const ordinary = fakeClosablePage();
     const recovery = fakeClosablePage();

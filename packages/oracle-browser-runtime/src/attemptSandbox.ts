@@ -39,6 +39,15 @@ const ATTEMPTS_DIRECTORY = "attempts";
 const QUARANTINE_DIRECTORY = "quarantine";
 const OWNER_RECEIPT = "owner.json";
 const PROCESS_RECEIPT = "process.json";
+const PROCESS_LAUNCH_RESERVATION = "process-launch.json";
+
+interface AttemptProcessLaunchReservation {
+  schemaVersion: "oracle.attempt-process-launch.v1";
+  token: string;
+  jobId: string;
+  turnAttemptId: string;
+  createdAt: string;
+}
 
 export interface AttemptCleanupDependencies extends ProcessIdentityDependencies {
   findProcessesUsingProfile?: typeof findManagedBrowserProcessesUsingProfile;
@@ -88,9 +97,7 @@ export async function createAttemptSandbox(input: {
         if (process.platform !== "win32") await chmod(finalDirectory, 0o700);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-          throw new Error(
-            "This job, turn attempt, seed generation, and purpose already own an attempt sandbox",
-          );
+          throw new Error("This job, turn attempt, and purpose already own an attempt sandbox");
         }
         throw error;
       }
@@ -170,6 +177,40 @@ export async function writeAttemptProcessReceipt(
   };
   await writeExclusivePrivateJson(path.join(current.directory, PROCESS_RECEIPT), receipt);
   return receipt;
+}
+
+export async function withAttemptProcessLaunchReservation<T>(
+  sandbox: AttemptSandbox,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const current = await readAttemptSandbox(sandbox.directory);
+  if (!sameAttemptOwner(current.owner, sandbox.owner)) {
+    throw new Error("Attempt sandbox ownership changed before process launch reservation");
+  }
+  const reservationPath = path.join(current.directory, PROCESS_LAUNCH_RESERVATION);
+  const reservation: AttemptProcessLaunchReservation = {
+    schemaVersion: "oracle.attempt-process-launch.v1",
+    token: randomUUID(),
+    jobId: current.owner.jobId,
+    turnAttemptId: current.owner.turnAttemptId,
+    createdAt: new Date().toISOString(),
+  };
+  try {
+    await writeExclusivePrivateJson(reservationPath, reservation);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error("An attempt sandbox process launch is already in progress");
+    }
+    throw error;
+  }
+  try {
+    if (await readAttemptProcessReceipt(current.directory)) {
+      throw new Error("An attempt sandbox already owns a receipted browser process");
+    }
+    return await operation();
+  } finally {
+    await releaseAttemptProcessLaunchReservation(reservationPath, reservation.token);
+  }
 }
 
 export async function readAttemptProcessReceipt(
@@ -386,7 +427,7 @@ function isAttemptSandboxOwner(value: unknown): value is AttemptSandboxOwner {
     owner.schemaVersion === "oracle.attempt-sandbox-owner.v1" &&
     owner.jobId &&
     owner.turnAttemptId &&
-    ["dispatch", "capture", "commit-recovery", "probe"].includes(owner.purpose ?? "") &&
+    ["dispatch", "capture", "probe"].includes(owner.purpose ?? "") &&
     owner.seedGeneration &&
     owner.profileRealpath &&
     owner.createdAt,
@@ -476,6 +517,27 @@ async function readJson<T>(filePath: string): Promise<T | undefined> {
     throw error;
   });
   return raw === undefined ? undefined : (JSON.parse(raw) as T);
+}
+
+async function releaseAttemptProcessLaunchReservation(
+  reservationPath: string,
+  token: string,
+): Promise<void> {
+  const reservation = await readJson<AttemptProcessLaunchReservation>(reservationPath);
+  if (
+    reservation?.schemaVersion !== "oracle.attempt-process-launch.v1" ||
+    reservation.token !== token
+  ) {
+    return;
+  }
+  const releasedPath = `${reservationPath}.release-${token}`;
+  try {
+    await rename(reservationPath, releasedPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  await rm(releasedPath, { force: true });
 }
 
 async function pathExists(candidate: string): Promise<boolean> {

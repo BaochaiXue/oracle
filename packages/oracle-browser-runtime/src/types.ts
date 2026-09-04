@@ -50,7 +50,7 @@ export interface LaunchedManagedBrowser {
   close(): Promise<void>;
 }
 
-export type AttemptSandboxPurpose = "dispatch" | "capture" | "commit-recovery" | "probe";
+export type AttemptSandboxPurpose = "dispatch" | "capture" | "probe";
 
 export interface AuthSeedCandidateReceipt {
   schemaVersion: "oracle.auth-seed-candidate.v1";
