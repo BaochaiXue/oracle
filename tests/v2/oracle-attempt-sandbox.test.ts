@@ -28,6 +28,7 @@ import {
   cleanupAttemptSandbox,
   createAttemptSandbox,
   createAuthSeedCandidate,
+  discardAuthSeedCandidate,
   digestProfile,
   launchAttemptBrowserRuntime,
   listAttemptSandboxDirectories,
@@ -372,6 +373,72 @@ describe("Oracle disposable attempt sandboxes", () => {
         }),
       }),
     ).rejects.toThrow(/attempt sandboxes remain/i);
+  });
+
+  test("requires the promoted candidate to be the only candidate entry", async () => {
+    const runtimeRoot = temporaryRoot();
+    const sourceProfileDir = seedSource(runtimeRoot);
+    const retained = await createAuthSeedCandidate({ runtimeRoot, sourceProfileDir });
+    const promoted = await createAuthSeedCandidate({ runtimeRoot, sourceProfileDir });
+    const acceptPromoted = () =>
+      acceptAuthSeedCandidate({
+        runtimeRoot,
+        candidateRoot: path.dirname(promoted.profileRealpath),
+        cloneProof: passingCloneProof(promoted.candidateId, promoted.profileDigest, {
+          cloneA: "deleted-clone-a",
+          cloneB: "deleted-clone-b",
+        }),
+      });
+
+    await expect(acceptPromoted()).rejects.toThrow(/other candidate entries remain/i);
+    await discardAuthSeedCandidate({
+      runtimeRoot,
+      candidateRoot: path.dirname(retained.profileRealpath),
+      expectedCandidateId: retained.candidateId,
+    });
+    await expect(acceptPromoted()).resolves.toMatchObject({
+      schemaVersion: "oracle.auth-seed-certification.v1",
+    });
+    await expect(createAuthSeedCandidate({ runtimeRoot, sourceProfileDir })).rejects.toThrow(
+      /accepted auth seed already exists/i,
+    );
+  });
+
+  test("reclaims only a dead, receipted candidate staging clone before acceptance", async () => {
+    const runtimeRoot = temporaryRoot();
+    const sourceProfileDir = seedSource(runtimeRoot);
+    const promoted = await createAuthSeedCandidate({ runtimeRoot, sourceProfileDir });
+    const candidatesRoot = path.join(runtimeRoot, "auth-seed-candidates");
+    const candidateId = "interrupted-candidate";
+    const token = "dead-candidate-token";
+    const stagingRoot = path.join(candidatesRoot, `.${candidateId}.${token}.tmp`);
+    mkdirSync(path.join(stagingRoot, "profile"), { recursive: true });
+    writeFileSync(path.join(stagingRoot, "profile", "partial-auth-state"), "partial\n");
+    writeFileSync(
+      path.join(stagingRoot, "creation.json"),
+      `${JSON.stringify({
+        schemaVersion: "oracle.auth-seed-candidate-creation.v1",
+        candidateId,
+        token,
+        pid: 999_999,
+        processStartTime: "dead-process-start-time",
+        sourceProfileRealpath: realpathSync(sourceProfileDir),
+        stagingRoot: realpathSync(stagingRoot),
+        createdAt: new Date().toISOString(),
+      })}\n`,
+    );
+
+    await expect(
+      acceptAuthSeedCandidate({
+        runtimeRoot,
+        candidateRoot: path.dirname(promoted.profileRealpath),
+        cloneProof: passingCloneProof(promoted.candidateId, promoted.profileDigest, {
+          cloneA: "deleted-clone-a",
+          cloneB: "deleted-clone-b",
+        }),
+      }),
+    ).resolves.toMatchObject({ schemaVersion: "oracle.auth-seed-certification.v1" });
+    expect(existsSync(stagingRoot)).toBe(false);
   });
 
   test("atomically reserves one sandbox for each logical attempt purpose", async () => {
@@ -1333,6 +1400,47 @@ describe("Oracle disposable attempt sandboxes", () => {
     expect(abortCount).toBe(1);
     expect(first.closed()).toBe(false);
     expect(duplicate.closed()).toBe(false);
+  });
+
+  test("reserves the first recovery page before awaiting alternate-page closure", async () => {
+    let closeStarted!: () => void;
+    let releaseClose!: () => void;
+    const started = new Promise<void>((resolve) => (closeStarted = resolve));
+    const released = new Promise<void>((resolve) => (releaseClose = resolve));
+    let ordinaryClosed = false;
+    const ordinary = {
+      isClosed: () => ordinaryClosed,
+      close: async () => {
+        closeStarted();
+        await released;
+        ordinaryClosed = true;
+      },
+    } as unknown as Page;
+    const first = fakeClosablePage();
+    const duplicate = fakeClosablePage();
+    const ownedPages = new Set<Page>([ordinary]);
+    const preservedPages = new Set<Page>();
+    let abortCount = 0;
+    const input = {
+      ownedPages,
+      preservedPages,
+      singlePageLifetime: true,
+      ownPage: (page: Page) => ownedPages.add(page),
+      abort: async () => {
+        abortCount += 1;
+      },
+    };
+
+    const firstPreservation = managedBrowserTestHooks.preserveManagedPage(first.page, input);
+    await started;
+    await expect(
+      managedBrowserTestHooks.preserveManagedPage(duplicate.page, input),
+    ).rejects.toThrow(/multiple live preserved recovery pages.*closed fail-safe/i);
+    expect(abortCount).toBe(1);
+    expect([...preservedPages]).toEqual([first.page]);
+    releaseClose();
+    await expect(firstPreservation).resolves.toBe(first.page);
+    expect(ordinaryClosed).toBe(true);
   });
 
   test("closes the browser runtime when an alternate page cannot close", async () => {

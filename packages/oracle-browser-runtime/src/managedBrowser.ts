@@ -295,14 +295,19 @@ async function preserveManagedPage(
     );
   }
   input.ownPage(page);
-  if (input.singlePageLifetime) {
-    for (const owned of input.ownedPages) {
-      if (owned !== page) {
-        await closePageForSingleLifetime(owned, input.abort);
+  input.preservedPages.add(page);
+  try {
+    if (input.singlePageLifetime) {
+      for (const owned of input.ownedPages) {
+        if (owned !== page) {
+          await closePageForSingleLifetime(owned, input.abort);
+        }
       }
     }
+  } catch (error) {
+    input.preservedPages.delete(page);
+    throw error;
   }
-  input.preservedPages.add(page);
   return page;
 }
 

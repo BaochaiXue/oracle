@@ -32,6 +32,8 @@ const CANDIDATES_DIRECTORY = "auth-seed-candidates";
 const ATTEMPTS_DIRECTORY = "attempts";
 const RUN_DIRECTORY = "run";
 const LOCK_DIRECTORY = "auth-seed.lock";
+const CANDIDATE_SHELLS_DIRECTORY = "auth-seed-candidate-shells";
+const CANDIDATE_CREATION_RECEIPT = "creation.json";
 const LOCK_POLL_MS = 25;
 const execFileAsync = promisify(execFile);
 let currentProcessStartTime: Promise<string> | undefined;
@@ -42,6 +44,17 @@ interface AuthSeedLockOwner {
   pid: number;
   processStartTime: string;
   mode: "shared" | "exclusive";
+  createdAt: string;
+}
+
+interface AuthSeedCandidateCreationReceipt {
+  schemaVersion: "oracle.auth-seed-candidate-creation.v1";
+  candidateId: string;
+  token: string;
+  pid: number;
+  processStartTime: string;
+  sourceProfileRealpath: string;
+  stagingRoot: string;
   createdAt: string;
 }
 
@@ -112,15 +125,38 @@ export async function createAuthSeedCandidate(input: {
         throw new Error("Auth-seed source profile is not a directory");
       }
       await ensurePrivateDirectory(runtimeRoot);
+      if (await readAuthSeed(runtimeRoot)) {
+        throw new Error(
+          "An accepted auth seed already exists; refresh requires a later owner gate",
+        );
+      }
       const candidatesRoot = path.join(runtimeRoot, CANDIDATES_DIRECTORY);
       await ensurePrivateDirectory(candidatesRoot);
       const candidatesRealpath = await realpath(candidatesRoot);
+      await reclaimStaleCandidateStagingEntries(runtimeRoot, candidatesRealpath);
       const candidateId = randomUUID();
+      const token = randomUUID();
       const finalRoot = path.join(candidatesRealpath, candidateId);
       const finalProfile = path.join(finalRoot, "profile");
-      const stagingRoot = path.join(candidatesRealpath, `.${candidateId}.${randomUUID()}.tmp`);
+      const stagingRoot = path.join(candidatesRealpath, `.${candidateId}.${token}.tmp`);
       const stagingProfile = path.join(stagingRoot, "profile");
-      await ensurePrivateDirectory(stagingRoot);
+      const shellsRoot = path.join(runtimeRoot, RUN_DIRECTORY, CANDIDATE_SHELLS_DIRECTORY);
+      await ensurePrivateDirectory(shellsRoot);
+      const shellRoot = path.join(await realpath(shellsRoot), `${token}.tmp`);
+      const shellProfile = path.join(shellRoot, "profile");
+      await ensurePrivateDirectory(shellProfile);
+      const creation: AuthSeedCandidateCreationReceipt = {
+        schemaVersion: "oracle.auth-seed-candidate-creation.v1",
+        candidateId,
+        token,
+        pid: process.pid,
+        processStartTime: await getCurrentProcessStartTime(),
+        sourceProfileRealpath,
+        stagingRoot,
+        createdAt: new Date().toISOString(),
+      };
+      await writeImmutablePrivateJson(path.join(shellRoot, CANDIDATE_CREATION_RECEIPT), creation);
+      await rename(shellRoot, stagingRoot);
       let published = false;
       try {
         await (input.copyProfile ?? copyProfileDirectory)(sourceProfileRealpath, stagingProfile);
@@ -137,6 +173,7 @@ export async function createAuthSeedCandidate(input: {
         await writeImmutablePrivateJson(path.join(stagingRoot, "candidate.json"), receipt);
         await rename(stagingRoot, finalRoot);
         published = true;
+        await rm(path.join(finalRoot, CANDIDATE_CREATION_RECEIPT), { force: true });
         if ((await realpath(finalProfile)) !== finalProfile) {
           throw new Error("Auth-seed candidate profile did not resolve to its recorded path");
         }
@@ -213,6 +250,14 @@ export async function acceptAuthSeedCandidate(input: {
       }
       if ((await countAttemptEntries(runtimeRoot)) !== 0) {
         throw new Error("Auth-seed candidate cannot be accepted while attempt sandboxes remain");
+      }
+      const candidatesRoot = await realpath(path.join(runtimeRoot, CANDIDATES_DIRECTORY));
+      await reclaimStaleCandidateStagingEntries(runtimeRoot, candidatesRoot);
+      const candidateEntries = await readdir(candidatesRoot);
+      if (candidateEntries.length !== 1 || candidateEntries[0] !== candidate.candidateId) {
+        throw new Error(
+          "Auth-seed candidate cannot be accepted while other candidate entries remain",
+        );
       }
       const paths = authSeedPaths(runtimeRoot);
       if (await pathExists(paths.root)) {
@@ -328,6 +373,9 @@ export async function validateAuthSeedCloneSource(
       throw new Error("Accepted auth seed changed after certification");
     }
     return accepted;
+  }
+  if (accepted) {
+    throw new Error("Auth-seed candidates are not valid after a seed has been accepted");
   }
 
   const candidatesRoot = await realpath(path.join(resolvedRuntimeRoot, CANDIDATES_DIRECTORY)).catch(
@@ -604,13 +652,16 @@ function isProcessAlive(pid: number): boolean {
 }
 
 async function copyProfileDirectory(source: string, destination: string): Promise<void> {
-  await cp(source, destination, {
-    recursive: true,
-    force: false,
-    errorOnExist: true,
-    preserveTimestamps: true,
-    verbatimSymlinks: true,
-  });
+  const entries = await readdir(source);
+  for (const entry of entries) {
+    await cp(path.join(source, entry), path.join(destination, entry), {
+      recursive: true,
+      force: false,
+      errorOnExist: true,
+      preserveTimestamps: true,
+      verbatimSymlinks: true,
+    });
+  }
 }
 
 async function digestEntry(
@@ -730,6 +781,85 @@ async function countAttemptEntries(runtimeRoot: string): Promise<number> {
     throw error;
   });
   return entries.length;
+}
+
+async function reclaimStaleCandidateStagingEntries(
+  runtimeRoot: string,
+  candidatesRoot: string,
+): Promise<void> {
+  const runtimeRealpath = await realpath(runtimeRoot);
+  if (path.dirname(candidatesRoot) !== runtimeRealpath) {
+    throw new Error("Auth-seed candidates root is outside the exact runtime root");
+  }
+  const expectedSourceProfile = path.join(runtimeRealpath, "browser-profile");
+  const entries = await readdir(candidatesRoot, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.name.startsWith(".") || !entry.name.endsWith(".tmp")) continue;
+    const stagingRoot = path.join(candidatesRoot, entry.name);
+    const stagingEntry = await lstat(stagingRoot);
+    if (
+      !stagingEntry.isDirectory() ||
+      stagingEntry.isSymbolicLink() ||
+      (await realpath(stagingRoot)) !== stagingRoot
+    ) {
+      continue;
+    }
+    const creation = await readJson<AuthSeedCandidateCreationReceipt>(
+      path.join(stagingRoot, CANDIDATE_CREATION_RECEIPT),
+    );
+    if (
+      !isAuthSeedCandidateCreationReceipt(creation) ||
+      entry.name !== `.${creation.candidateId}.${creation.token}.tmp` ||
+      creation.stagingRoot !== stagingRoot ||
+      creation.sourceProfileRealpath !== expectedSourceProfile
+    ) {
+      continue;
+    }
+    const observedStartTime =
+      creation.pid === process.pid
+        ? await getCurrentProcessStartTime()
+        : await observeLocalProcessStartTime(creation.pid);
+    if (observedStartTime === creation.processStartTime) continue;
+    const confirmed = await readJson<AuthSeedCandidateCreationReceipt>(
+      path.join(stagingRoot, CANDIDATE_CREATION_RECEIPT),
+    );
+    if (
+      !isAuthSeedCandidateCreationReceipt(confirmed) ||
+      confirmed.token !== creation.token ||
+      confirmed.candidateId !== creation.candidateId
+    ) {
+      continue;
+    }
+    const staleRoot = path.join(
+      candidatesRoot,
+      `.${creation.candidateId}.${creation.token}.stale-${randomUUID()}`,
+    );
+    try {
+      await rename(stagingRoot, staleRoot);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    await rm(staleRoot, { recursive: true, force: true });
+  }
+}
+
+function isAuthSeedCandidateCreationReceipt(
+  value: unknown,
+): value is AuthSeedCandidateCreationReceipt {
+  const receipt = value as Partial<AuthSeedCandidateCreationReceipt> | undefined;
+  return Boolean(
+    receipt &&
+    receipt.schemaVersion === "oracle.auth-seed-candidate-creation.v1" &&
+    receipt.candidateId &&
+    receipt.token &&
+    Number.isSafeInteger(receipt.pid) &&
+    (receipt.pid ?? 0) > 0 &&
+    receipt.processStartTime &&
+    receipt.sourceProfileRealpath &&
+    receipt.stagingRoot &&
+    receipt.createdAt,
+  );
 }
 
 async function ensurePrivateDirectory(directory: string): Promise<void> {

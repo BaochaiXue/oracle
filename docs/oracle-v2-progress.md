@@ -419,6 +419,10 @@ Fresh T1 source-candidate and live-gate evidence:
   and a live process-lifecycle reservation before any authenticated seed state
   is copied; cleanup blocks while that exact creator is live and can reclaim a
   partial clone only after its PID/start-time identity is stale;
+- recovery-page preservation is reserved before any alternate-page close is
+  awaited, so concurrent marked-page handlers cannot cross-close both exact
+  recovery workspaces; a second live recovery page deterministically aborts the
+  whole single-page runtime as ambiguous;
 - the real proof now waits for DOM readiness plus five seconds of unchanged
   composer/attachment/recovery state before classifying a clone as initially
   clean. Candidate creation accepts only the exact fixed `browser-profile`
@@ -427,11 +431,14 @@ Fresh T1 source-candidate and live-gate evidence:
   reserves one deterministic directory per job/turn/purpose before copying
   regardless of seed generation, concurrent page opens are rejected before a
   second target can be created, and every attempt-root entry blocks seed
-  acceptance;
+  acceptance. Candidate creation likewise publishes a PID/start-time-owned
+  staging receipt before copying login state, reclaims only an exactly
+  receipted dead staging clone, requires the promoted candidate to be the sole
+  candidate entry, and rejects any later candidate once a seed is accepted;
 - process identity capture is opt-in for attempt runtimes only, so the current
   fixed-profile runtime and `CertifiedChatGptProvider` retain their pre-T1
   behavior. No provider dispatch integration or T2 runner change is present;
-- the focused suite passes thirty-five tests, including delayed restored-state
+- the focused suite passes thirty-eight tests, including delayed restored-state
   detection, exact migration-source enforcement, abandoned-staging refusal,
   cross-generation logical-attempt uniqueness, pre-launch process-slot and
   concurrent-open exclusion, cleanup-safe ownership before interrupted profile
@@ -443,6 +450,8 @@ Fresh T1 source-candidate and live-gate evidence:
   exact dead-owner lifecycle-lock recovery,
   reused-CDP-port refusal, restored-page reuse, pre-first-open and late recovery
   reattachment without a second alternate target, duplicate-recovery ambiguity,
+  concurrent recovery-page reservation, sole-candidate acceptance, dead
+  candidate-staging reclamation,
   alternate/failed-open close failure shutdown, and a real fixture browser that
   destroys dirty clone A, starts clone B clean, records zero Send, preserves the
   seed digest, and leaves zero attempt residue;
@@ -457,9 +466,9 @@ Fresh T1 source-candidate and live-gate evidence:
   either path. The fixed profile was not cleared, adopted, or overwritten;
 - `pnpm check`, `pnpm build`, `pnpm docs:check`, `pnpm public:check`,
   `pnpm test:packed-cli`, and `git diff --check` passed. `pnpm test` passed all
-  three partitions: process-serial had 77 passing and one skipped test,
+  three partitions: process-serial had 80 passing and one skipped test,
   browser-serial had 30 passing and one skipped test, and the parallel
-  partition had 2,054 passing and 32 skipped tests (2,161 passing and 34
+  partition had 2,054 passing and 32 skipped tests (2,164 passing and 34
   skipped across 197 files in total);
 - the real T1 gate is not certified. It requires one explicit fresh auth-seed
   login, then the same two-clone no-Send proof. Fixture success is not a
