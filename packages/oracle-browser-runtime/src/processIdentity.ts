@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import { promisify } from "node:util";
-import { chromium, type Browser } from "playwright-core";
+import CDP from "chrome-remote-interface";
+import type { Browser } from "playwright-core";
 import type { AttemptProcessReceipt, ManagedBrowserProcessIdentity } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -30,6 +31,25 @@ export interface ProcessInspectionDependencies {
     options: { maxBuffer: number },
   ) => Promise<{ stdout?: string | Buffer }>;
   processExists?: (pid: number) => Promise<boolean>;
+}
+
+export interface ManagedBrowserCdpClient {
+  SystemInfo: {
+    getProcessInfo(): Promise<{ processInfo: Array<{ type: string; id: number }> }>;
+  };
+  Browser: {
+    close(): Promise<void>;
+  };
+  close(): Promise<void>;
+}
+
+export interface CdpCloseDependencies {
+  readVersion?: (input: {
+    host: "127.0.0.1";
+    port: number;
+  }) => Promise<{ webSocketDebuggerUrl?: string }>;
+  connect?: (target: string) => Promise<ManagedBrowserCdpClient>;
+  observeProcess?: ProcessIdentityDependencies["observeProcess"];
 }
 
 export async function findManagedBrowserProcessesUsingProfile(
@@ -173,20 +193,40 @@ export function managedBrowserProcessMatchesReceipt(
   );
 }
 
-export async function closeManagedBrowserOverCdp(receipt: AttemptProcessReceipt): Promise<void> {
-  let browser: Browser | undefined;
+export async function closeManagedBrowserOverCdp(
+  receipt: AttemptProcessReceipt,
+  dependencies: CdpCloseDependencies = {},
+): Promise<void> {
+  const version = await (
+    dependencies.readVersion ??
+    (async (input) =>
+      (await CDP.Version(input)) as {
+        webSocketDebuggerUrl?: string;
+      })
+  )({ host: receipt.debugHost, port: receipt.debugPort });
+  if (!version.webSocketDebuggerUrl) {
+    throw new Error("Managed Chrome for Testing did not expose a browser WebSocket endpoint");
+  }
+  const client = await (
+    dependencies.connect ??
+    (async (target) => (await CDP({ target, local: true })) as unknown as ManagedBrowserCdpClient)
+  )(version.webSocketDebuggerUrl);
   try {
-    browser = await chromium.connectOverCDP(`http://${receipt.debugHost}:${receipt.debugPort}`, {
-      timeout: 2_000,
-    });
-    const session = await browser.newBrowserCDPSession();
-    try {
-      await session.send("Browser.close");
-    } finally {
-      await session.detach().catch(() => undefined);
+    const processInfo = await client.SystemInfo.getProcessInfo();
+    const browserProcess = processInfo.processInfo.find((entry) => entry.type === "browser");
+    if (!browserProcess || browserProcess.id !== receipt.pid) {
+      throw new Error("CDP endpoint browser PID does not match the attempt process receipt");
     }
+    const observed = await (dependencies.observeProcess ?? observeManagedBrowserProcess)(
+      browserProcess.id,
+      receipt.executableRealpath,
+    );
+    if (!observed || !managedBrowserProcessMatchesReceipt(observed, receipt)) {
+      throw new Error("CDP endpoint browser process identity does not match the attempt receipt");
+    }
+    await client.Browser.close();
   } finally {
-    await browser?.close().catch(() => undefined);
+    await client.close().catch(() => undefined);
   }
 }
 

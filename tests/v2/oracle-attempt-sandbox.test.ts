@@ -24,6 +24,7 @@ import {
 } from "../../packages/chatgpt-adapter/src/index.js";
 import {
   acceptAuthSeedCandidate,
+  closeManagedBrowserOverCdp,
   cleanupAttemptSandbox,
   createAttemptSandbox,
   createAuthSeedCandidate,
@@ -775,6 +776,16 @@ describe("Oracle disposable attempt sandboxes", () => {
       launchManagedBrowser,
     });
     await started;
+    const cleanupWhileLaunching = await cleanupAttemptSandbox({
+      runtimeRoot,
+      sandboxDirectory: sandbox.directory,
+      dependencies: { findProcessesUsingProfile: noProfileProcesses },
+    });
+    expect(cleanupWhileLaunching).toMatchObject({
+      status: "blocked",
+      processStatus: "identity-unproven",
+    });
+    expect(existsSync(sandbox.directory)).toBe(true);
     const secondLaunches: Parameters<LaunchManagedBrowser>[0][] = [];
     const secondError = await launchAttemptBrowserRuntime({
       sandboxDirectory: sandbox.directory,
@@ -807,6 +818,98 @@ describe("Oracle disposable attempt sandboxes", () => {
         })
       ).status,
     ).toBe("deleted");
+  });
+
+  test("revalidates endpoint PID and process start before CDP close", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_reused_cdp_port",
+      turnAttemptId: "attempt_reused_cdp_port",
+      purpose: "probe",
+    });
+    const receipt = await writeAttemptProcessReceipt(sandbox, {
+      pid: 5656,
+      processStartTime: "Fri Sep 4 02:08:09 2026",
+      executableRealpath: "/runtime/chrome",
+      profileRealpath: sandbox.profileDir,
+      debugHost: "127.0.0.1",
+      debugPort: 9988,
+    });
+    let processInfoCount = 0;
+    let browserCloseCount = 0;
+    let disconnectCount = 0;
+    await expect(
+      closeManagedBrowserOverCdp(receipt, {
+        readVersion: async () => ({
+          webSocketDebuggerUrl: "ws://127.0.0.1:9988/devtools/browser/reused",
+        }),
+        connect: async () => ({
+          SystemInfo: {
+            getProcessInfo: async () => {
+              processInfoCount += 1;
+              return { processInfo: [{ type: "browser", id: receipt.pid }] };
+            },
+          },
+          Browser: {
+            close: async () => {
+              browserCloseCount += 1;
+            },
+          },
+          close: async () => {
+            disconnectCount += 1;
+          },
+        }),
+        observeProcess: async () => ({
+          pid: receipt.pid,
+          processStartTime: "Fri Sep 4 03:08:09 2026",
+          executableRealpath: receipt.executableRealpath,
+          command: `${receipt.executableRealpath} --user-data-dir=${receipt.profileRealpath} --remote-debugging-port=${receipt.debugPort}`,
+        }),
+      }),
+    ).rejects.toThrow(/process identity does not match/i);
+    expect(processInfoCount).toBe(1);
+    expect(browserCloseCount).toBe(0);
+    expect(disconnectCount).toBe(1);
+  });
+
+  test("reclaims a process lifecycle reservation after its exact owner exits", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_dead_lifecycle_owner",
+      turnAttemptId: "attempt_dead_lifecycle_owner",
+      purpose: "probe",
+    });
+    writeFileSync(
+      path.join(sandbox.directory, "process-lifecycle.json"),
+      `${JSON.stringify({
+        schemaVersion: "oracle.attempt-process-lifecycle.v1",
+        token: "dead-lifecycle-owner",
+        jobId: sandbox.owner.jobId,
+        turnAttemptId: sandbox.owner.turnAttemptId,
+        pid: 999_999,
+        processStartTime: "dead-process-start-time",
+        createdAt: new Date().toISOString(),
+      })}\n`,
+    );
+    const cleanup = await cleanupAttemptSandbox({
+      runtimeRoot,
+      sandboxDirectory: sandbox.directory,
+      dependencies: { findProcessesUsingProfile: noProfileProcesses },
+    });
+    expect(cleanup).toMatchObject({ status: "deleted", processStatus: "none" });
+    expect(existsSync(sandbox.directory)).toBe(false);
   });
 
   test("rejects a concurrent page open before creating a second target", async () => {

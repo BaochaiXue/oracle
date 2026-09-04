@@ -15,6 +15,8 @@ import {
 import path from "node:path";
 import {
   authSeedCloneSourceGeneration,
+  getCurrentProcessStartTime,
+  observeLocalProcessStartTime,
   validateAuthSeedCloneSource,
   withAuthSeedCloneLock,
   type AuthSeedCloneSource,
@@ -39,13 +41,15 @@ const ATTEMPTS_DIRECTORY = "attempts";
 const QUARANTINE_DIRECTORY = "quarantine";
 const OWNER_RECEIPT = "owner.json";
 const PROCESS_RECEIPT = "process.json";
-const PROCESS_LAUNCH_RESERVATION = "process-launch.json";
+const PROCESS_LIFECYCLE_RESERVATION = "process-lifecycle.json";
 
-interface AttemptProcessLaunchReservation {
-  schemaVersion: "oracle.attempt-process-launch.v1";
+interface AttemptProcessLifecycleReservation {
+  schemaVersion: "oracle.attempt-process-lifecycle.v1";
   token: string;
   jobId: string;
   turnAttemptId: string;
+  pid: number;
+  processStartTime: string;
   createdAt: string;
 }
 
@@ -183,33 +187,53 @@ export async function withAttemptProcessLaunchReservation<T>(
   sandbox: AttemptSandbox,
   operation: () => Promise<T>,
 ): Promise<T> {
+  return withAttemptProcessLifecycleReservation(
+    sandbox,
+    async () => {
+      if (await readAttemptProcessReceipt(sandbox.directory)) {
+        throw new Error("An attempt sandbox already owns a receipted browser process");
+      }
+      return operation();
+    },
+    "An attempt sandbox process launch is already in progress",
+  );
+}
+
+async function withAttemptProcessLifecycleReservation<T>(
+  sandbox: AttemptSandbox,
+  operation: () => Promise<T>,
+  busyMessage = "An attempt sandbox process lifecycle operation is already in progress",
+): Promise<T> {
   const current = await readAttemptSandbox(sandbox.directory);
   if (!sameAttemptOwner(current.owner, sandbox.owner)) {
-    throw new Error("Attempt sandbox ownership changed before process launch reservation");
+    throw new Error("Attempt sandbox ownership changed before process lifecycle reservation");
   }
-  const reservationPath = path.join(current.directory, PROCESS_LAUNCH_RESERVATION);
-  const reservation: AttemptProcessLaunchReservation = {
-    schemaVersion: "oracle.attempt-process-launch.v1",
+  const reservationPath = path.join(current.directory, PROCESS_LIFECYCLE_RESERVATION);
+  const reservation: AttemptProcessLifecycleReservation = {
+    schemaVersion: "oracle.attempt-process-lifecycle.v1",
     token: randomUUID(),
     jobId: current.owner.jobId,
     turnAttemptId: current.owner.turnAttemptId,
+    pid: process.pid,
+    processStartTime: await getCurrentProcessStartTime(),
     createdAt: new Date().toISOString(),
   };
-  try {
-    await writeExclusivePrivateJson(reservationPath, reservation);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new Error("An attempt sandbox process launch is already in progress");
+  while (true) {
+    try {
+      await writeExclusivePrivateJson(reservationPath, reservation);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (await reclaimStaleAttemptProcessLifecycleReservation(reservationPath, current.owner)) {
+        continue;
+      }
+      throw new Error(busyMessage);
     }
-    throw error;
   }
   try {
-    if (await readAttemptProcessReceipt(current.directory)) {
-      throw new Error("An attempt sandbox already owns a receipted browser process");
-    }
     return await operation();
   } finally {
-    await releaseAttemptProcessLaunchReservation(reservationPath, reservation.token);
+    await releaseAttemptProcessLifecycleReservation(reservationPath, reservation.token);
   }
 }
 
@@ -270,62 +294,64 @@ export async function cleanupAttemptSandbox(input: {
         error: "Attempt cleanup owner marker does not match the expected owner",
       });
     }
-    const processReceipt = await readAttemptProcessReceipt(directoryRealpath);
-    let processStatus: AttemptSandboxCleanupReceipt["processStatus"] = "none";
-    if (processReceipt) {
-      if (
-        processReceipt.jobId !== sandbox.owner.jobId ||
-        processReceipt.turnAttemptId !== sandbox.owner.turnAttemptId ||
-        processReceipt.profileRealpath !== sandbox.profileDir
-      ) {
+    return await withAttemptProcessLifecycleReservation(sandbox, async () => {
+      const processReceipt = await readAttemptProcessReceipt(directoryRealpath);
+      let processStatus: AttemptSandboxCleanupReceipt["processStatus"] = "none";
+      if (processReceipt) {
+        if (
+          processReceipt.jobId !== sandbox.owner.jobId ||
+          processReceipt.turnAttemptId !== sandbox.owner.turnAttemptId ||
+          processReceipt.profileRealpath !== sandbox.profileDir
+        ) {
+          return completed("blocked", "identity-unproven", {
+            error: "Attempt process receipt does not match the immutable sandbox owner",
+          });
+        }
+        processStatus = await stopExactAttemptProcess(processReceipt, input.dependencies ?? {});
+        if (processStatus === "identity-unproven") {
+          return completed("blocked", processStatus, {
+            error: "Attempt process identity could not be proven; no signal or deletion was issued",
+          });
+        }
+      }
+      const profileProcesses = await (
+        input.dependencies?.findProcessesUsingProfile ?? findManagedBrowserProcessesUsingProfile
+      )(sandbox.profileDir);
+      if (profileProcesses.length > 0) {
         return completed("blocked", "identity-unproven", {
-          error: "Attempt process receipt does not match the immutable sandbox owner",
+          error: processReceipt
+            ? "A live process still uses the attempt profile after exact-process cleanup; no deletion was issued"
+            : "Attempt sandbox has no process receipt but a live process still uses its profile; no signal or deletion was issued",
         });
       }
-      processStatus = await stopExactAttemptProcess(processReceipt, input.dependencies ?? {});
-      if (processStatus === "identity-unproven") {
-        return completed("blocked", processStatus, {
-          error: "Attempt process identity could not be proven; no signal or deletion was issued",
-        });
+      if (processReceipt) {
+        await rm(path.join(directoryRealpath, PROCESS_RECEIPT), { force: true });
       }
-    }
-    const profileProcesses = await (
-      input.dependencies?.findProcessesUsingProfile ?? findManagedBrowserProcessesUsingProfile
-    )(sandbox.profileDir);
-    if (profileProcesses.length > 0) {
-      return completed("blocked", "identity-unproven", {
-        error: processReceipt
-          ? "A live process still uses the attempt profile after exact-process cleanup; no deletion was issued"
-          : "Attempt sandbox has no process receipt but a live process still uses its profile; no signal or deletion was issued",
-      });
-    }
-    if (processReceipt) {
-      await rm(path.join(directoryRealpath, PROCESS_RECEIPT), { force: true });
-    }
-    try {
-      await rm(directoryRealpath, { recursive: true, force: false });
-      return completed("deleted", processStatus);
-    } catch (error) {
-      const quarantineRoot = path.join(runtimeRoot, QUARANTINE_DIRECTORY);
-      await ensurePrivateDirectory(quarantineRoot);
-      const quarantinePath = path.join(
-        await realpath(quarantineRoot),
-        `${sandboxId}.${randomUUID()}`,
-      );
       try {
-        await rename(directoryRealpath, quarantinePath);
-        return completed("quarantined", processStatus, {
-          quarantinePath,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      } catch (quarantineError) {
-        return completed("blocked", processStatus, {
-          error: `Sandbox deletion and quarantine failed: ${
-            quarantineError instanceof Error ? quarantineError.message : String(quarantineError)
-          }`,
-        });
+        await rm(directoryRealpath, { recursive: true, force: false });
+        return completed("deleted", processStatus);
+      } catch (error) {
+        const quarantineRoot = path.join(runtimeRoot, QUARANTINE_DIRECTORY);
+        await ensurePrivateDirectory(quarantineRoot);
+        const quarantinePath = path.join(
+          await realpath(quarantineRoot),
+          `${sandboxId}.${randomUUID()}`,
+        );
+        try {
+          await rename(directoryRealpath, quarantinePath);
+          return completed("quarantined", processStatus, {
+            quarantinePath,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        } catch (quarantineError) {
+          return completed("blocked", processStatus, {
+            error: `Sandbox deletion and quarantine failed: ${
+              quarantineError instanceof Error ? quarantineError.message : String(quarantineError)
+            }`,
+          });
+        }
       }
-    }
+    });
   } catch (error) {
     return completed("blocked", "identity-unproven", {
       error: error instanceof Error ? error.message : String(error),
@@ -519,13 +545,13 @@ async function readJson<T>(filePath: string): Promise<T | undefined> {
   return raw === undefined ? undefined : (JSON.parse(raw) as T);
 }
 
-async function releaseAttemptProcessLaunchReservation(
+async function releaseAttemptProcessLifecycleReservation(
   reservationPath: string,
   token: string,
 ): Promise<void> {
-  const reservation = await readJson<AttemptProcessLaunchReservation>(reservationPath);
+  const reservation = await readJson<AttemptProcessLifecycleReservation>(reservationPath);
   if (
-    reservation?.schemaVersion !== "oracle.attempt-process-launch.v1" ||
+    reservation?.schemaVersion !== "oracle.attempt-process-lifecycle.v1" ||
     reservation.token !== token
   ) {
     return;
@@ -538,6 +564,52 @@ async function releaseAttemptProcessLaunchReservation(
     throw error;
   }
   await rm(releasedPath, { force: true });
+}
+
+async function reclaimStaleAttemptProcessLifecycleReservation(
+  reservationPath: string,
+  expectedOwner: AttemptSandboxOwner,
+): Promise<boolean> {
+  const reservation = await readJson<AttemptProcessLifecycleReservation>(reservationPath);
+  if (reservation === undefined) return true;
+  if (!isAttemptProcessLifecycleReservation(reservation)) return false;
+  if (
+    reservation.jobId !== expectedOwner.jobId ||
+    reservation.turnAttemptId !== expectedOwner.turnAttemptId
+  ) {
+    return false;
+  }
+  const observedStartTime =
+    reservation.pid === process.pid
+      ? await getCurrentProcessStartTime()
+      : await observeLocalProcessStartTime(reservation.pid);
+  if (observedStartTime === reservation.processStartTime) return false;
+  const stalePath = `${reservationPath}.stale-${reservation.token}-${randomUUID()}`;
+  try {
+    await rename(reservationPath, stalePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+  await rm(stalePath, { force: true });
+  return true;
+}
+
+function isAttemptProcessLifecycleReservation(
+  value: unknown,
+): value is AttemptProcessLifecycleReservation {
+  const reservation = value as Partial<AttemptProcessLifecycleReservation> | undefined;
+  return Boolean(
+    reservation &&
+    reservation.schemaVersion === "oracle.attempt-process-lifecycle.v1" &&
+    reservation.token &&
+    reservation.jobId &&
+    reservation.turnAttemptId &&
+    Number.isSafeInteger(reservation.pid) &&
+    (reservation.pid ?? 0) > 0 &&
+    reservation.processStartTime &&
+    reservation.createdAt,
+  );
 }
 
 async function pathExists(candidate: string): Promise<boolean> {

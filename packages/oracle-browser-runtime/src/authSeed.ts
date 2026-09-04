@@ -427,12 +427,11 @@ async function publishSeedLock(
   mode: AuthSeedLockOwner["mode"],
   token: string,
 ): Promise<() => Promise<void>> {
-  currentProcessStartTime ??= requireProcessStartTime(process.pid);
   const owner: AuthSeedLockOwner = {
     schemaVersion: "oracle.auth-seed-lock-owner.v2",
     token,
     pid: process.pid,
-    processStartTime: await currentProcessStartTime,
+    processStartTime: await getCurrentProcessStartTime(),
     mode,
     createdAt: new Date().toISOString(),
   };
@@ -472,7 +471,7 @@ async function reclaimDeadReaderLocks(readersRoot: string): Promise<void> {
 async function reclaimDeadSeedLock(lockPath: string): Promise<boolean> {
   const observation = await readSeedLockOwner(lockPath);
   if (observation.status === "valid") {
-    const observedStartTime = await observeProcessStartTime(observation.owner.pid);
+    const observedStartTime = await observeLocalProcessStartTime(observation.owner.pid);
     if (observedStartTime === observation.owner.processStartTime) return false;
   } else if (observation.status === "invalid") {
     return false;
@@ -517,14 +516,19 @@ async function readSeedLockOwner(lockPath: string): Promise<AuthSeedLockOwnerObs
 }
 
 async function requireProcessStartTime(pid: number): Promise<string> {
-  const processStartTime = await observeProcessStartTime(pid);
+  const processStartTime = await observeLocalProcessStartTime(pid);
   if (!processStartTime) {
     throw new Error(`Auth-seed lock owner process ${pid} exited before lock publication`);
   }
   return processStartTime;
 }
 
-async function observeProcessStartTime(pid: number): Promise<string | undefined> {
+export async function getCurrentProcessStartTime(): Promise<string> {
+  currentProcessStartTime ??= requireProcessStartTime(process.pid);
+  return currentProcessStartTime;
+}
+
+export async function observeLocalProcessStartTime(pid: number): Promise<string | undefined> {
   if (!isProcessAlive(pid)) return undefined;
   try {
     const { stdout } =
