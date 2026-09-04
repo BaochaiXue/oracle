@@ -20,7 +20,6 @@ export interface ProcessIdentityDependencies {
     executablePath: string,
   ) => Promise<ObservedManagedBrowserProcess | undefined>;
   closeOverCdp?: (receipt: AttemptProcessReceipt) => Promise<void>;
-  sendSignal?: (pid: number, signal: NodeJS.Signals) => void;
   wait?: (milliseconds: number) => Promise<void>;
 }
 

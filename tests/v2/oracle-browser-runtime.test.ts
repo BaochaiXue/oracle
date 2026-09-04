@@ -278,6 +278,7 @@ describe("Oracle v2 certified browser runtime", () => {
         } finally {
           await session.detach();
         }
+        await waitForRestoredPageCount(runtime, 3, 5_000);
         await waitForPageCount(runtime.context, 0, 5_000);
         expect(runtime.receipt.restoredPageCount).toBe(3);
 
@@ -381,6 +382,22 @@ async function waitForPageCount(
     if (Date.now() >= deadline) {
       throw new Error(
         `Expected ${expected} runtime pages, observed ${context.pages().filter((page) => !page.isClosed()).length}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function waitForRestoredPageCount(
+  runtime: Awaited<ReturnType<typeof launchOracleBrowserRuntime>>,
+  expected: number,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (runtime.receipt.restoredPageCount !== expected) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Expected ${expected} restored runtime pages, observed ${runtime.receipt.restoredPageCount}`,
       );
     }
     await new Promise((resolve) => setTimeout(resolve, 25));

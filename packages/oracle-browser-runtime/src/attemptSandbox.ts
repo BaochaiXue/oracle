@@ -72,8 +72,6 @@ export interface AttemptCleanupDependencies extends ProcessIdentityDependencies 
   findProcessesUsingProfile?: typeof findManagedBrowserProcessesUsingProfile;
   removeQuarantinedSandbox?: (quarantineDirectory: string) => Promise<void>;
   closeWaitMs?: number;
-  termWaitMs?: number;
-  killWaitMs?: number;
 }
 
 export async function createAttemptSandbox(input: {
@@ -355,7 +353,8 @@ export async function cleanupAttemptSandbox(input: {
         processStatus = await stopExactAttemptProcess(processReceipt, input.dependencies ?? {});
         if (processStatus === "identity-unproven") {
           return completed("blocked", processStatus, {
-            error: "Attempt process identity could not be proven; no signal or deletion was issued",
+            error:
+              "Attempt process identity or exit could not be proven; without a stable process handle no PID signal or deletion was issued",
           });
         }
       }
@@ -591,45 +590,10 @@ async function stopExactAttemptProcess(
   );
   if (afterClose === "stopped") return "stopped";
   if (afterClose === "identity-unproven") return afterClose;
-  if (!(await signalExactProcess(receipt, "SIGTERM", observe, dependencies))) {
-    return "identity-unproven";
-  }
-  const afterTerm = await waitForOriginalProcessExit(
-    receipt,
-    observe,
-    dependencies.wait,
-    dependencies.termWaitMs ?? 3_000,
-  );
-  if (afterTerm === "stopped") return "stopped";
-  if (afterTerm === "identity-unproven") return afterTerm;
-  if (!(await signalExactProcess(receipt, "SIGKILL", observe, dependencies))) {
-    return "identity-unproven";
-  }
-  const afterKill = await waitForOriginalProcessExit(
-    receipt,
-    observe,
-    dependencies.wait,
-    dependencies.killWaitMs ?? 2_000,
-  );
-  return afterKill === "stopped" ? "stopped" : "identity-unproven";
-}
-
-async function signalExactProcess(
-  receipt: AttemptProcessReceipt,
-  signal: NodeJS.Signals,
-  observe: NonNullable<ProcessIdentityDependencies["observeProcess"]>,
-  dependencies: AttemptCleanupDependencies,
-): Promise<boolean> {
-  const current = await observe(receipt.pid, receipt.executableRealpath);
-  if (!current || current.processStartTime !== receipt.processStartTime) return true;
-  if (!managedBrowserProcessMatchesReceipt(current, receipt)) return false;
-  try {
-    (dependencies.sendSignal ?? process.kill)(receipt.pid, signal);
-    return true;
-  } catch {
-    const afterSignalError = await observe(receipt.pid, receipt.executableRealpath);
-    return !afterSignalError || afterSignalError.processStartTime !== receipt.processStartTime;
-  }
+  // A persisted PID can be recycled after any observation. Cross-process
+  // cleanup has no stable process handle, so it must retain the sandbox rather
+  // than signal through that racy identifier.
+  return "identity-unproven";
 }
 
 async function waitForOriginalProcessExit(

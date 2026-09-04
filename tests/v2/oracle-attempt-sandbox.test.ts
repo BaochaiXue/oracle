@@ -12,7 +12,7 @@ import {
 import { cp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { BrowserContext, Page } from "playwright-core";
 import { OracleProviderFixture } from "../../apps/oracle-provider-fixture/src/index.js";
 import {
@@ -781,7 +781,7 @@ describe("Oracle disposable attempt sandboxes", () => {
       debugHost: "127.0.0.1",
       debugPort: 9444,
     });
-    let signalCount = 0;
+    let closeCount = 0;
     const wrongProcess: ObservedManagedBrowserProcess = {
       pid: processReceipt.pid,
       processStartTime: processReceipt.processStartTime,
@@ -795,16 +795,13 @@ describe("Oracle disposable attempt sandboxes", () => {
       dependencies: {
         observeProcess: async () => wrongProcess,
         closeOverCdp: async () => {
-          throw new Error("must not close");
-        },
-        sendSignal: () => {
-          signalCount += 1;
+          closeCount += 1;
         },
       },
     });
     expect(cleanup.status).toBe("blocked");
     expect(cleanup.processStatus).toBe("identity-unproven");
-    expect(signalCount).toBe(0);
+    expect(closeCount).toBe(0);
     expect(existsSync(sandbox.directory)).toBe(true);
   });
 
@@ -829,16 +826,12 @@ describe("Oracle disposable attempt sandboxes", () => {
       debugHost: "127.0.0.1",
       debugPort: 9655,
     });
-    let signalCount = 0;
     const cleanup = await cleanupAttemptSandbox({
       runtimeRoot,
       sandboxDirectory: sandbox.directory,
       dependencies: {
         observeProcess: async () => {
           throw new Error("injected process inspection failure");
-        },
-        sendSignal: () => {
-          signalCount += 1;
         },
       },
     });
@@ -847,7 +840,6 @@ describe("Oracle disposable attempt sandboxes", () => {
       processStatus: "identity-unproven",
     });
     expect(cleanup.error).toMatch(/process inspection failure/i);
-    expect(signalCount).toBe(0);
     expect(existsSync(sandbox.directory)).toBe(true);
   });
 
@@ -939,7 +931,7 @@ describe("Oracle disposable attempt sandboxes", () => {
     expect(existsSync(sandbox.directory)).toBe(false);
   });
 
-  test("rechecks exact process exit when a signal loses the exit race", async () => {
+  test("never signals a bare PID when verified CDP close does not stop the process", async () => {
     const runtimeRoot = temporaryRoot();
     const candidate = await createAuthSeedCandidate({
       runtimeRoot,
@@ -948,8 +940,8 @@ describe("Oracle disposable attempt sandboxes", () => {
     const sandbox = await createAttemptSandbox({
       runtimeRoot,
       seed: candidate,
-      jobId: "job_signal_exit_race",
-      turnAttemptId: "attempt_signal_exit_race",
+      jobId: "job_stuck_after_cdp_close",
+      turnAttemptId: "attempt_stuck_after_cdp_close",
       purpose: "probe",
     });
     const processReceipt = await writeAttemptProcessReceipt(sandbox, {
@@ -961,33 +953,39 @@ describe("Oracle disposable attempt sandboxes", () => {
       debugPort: 9755,
     });
     let running = true;
-    let signalCount = 0;
     const exactProcess: ObservedManagedBrowserProcess = {
       pid: processReceipt.pid,
       processStartTime: processReceipt.processStartTime,
       command: `/runtime/chrome --user-data-dir=${sandbox.profileDir} --remote-debugging-port=9755`,
       executableRealpath: "/runtime/chrome",
     };
-    const cleanup = await cleanupAttemptSandbox({
-      runtimeRoot,
-      sandboxDirectory: sandbox.directory,
-      expectedOwner: sandbox.owner,
-      dependencies: {
-        observeProcess: async () => (running ? exactProcess : undefined),
-        closeOverCdp: async () => undefined,
-        sendSignal: () => {
-          signalCount += 1;
-          running = false;
-          throw Object.assign(new Error("process exited before signal"), { code: "ESRCH" });
-        },
-        wait: async () => undefined,
-        closeWaitMs: 0,
-        findProcessesUsingProfile: noProfileProcesses,
-      },
+    const signalSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      running = false;
+      return true;
     });
-    expect(cleanup).toMatchObject({ status: "deleted", processStatus: "stopped" });
-    expect(signalCount).toBe(1);
-    expect(existsSync(sandbox.directory)).toBe(false);
+    try {
+      const cleanup = await cleanupAttemptSandbox({
+        runtimeRoot,
+        sandboxDirectory: sandbox.directory,
+        expectedOwner: sandbox.owner,
+        dependencies: {
+          observeProcess: async () => (running ? exactProcess : undefined),
+          closeOverCdp: async () => undefined,
+          wait: async () => undefined,
+          closeWaitMs: 0,
+          findProcessesUsingProfile: noProfileProcesses,
+        },
+      });
+      expect(cleanup).toMatchObject({
+        status: "blocked",
+        processStatus: "identity-unproven",
+      });
+      expect(cleanup.error).toMatch(/stable process handle/i);
+      expect(signalSpy).not.toHaveBeenCalled();
+      expect(existsSync(sandbox.directory)).toBe(true);
+    } finally {
+      signalSpy.mockRestore();
+    }
   });
 
   test("resumes receipt-bound sandbox quarantine deletion after an interrupted cleanup", async () => {

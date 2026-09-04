@@ -391,8 +391,11 @@ Fresh T1 source-candidate and live-gate evidence:
 
 - `packages/oracle-browser-runtime` now models accepted/candidate auth seeds,
   shared clone versus exclusive refresh locking, receipt-validated atomic
-  clones, immutable owner/process identity, exact CDP/TERM/KILL cleanup, and a
-  one-page attempt runtime. The accepted seed cannot be launched as a job
+  clones, immutable owner/process identity, exact CDP close plus post-close exit
+  proof, and a one-page attempt runtime. Cross-process cleanup never signals a
+  persisted bare PID because observation cannot close the PID-reuse race; a
+  process that survives exact CDP close blocks deletion and retains its sandbox.
+  The accepted seed cannot be launched as a job
   profile, arbitrary directories cannot impersonate a seed, and no sandbox
   copyback exists;
 - PR review hardening atomically publishes each clone/refresh lock as a
@@ -461,7 +464,7 @@ Fresh T1 source-candidate and live-gate evidence:
   cloning, immutable receipt rejection, dead-lock and PID-reuse recovery,
   exact-process mismatch,
   bounded retryable Windows process-start inspection, process-inspection
-  fail-closed behavior, signal-versus-exit recovery, missing
+  fail-closed behavior, stuck-after-CDP-close no-signal retention, missing
   receipt/live-process refusal,
   launch-versus-cleanup exclusion, launch-finalization-versus-cleanup exclusion,
   token-conditional auth/lifecycle stale-lock recovery under a live winner,

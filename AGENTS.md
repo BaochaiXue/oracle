@@ -101,7 +101,10 @@ or maintainer-only release instructions.
 - Completion, failed-unsent, ambiguity, and owner closure all end with exact
   sandbox process/profile cleanup. Cleanup and GC use durable job state, the
   immutable sandbox owner marker, and exact process identity only; composer DOM
-  is never cleanup authority.
+  is never cleanup authority. A persisted PID is never a stable process handle:
+  cross-process cleanup may request `Browser.close` only through the exact
+  receipt-validated CDP connection, and must retain the sandbox if that process
+  does not exit rather than signal the bare PID.
 - Do not create durable draft/tab/target/page/PID/port/profile/sandbox states,
   profile-wide draft leases, digest adoption, orphan reclaim, sentinel holds,
   or cross-sandbox lineage. One job-local browser/cleanup/ambiguity failure
