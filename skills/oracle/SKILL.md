@@ -241,31 +241,37 @@ model reads commit history, issues, pull requests, and the files you chose not
 to attach. Dispatching without it wastes the strongest context channel Oracle
 has. The only exemption is a project with no GitHub remote at all.
 
-Name the project by its full GitHub identity, never by the local folder name
-alone. A checkout in `~/bit` whose remote is `git@github.com:BaochaiXue/bit.git`
-must be introduced to ChatGPT as `BaochaiXue/bit`. A bare `bit` is not an
-identity: GitHub holds many repositories with that name, and the connector needs
-the owner to open the right one. When the folder was renamed or cloned under a
-different name, the remote still decides.
+Name the project by its full GitHub identity, never by the local folder name or
+absolute checkout path. A local path is execution context, not a repository
+identity. GitHub requires the exact `owner/repository` slug; when a checkout was
+renamed or cloned under another directory, Git metadata still decides.
 
-Resolve the identity from Git metadata before writing the prompt:
+Resolve the identity with the bundled script before writing the prompt. The
+path below is relative to this `SKILL.md`; do not reimplement it with ad hoc
+`sed`, URL printing, or the checkout basename:
 
 ```bash
-git -C <repo> rev-parse --abbrev-ref HEAD                         # current branch
-git -C <repo> rev-parse --abbrev-ref --symbolic-full-name '@{u}'  # tracked remote
-git -C <repo> remote                                              # remote names only
-git -C <repo> remote get-url <name> \
-  | sed -E 's#^.*github\.com[:/]([^/]+/[^/]+?)(\.git)?$#\1#'     # emits owner/repo only
-git -C <repo> rev-parse --short HEAD                              # commit
-git -C <repo> status --porcelain                                  # dirty state
+bash "<oracle-skill-dir>/scripts/resolve-github-context.sh" <repo>
 ```
 
-Never print the raw remote URL (`git remote -v`, bare `git remote get-url`):
-an HTTPS remote can carry an embedded token, and anything printed lands in the
-agent transcript before any later sanitizing. The `sed` above reduces the URL to
-the bare `owner/repository` slug without echoing it; `git@github.com:BaochaiXue/oracle.git`
-becomes `BaochaiXue/oracle`. If the pattern does not match, the remote is not
-GitHub: omit the block.
+It outputs only sanitized fields:
+
+```text
+repository=OWNER/REPOSITORY
+branch=BRANCH
+commit=FULL_COMMIT
+dirty=false
+selected_remote=origin
+github_remote.origin=OWNER/REPOSITORY
+```
+
+Never print the raw remote URL (`git remote -v`, bare `git remote get-url`): an
+HTTPS remote can carry an embedded token, and anything printed lands in the
+agent transcript before later sanitizing. The resolver accepts standard GitHub
+SSH and HTTPS forms, strips credentials and the terminal `.git`, prefers the
+fork `origin`, and reports other sanitized GitHub remotes by role. Exit code 2
+means that it could not establish one GitHub identity; omit the connector block
+instead of guessing.
 
 Then decide:
 
@@ -278,8 +284,10 @@ Then decide:
   name.
 
 Never place a raw remote URL, embedded credentials, access token, or private
-machine path in the prompt. Include the sanitized `owner/repository` slug, the
-branch, and the commit: the connector reads the default branch unless told
+machine path in the prompt. The project briefing may mention a relative source
+path after the repository identity, but an absolute checkout path must never be
+presented as the GitHub project. Include the sanitized `owner/repository` slug,
+the branch, and the commit: the connector reads the default branch unless told
 otherwise, so an unnamed feature branch makes the model review the wrong code.
 Before dispatch, add this block with the placeholders replaced:
 
@@ -296,7 +304,12 @@ from the prompt and attached files. Treat the attached files and stated local
 commit or dirty diff as authoritative wherever they differ from GitHub.
 ```
 
-Verify all four before pressing Send:
+If the resolver succeeds, the final assembled prompt MUST contain the literal
+`GitHub repository context:` heading and the exact reported repository, branch,
+and commit. A missing or mismatched field stops the run before Send; mentioning
+only a local directory does not satisfy the gate.
+
+Verify all five before pressing Send:
 
 1. The slug came from Git metadata, not from the directory name.
 2. The slug carries no URL, credential, token, or local path.
@@ -304,6 +317,8 @@ Verify all four before pressing Send:
 4. The branch is named, and the commit and dirty state are stated when they
    affect the answer. Unpushed commits are invisible to the connector: push
    first, or attach the files that carry the unpushed change.
+5. The prompt does not substitute an absolute checkout path for the GitHub
+   project identity.
 
 The connector supplies remote background; it does not replace the minimal
 attachments needed to establish unpushed, dirty, generated, or otherwise

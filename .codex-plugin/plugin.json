@@ -1,0 +1,22 @@
+{
+  "name": "oracle",
+  "version": "0.17.2+codex.20260904171755",
+  "description": "Evidence-driven GPT-5.6 Pro review with repository context and recoverable conversations.",
+  "author": {
+    "name": "Oracle fork maintainers"
+  },
+  "license": "MIT",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Oracle",
+    "shortDescription": "Debate code and designs with GPT-5.6 Pro",
+    "longDescription": "Review difficult code and research decisions with GPT-5.6 Pro, explicit repository provenance, evidence-based rebuttals, and recoverable same-conversation follow-ups.",
+    "developerName": "Oracle fork maintainers",
+    "category": "Developer Tools",
+    "capabilities": ["Code review", "Repository context", "Browser automation"],
+    "defaultPrompt": [
+      "Review this implementation and challenge weak assumptions.",
+      "Continue the existing Oracle debate with new evidence."
+    ]
+  }
+}

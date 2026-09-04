@@ -43,12 +43,16 @@ describe("canonical Oracle skill contract", () => {
       "This repository identity comes from Git metadata, not the local directory name.",
     );
     expect(skill).not.toContain("git -C <repo> remote -v");
-    expect(skill).toContain("emits owner/repo only");
+    expect(skill).toContain("scripts/resolve-github-context.sh");
+    expect(skill).toContain("repository=OWNER/REPOSITORY");
+    expect(skill).toContain("strips credentials and the terminal `.git`");
+    expect(skill).not.toContain("[^/]+?");
     expect(skill).toContain("The only exemption is a project with no GitHub remote at all.");
     // Branch and commit travel with the slug; the connector otherwise reads the default branch.
     expect(skill).toContain("`OWNER/REPOSITORY` on branch `BRANCH` at commit `COMMIT`");
-    expect(skill).toContain("git -C <repo> rev-parse --abbrev-ref HEAD");
+    expect(skill).toContain("A local path is execution context, not a repository identity.");
     expect(skill).toContain("Read that branch, not the default branch, wherever they differ.");
+    expect(skill).toContain("A missing or mismatched field stops the run before Send");
     expect(skill).toContain(
       "Never place a raw remote URL, embedded credentials, access token, or private",
     );
