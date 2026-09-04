@@ -466,7 +466,8 @@ async function signalExactProcess(
     (dependencies.sendSignal ?? process.kill)(receipt.pid, signal);
     return true;
   } catch {
-    return false;
+    const afterSignalError = await observe(receipt.pid, receipt.executableRealpath);
+    return !afterSignalError || afterSignalError.processStartTime !== receipt.processStartTime;
   }
 }
 

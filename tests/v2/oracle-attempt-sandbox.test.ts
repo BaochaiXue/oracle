@@ -441,6 +441,44 @@ describe("Oracle disposable attempt sandboxes", () => {
     expect(existsSync(stagingRoot)).toBe(false);
   });
 
+  test("resumes deletion of a dead candidate already moved to stale quarantine", async () => {
+    const runtimeRoot = temporaryRoot();
+    const sourceProfileDir = seedSource(runtimeRoot);
+    const promoted = await createAuthSeedCandidate({ runtimeRoot, sourceProfileDir });
+    const candidatesRoot = path.join(runtimeRoot, "auth-seed-candidates");
+    const candidateId = "interrupted-candidate";
+    const token = "dead-candidate-token";
+    const stagingRoot = path.join(candidatesRoot, `.${candidateId}.${token}.tmp`);
+    const staleRoot = `${stagingRoot}.stale-interrupted-cleanup`;
+    mkdirSync(path.join(staleRoot, "profile"), { recursive: true });
+    writeFileSync(path.join(staleRoot, "profile", "partial-auth-state"), "partial\n");
+    writeFileSync(
+      path.join(staleRoot, "creation.json"),
+      `${JSON.stringify({
+        schemaVersion: "oracle.auth-seed-candidate-creation.v1",
+        candidateId,
+        token,
+        pid: 999_999,
+        processStartTime: "dead-process-start-time",
+        sourceProfileRealpath: realpathSync(sourceProfileDir),
+        stagingRoot,
+        createdAt: new Date().toISOString(),
+      })}\n`,
+    );
+
+    await expect(
+      acceptAuthSeedCandidate({
+        runtimeRoot,
+        candidateRoot: path.dirname(promoted.profileRealpath),
+        cloneProof: passingCloneProof(promoted.candidateId, promoted.profileDigest, {
+          cloneA: "deleted-clone-a",
+          cloneB: "deleted-clone-b",
+        }),
+      }),
+    ).resolves.toMatchObject({ schemaVersion: "oracle.auth-seed-certification.v1" });
+    expect(existsSync(staleRoot)).toBe(false);
+  });
+
   test("atomically reserves one sandbox for each logical attempt purpose", async () => {
     const runtimeRoot = temporaryRoot();
     const candidate = await createAuthSeedCandidate({
@@ -812,6 +850,57 @@ describe("Oracle disposable attempt sandboxes", () => {
     });
     expect(cleanup).toMatchObject({ status: "deleted", processStatus: "stopped" });
     expect(closeCount).toBe(1);
+    expect(existsSync(sandbox.directory)).toBe(false);
+  });
+
+  test("rechecks exact process exit when a signal loses the exit race", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_signal_exit_race",
+      turnAttemptId: "attempt_signal_exit_race",
+      purpose: "probe",
+    });
+    const processReceipt = await writeAttemptProcessReceipt(sandbox, {
+      pid: 4646,
+      processStartTime: "Fri Sep 4 01:06:07 2026",
+      executableRealpath: "/runtime/chrome",
+      profileRealpath: sandbox.profileDir,
+      debugHost: "127.0.0.1",
+      debugPort: 9755,
+    });
+    let running = true;
+    let signalCount = 0;
+    const exactProcess: ObservedManagedBrowserProcess = {
+      pid: processReceipt.pid,
+      processStartTime: processReceipt.processStartTime,
+      command: `/runtime/chrome --user-data-dir=${sandbox.profileDir} --remote-debugging-port=9755`,
+      executableRealpath: "/runtime/chrome",
+    };
+    const cleanup = await cleanupAttemptSandbox({
+      runtimeRoot,
+      sandboxDirectory: sandbox.directory,
+      expectedOwner: sandbox.owner,
+      dependencies: {
+        observeProcess: async () => (running ? exactProcess : undefined),
+        closeOverCdp: async () => undefined,
+        sendSignal: () => {
+          signalCount += 1;
+          running = false;
+          throw Object.assign(new Error("process exited before signal"), { code: "ESRCH" });
+        },
+        wait: async () => undefined,
+        closeWaitMs: 0,
+        findProcessesUsingProfile: noProfileProcesses,
+      },
+    });
+    expect(cleanup).toMatchObject({ status: "deleted", processStatus: "stopped" });
+    expect(signalCount).toBe(1);
     expect(existsSync(sandbox.directory)).toBe(false);
   });
 

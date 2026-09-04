@@ -13,6 +13,7 @@ import {
   readdir,
   rename,
   rm,
+  rmdir,
   stat,
   writeFile,
 } from "node:fs/promises";
@@ -795,32 +796,60 @@ async function reclaimStaleCandidateStagingEntries(
   const expectedSourceProfile = await realpath(path.join(runtimeRealpath, "browser-profile"));
   const entries = await readdir(candidatesRoot, { withFileTypes: true });
   for (const entry of entries) {
-    if (!entry.name.startsWith(".") || !entry.name.endsWith(".tmp")) continue;
-    const stagingRoot = path.join(candidatesRoot, entry.name);
-    const stagingEntry = await lstat(stagingRoot);
-    const stagingRealpath = await realpath(stagingRoot);
+    if (
+      !entry.name.startsWith(".") ||
+      (!entry.name.endsWith(".tmp") && !entry.name.includes(".stale-"))
+    ) {
+      continue;
+    }
+    const candidateWorkRoot = path.join(candidatesRoot, entry.name);
+    const stagingEntry = await lstat(candidateWorkRoot);
+    const candidateWorkRealpath = await realpath(candidateWorkRoot);
     if (
       !stagingEntry.isDirectory() ||
       stagingEntry.isSymbolicLink() ||
-      path.dirname(stagingRealpath) !== candidatesRoot
+      path.dirname(candidateWorkRealpath) !== candidatesRoot
     ) {
       continue;
     }
     const creation = await readJson<AuthSeedCandidateCreationReceipt>(
-      path.join(stagingRoot, CANDIDATE_CREATION_RECEIPT),
+      path.join(candidateWorkRoot, CANDIDATE_CREATION_RECEIPT),
     );
-    const recordedStagingRealpath = creation?.stagingRoot
-      ? await realpath(creation.stagingRoot).catch(() => undefined)
+    if (!creation) {
+      if (entry.name.includes(".stale-") && (await readdir(candidateWorkRoot)).length === 0) {
+        await rmdir(candidateWorkRoot).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT" && error.code !== "ENOTEMPTY") throw error;
+        });
+      }
+      continue;
+    }
+    if (!isAuthSeedCandidateCreationReceipt(creation)) continue;
+    const expectedStagingName = `.${creation.candidateId}.${creation.token}.tmp`;
+    const expectedStalePrefix = `${expectedStagingName}.stale-`;
+    const isPublishedStaging = entry.name === expectedStagingName;
+    const isStaleQuarantine =
+      entry.name.startsWith(expectedStalePrefix) && entry.name.length > expectedStalePrefix.length;
+    const recordedStagingParent = creation.stagingRoot
+      ? await realpath(path.dirname(creation.stagingRoot)).catch(() => undefined)
       : undefined;
     const recordedSourceRealpath = creation?.sourceProfileRealpath
       ? await realpath(creation.sourceProfileRealpath).catch(() => undefined)
       : undefined;
     if (
-      !isAuthSeedCandidateCreationReceipt(creation) ||
-      entry.name !== `.${creation.candidateId}.${creation.token}.tmp` ||
-      recordedStagingRealpath !== stagingRealpath ||
+      (!isPublishedStaging && !isStaleQuarantine) ||
+      path.basename(creation.stagingRoot) !== expectedStagingName ||
+      recordedStagingParent !== candidatesRoot ||
       recordedSourceRealpath !== expectedSourceProfile
     ) {
+      continue;
+    }
+    if (
+      isPublishedStaging &&
+      (await realpath(creation.stagingRoot).catch(() => undefined)) !== candidateWorkRealpath
+    ) {
+      continue;
+    }
+    if (isStaleQuarantine && (await pathExists(path.join(candidatesRoot, expectedStagingName)))) {
       continue;
     }
     const observedStartTime =
@@ -829,27 +858,58 @@ async function reclaimStaleCandidateStagingEntries(
         : await observeLocalProcessStartTime(creation.pid);
     if (observedStartTime === creation.processStartTime) continue;
     const confirmed = await readJson<AuthSeedCandidateCreationReceipt>(
-      path.join(stagingRoot, CANDIDATE_CREATION_RECEIPT),
+      path.join(candidateWorkRoot, CANDIDATE_CREATION_RECEIPT),
     );
     if (
       !isAuthSeedCandidateCreationReceipt(confirmed) ||
       confirmed.token !== creation.token ||
-      confirmed.candidateId !== creation.candidateId
+      confirmed.candidateId !== creation.candidateId ||
+      confirmed.pid !== creation.pid ||
+      confirmed.processStartTime !== creation.processStartTime ||
+      confirmed.stagingRoot !== creation.stagingRoot ||
+      confirmed.sourceProfileRealpath !== creation.sourceProfileRealpath
     ) {
       continue;
     }
-    const staleRoot = path.join(
-      candidatesRoot,
-      `.${creation.candidateId}.${creation.token}.stale-${randomUUID()}`,
-    );
-    try {
-      await rename(stagingRoot, staleRoot);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw error;
+    let staleRoot = candidateWorkRoot;
+    if (isPublishedStaging) {
+      staleRoot = path.join(candidatesRoot, `${expectedStagingName}.stale-${randomUUID()}`);
+      try {
+        await rename(candidateWorkRoot, staleRoot);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
     }
-    await rm(staleRoot, { recursive: true, force: true });
+    await removeStaleCandidateQuarantine(staleRoot, confirmed);
   }
+}
+
+async function removeStaleCandidateQuarantine(
+  staleRoot: string,
+  expected: AuthSeedCandidateCreationReceipt,
+): Promise<void> {
+  const receiptPath = path.join(staleRoot, CANDIDATE_CREATION_RECEIPT);
+  for (const name of await readdir(staleRoot)) {
+    if (name === CANDIDATE_CREATION_RECEIPT) continue;
+    await rm(path.join(staleRoot, name), { recursive: true, force: true });
+  }
+  const confirmed = await readJson<AuthSeedCandidateCreationReceipt>(receiptPath);
+  if (
+    !isAuthSeedCandidateCreationReceipt(confirmed) ||
+    confirmed.token !== expected.token ||
+    confirmed.candidateId !== expected.candidateId ||
+    confirmed.pid !== expected.pid ||
+    confirmed.processStartTime !== expected.processStartTime ||
+    confirmed.stagingRoot !== expected.stagingRoot ||
+    confirmed.sourceProfileRealpath !== expected.sourceProfileRealpath
+  ) {
+    throw new Error("Stale auth-seed candidate ownership changed during cleanup");
+  }
+  await rm(receiptPath, { force: false });
+  await rmdir(staleRoot).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+  });
 }
 
 function isAuthSeedCandidateCreationReceipt(
