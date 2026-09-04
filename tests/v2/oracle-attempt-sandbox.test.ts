@@ -9,7 +9,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { rm } from "node:fs/promises";
+import { cp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -19,6 +19,8 @@ import {
   dirtyAttemptSandboxWithoutSend,
   monitorPotentialSubmissions,
   observeAttemptSandboxPage,
+  observeStableAttemptSandboxPage,
+  type AttemptSandboxPageObservation,
 } from "../../packages/chatgpt-adapter/src/index.js";
 import {
   acceptAuthSeedCandidate,
@@ -54,7 +56,7 @@ function temporaryRoot(): string {
 }
 
 function seedSource(root: string): string {
-  const source = path.join(root, "source-profile");
+  const source = path.join(root, "browser-profile");
   mkdirSync(path.join(source, "Default"), { recursive: true, mode: 0o700 });
   writeFileSync(path.join(source, "Local State"), '{"profile":{"last_used":"Default"}}\n');
   writeFileSync(path.join(source, "Default", "Preferences"), '{"fixture":true}\n');
@@ -94,6 +96,36 @@ describe("Oracle disposable attempt sandboxes", () => {
     releaseExclusive();
     await exclusive;
   }, 20_000);
+
+  test("waits through delayed restored state before classifying a clone start", async () => {
+    const clean = sandboxPageObservation();
+    const restored: AttemptSandboxPageObservation = {
+      ...clean,
+      composerEmpty: false,
+      attachmentPresent: true,
+    };
+    let clock = 0;
+    const observation = await observeStableAttemptSandboxPage(
+      {} as Page,
+      {
+        marker: "delayed-restoration",
+        filename: "delayed-restoration.md",
+        timeoutMs: 1_000,
+        quietPeriodMs: 200,
+        pollIntervalMs: 50,
+      },
+      {
+        now: () => clock,
+        wait: async (milliseconds) => {
+          clock += milliseconds;
+        },
+        waitForReady: async () => undefined,
+        observe: async () => (clock < 150 ? clean : restored),
+      },
+    );
+    expect(observation).toEqual(restored);
+    expect(clock).toBeGreaterThanOrEqual(350);
+  });
 
   test("atomically clones, isolates, cleans, and accepts one unchanged seed generation", async () => {
     const runtimeRoot = temporaryRoot();
@@ -224,6 +256,102 @@ describe("Oracle disposable attempt sandboxes", () => {
       }),
     ).rejects.toThrow(/injected clone failure/i);
     expect(readdirSync(path.join(runtimeRoot, "attempts"))).toEqual([]);
+  });
+
+  test("rejects an attempt sandbox as an auth-seed candidate source", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_no_copyback",
+      turnAttemptId: "attempt_no_copyback",
+      purpose: "probe",
+    });
+    await expect(
+      createAuthSeedCandidate({
+        runtimeRoot,
+        sourceProfileDir: sandbox.profileDir,
+      }),
+    ).rejects.toThrow(/exact fixed migration profile/i);
+    expect(
+      (
+        await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: sandbox.directory,
+          dependencies: { findProcessesUsingProfile: noProfileProcesses },
+        })
+      ).status,
+    ).toBe("deleted");
+  });
+
+  test("blocks seed acceptance while an abandoned staging clone remains", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const staging = path.join(runtimeRoot, "attempts", ".abandoned-clone.tmp");
+    mkdirSync(path.join(staging, "profile"), { recursive: true });
+    expect(await listAttemptSandboxDirectories(runtimeRoot)).toEqual([staging]);
+    await expect(
+      acceptAuthSeedCandidate({
+        runtimeRoot,
+        candidateRoot: path.dirname(candidate.profileRealpath),
+        cloneProof: passingCloneProof(candidate.candidateId, candidate.profileDigest, {
+          cloneA: "deleted-clone-a",
+          cloneB: "deleted-clone-b",
+        }),
+      }),
+    ).rejects.toThrow(/attempt sandboxes remain/i);
+  });
+
+  test("atomically reserves one sandbox for each logical attempt purpose", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    let copyStarted!: () => void;
+    let continueCopy!: () => void;
+    const started = new Promise<void>((resolve) => (copyStarted = resolve));
+    const released = new Promise<void>((resolve) => (continueCopy = resolve));
+    const createInput = {
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_unique_attempt",
+      turnAttemptId: "attempt_unique_attempt",
+      purpose: "probe" as const,
+    };
+    const first = createAttemptSandbox({
+      ...createInput,
+      copyProfile: async (source, destination) => {
+        copyStarted();
+        await released;
+        await cp(source, destination, { recursive: true });
+      },
+    });
+    await started;
+    const secondError = await createAttemptSandbox(createInput).catch((error: unknown) => error);
+    continueCopy();
+    const sandbox = await first;
+    expect(secondError).toBeInstanceOf(Error);
+    expect((secondError as Error).message).toMatch(/already own an attempt sandbox/i);
+    expect(
+      (await listAttemptSandboxDirectories(runtimeRoot)).map((entry) => realpathSync(entry)),
+    ).toEqual([sandbox.directory]);
+    expect(
+      (
+        await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: sandbox.directory,
+          dependencies: { findProcessesUsingProfile: noProfileProcesses },
+        })
+      ).status,
+    ).toBe("deleted");
   });
 
   test("reclaims auth-seed locks whose recorded processes are dead", async () => {
@@ -929,4 +1057,20 @@ function fakeClosablePage(): { page: Page; closed: () => boolean } {
     },
   } as unknown as Page;
   return { page, closed: () => closed };
+}
+
+function sandboxPageObservation(): AttemptSandboxPageObservation {
+  return {
+    schemaVersion: "oracle.attempt-sandbox-page-observation.v1",
+    composerPresent: true,
+    composerEmpty: true,
+    markerPresent: false,
+    attachmentPresent: false,
+    attachmentInputSelected: false,
+    userTurnPresent: false,
+    conversationRoutePresent: false,
+    recoveryWindowNamePresent: false,
+    recoveryStoragePresent: false,
+    promptSubmitted: false,
+  };
 }

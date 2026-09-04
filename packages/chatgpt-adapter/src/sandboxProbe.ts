@@ -21,6 +21,13 @@ export interface PotentialSubmissionMonitor {
   stop(): void;
 }
 
+export interface StableAttemptSandboxPageDependencies {
+  observe?: typeof observeAttemptSandboxPage;
+  now?: () => number;
+  wait?: (milliseconds: number) => Promise<void>;
+  waitForReady?: (page: Page, timeoutMs: number) => Promise<void>;
+}
+
 export function monitorPotentialSubmissions(page: Page): PotentialSubmissionMonitor {
   let submissionCount = 0;
   const observe = (request: Request) => {
@@ -111,6 +118,48 @@ export async function observeAttemptSandboxPage(
     recoveryStoragePresent: recovery.storagePresent,
     promptSubmitted: false,
   };
+}
+
+export async function observeStableAttemptSandboxPage(
+  page: Page,
+  input: {
+    marker: string;
+    filename: string;
+    timeoutMs: number;
+    quietPeriodMs?: number;
+    pollIntervalMs?: number;
+  },
+  dependencies: StableAttemptSandboxPageDependencies = {},
+): Promise<AttemptSandboxPageObservation> {
+  const observe = dependencies.observe ?? observeAttemptSandboxPage;
+  const now = dependencies.now ?? Date.now;
+  const wait = dependencies.wait ?? ((milliseconds) => page.waitForTimeout(milliseconds));
+  const waitForReady =
+    dependencies.waitForReady ??
+    ((target, timeoutMs) => target.waitForLoadState("domcontentloaded", { timeout: timeoutMs }));
+  const quietPeriodMs = input.quietPeriodMs ?? 5_000;
+  const pollIntervalMs = input.pollIntervalMs ?? 250;
+  const deadline = now() + input.timeoutMs;
+  await waitForReady(page, input.timeoutMs);
+  let stableFingerprint: string | undefined;
+  let stableSince = 0;
+  while (now() <= deadline) {
+    const observation = await observe(page, input);
+    const fingerprint = JSON.stringify(observation);
+    if (!observation.composerPresent) {
+      stableFingerprint = undefined;
+      stableSince = 0;
+    } else if (fingerprint !== stableFingerprint) {
+      stableFingerprint = fingerprint;
+      stableSince = now();
+    } else if (now() - stableSince >= quietPeriodMs) {
+      return observation;
+    }
+    const remaining = deadline - now();
+    if (remaining <= 0) break;
+    await wait(Math.min(pollIntervalMs, remaining));
+  }
+  throw new Error("Attempt sandbox page did not reach a stable initial state before timeout");
 }
 
 export async function dirtyAttemptSandboxWithoutSend(

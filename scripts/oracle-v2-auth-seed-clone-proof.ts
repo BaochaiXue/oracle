@@ -8,6 +8,7 @@ import {
   dirtyAttemptSandboxWithoutSend,
   monitorPotentialSubmissions,
   observeAttemptSandboxPage,
+  observeStableAttemptSandboxPage,
   probeCompatibility,
   probeModelAndEffortControls,
 } from "../packages/chatgpt-adapter/src/index.js";
@@ -166,9 +167,10 @@ async function runClone(
     executableRealpath = runtime.processReceipt.executableRealpath;
     const page = await runtime.openPage(CHATGPT_URL);
     monitor = monitorPotentialSubmissions(page);
-    const initial = await observeAttemptSandboxPage(page, {
+    const initial = await observeStableAttemptSandboxPage(page, {
       marker,
       filename: PROBE_FILENAME,
+      timeoutMs: PROBE_TIMEOUT_MS,
     });
     const initiallyClean =
       initial.composerPresent &&

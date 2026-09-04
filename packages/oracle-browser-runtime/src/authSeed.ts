@@ -79,7 +79,17 @@ export async function createAuthSeedCandidate(input: {
     input.runtimeRoot,
     async () => {
       const runtimeRoot = path.resolve(input.runtimeRoot);
+      const migrationProfile = path.join(runtimeRoot, "browser-profile");
       const sourceProfileRealpath = await realpath(input.sourceProfileDir);
+      const migrationProfileRealpath = await realpath(migrationProfile);
+      if (
+        path.resolve(input.sourceProfileDir) !== migrationProfile ||
+        sourceProfileRealpath !== migrationProfileRealpath
+      ) {
+        throw new Error(
+          "Auth-seed candidates may be created only from the exact fixed migration profile",
+        );
+      }
       if (!(await stat(sourceProfileRealpath)).isDirectory()) {
         throw new Error("Auth-seed source profile is not a directory");
       }
@@ -183,7 +193,7 @@ export async function acceptAuthSeedCandidate(input: {
       if ((await digestProfile(candidate.profileRealpath)) !== candidate.profileDigest) {
         throw new Error("Auth-seed candidate changed during clone isolation proof");
       }
-      if ((await countAttemptDirectories(runtimeRoot)) !== 0) {
+      if ((await countAttemptEntries(runtimeRoot)) !== 0) {
         throw new Error("Auth-seed candidate cannot be accepted while attempt sandboxes remain");
       }
       const paths = authSeedPaths(runtimeRoot);
@@ -676,15 +686,13 @@ async function validateCandidateLocation(
   }
 }
 
-async function countAttemptDirectories(runtimeRoot: string): Promise<number> {
+async function countAttemptEntries(runtimeRoot: string): Promise<number> {
   const attemptsRoot = path.join(runtimeRoot, ATTEMPTS_DIRECTORY);
-  const entries = await readdir(attemptsRoot, { withFileTypes: true }).catch(
-    (error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") return [];
-      throw error;
-    },
-  );
-  return entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith(".")).length;
+  const entries = await readdir(attemptsRoot).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  });
+  return entries.length;
 }
 
 async function ensurePrivateDirectory(directory: string): Promise<void> {

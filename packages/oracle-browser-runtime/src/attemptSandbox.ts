@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   chmod,
   cp,
@@ -70,38 +70,53 @@ export async function createAttemptSandbox(input: {
       if (isPathWithin(attemptsRealpath, seedProfileRealpath)) {
         throw new Error("An attempt sandbox cannot be used as an auth-seed source");
       }
-      const sandboxId = randomUUID();
+      const seedGeneration = authSeedCloneSourceGeneration(seed);
+      const sandboxId = createHash("sha256")
+        .update(
+          JSON.stringify([
+            "oracle.attempt-sandbox-owner.v1",
+            seedGeneration,
+            input.jobId,
+            input.turnAttemptId,
+            input.purpose,
+          ]),
+        )
+        .digest("hex");
       const finalDirectory = path.join(attemptsRealpath, sandboxId);
       const finalProfile = path.join(finalDirectory, "profile");
-      const stagingDirectory = path.join(attemptsRealpath, `.${sandboxId}.${randomUUID()}.tmp`);
-      const stagingProfile = path.join(stagingDirectory, "profile");
-      await ensurePrivateDirectory(stagingDirectory);
-      let published = false;
+      try {
+        await mkdir(finalDirectory, { mode: 0o700 });
+        if (process.platform !== "win32") await chmod(finalDirectory, 0o700);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+          throw new Error(
+            "This job, turn attempt, seed generation, and purpose already own an attempt sandbox",
+          );
+        }
+        throw error;
+      }
+      const stagingProfile = path.join(finalDirectory, `.profile.${randomUUID()}.tmp`);
       try {
         await (input.copyProfile ?? copyProfileDirectory)(seedProfileRealpath, stagingProfile);
         await chmod(stagingProfile, 0o700);
+        await rename(stagingProfile, finalProfile);
         const owner: AttemptSandboxOwner = {
           schemaVersion: "oracle.attempt-sandbox-owner.v1",
           jobId: input.jobId,
           turnAttemptId: input.turnAttemptId,
           purpose: input.purpose,
-          seedGeneration: authSeedCloneSourceGeneration(seed),
+          seedGeneration,
           profileRealpath: finalProfile,
           createdAt: new Date().toISOString(),
         };
-        await writeImmutablePrivateJson(path.join(stagingDirectory, OWNER_RECEIPT), owner);
-        await rename(stagingDirectory, finalDirectory);
-        published = true;
+        await writeImmutablePrivateJson(path.join(finalDirectory, OWNER_RECEIPT), owner);
         const sandbox = await readAttemptSandbox(finalDirectory);
         if (!sameAttemptOwner(sandbox.owner, owner)) {
           throw new Error("Created attempt sandbox does not match its immutable owner marker");
         }
         return sandbox;
       } catch (error) {
-        await rm(published ? finalDirectory : stagingDirectory, {
-          recursive: true,
-          force: true,
-        }).catch(() => undefined);
+        await rm(finalDirectory, { recursive: true, force: true }).catch(() => undefined);
         throw error;
       }
     },
@@ -287,7 +302,7 @@ export async function listAttemptSandboxDirectories(runtimeRoot: string): Promis
     },
   );
   return entries
-    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+    .filter((entry) => entry.isDirectory())
     .map((entry) => path.join(attemptsRoot, entry.name))
     .sort();
 }
