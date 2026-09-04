@@ -43,6 +43,7 @@ const QUARANTINE_DIRECTORY = "quarantine";
 const OWNER_RECEIPT = "owner.json";
 const PROCESS_RECEIPT = "process.json";
 const PROCESS_LIFECYCLE_RESERVATION = "process-lifecycle.json";
+const ATTEMPT_SHELLS_DIRECTORY = "attempt-shells";
 
 interface AttemptProcessLifecycleReservation {
   schemaVersion: "oracle.attempt-process-lifecycle.v1";
@@ -97,38 +98,71 @@ export async function createAttemptSandbox(input: {
         .digest("hex");
       const finalDirectory = path.join(attemptsRealpath, sandboxId);
       const finalProfile = path.join(finalDirectory, "profile");
+      const owner: AttemptSandboxOwner = {
+        schemaVersion: "oracle.attempt-sandbox-owner.v1",
+        jobId: input.jobId,
+        turnAttemptId: input.turnAttemptId,
+        purpose: input.purpose,
+        seedGeneration,
+        profileRealpath: finalProfile,
+        createdAt: new Date().toISOString(),
+      };
+      const processStartTime = await getCurrentProcessStartTime();
+      const reservation: AttemptProcessLifecycleReservation = {
+        schemaVersion: "oracle.attempt-process-lifecycle.v1",
+        token: randomUUID(),
+        jobId: owner.jobId,
+        turnAttemptId: owner.turnAttemptId,
+        pid: process.pid,
+        processStartTime,
+        createdAt: new Date().toISOString(),
+      };
+      const shellsRoot = path.join(runtimeRoot, "run", ATTEMPT_SHELLS_DIRECTORY);
+      await ensurePrivateDirectory(shellsRoot);
+      const stagingDirectory = path.join(
+        await realpath(shellsRoot),
+        `${sandboxId}.${reservation.token}.tmp`,
+      );
+      const stagingProfile = path.join(stagingDirectory, "profile");
+      await ensurePrivateDirectory(stagingProfile);
+      await writeImmutablePrivateJson(path.join(stagingDirectory, OWNER_RECEIPT), owner);
+      await writeExclusivePrivateJson(
+        path.join(stagingDirectory, PROCESS_LIFECYCLE_RESERVATION),
+        reservation,
+      );
+      let published = false;
       try {
-        await mkdir(finalDirectory, { mode: 0o700 });
-        if (process.platform !== "win32") await chmod(finalDirectory, 0o700);
+        await rename(stagingDirectory, finalDirectory);
+        published = true;
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        if (await pathExists(finalDirectory)) {
+          await rm(stagingDirectory, { recursive: true, force: true }).catch(() => undefined);
           throw new Error("This job, turn attempt, and purpose already own an attempt sandbox");
         }
+        await rm(stagingDirectory, { recursive: true, force: true }).catch(() => undefined);
         throw error;
       }
-      const stagingProfile = path.join(finalDirectory, `.profile.${randomUUID()}.tmp`);
       try {
-        await (input.copyProfile ?? copyProfileDirectory)(seedProfileRealpath, stagingProfile);
-        await chmod(stagingProfile, 0o700);
-        await rename(stagingProfile, finalProfile);
-        const owner: AttemptSandboxOwner = {
-          schemaVersion: "oracle.attempt-sandbox-owner.v1",
-          jobId: input.jobId,
-          turnAttemptId: input.turnAttemptId,
-          purpose: input.purpose,
-          seedGeneration,
-          profileRealpath: finalProfile,
-          createdAt: new Date().toISOString(),
-        };
-        await writeImmutablePrivateJson(path.join(finalDirectory, OWNER_RECEIPT), owner);
+        await (input.copyProfile ?? copyProfileDirectory)(seedProfileRealpath, finalProfile);
+        if (process.platform !== "win32") await chmod(finalProfile, 0o700);
         const sandbox = await readAttemptSandbox(finalDirectory);
         if (!sameAttemptOwner(sandbox.owner, owner)) {
           throw new Error("Created attempt sandbox does not match its immutable owner marker");
         }
         return sandbox;
       } catch (error) {
-        await rm(finalDirectory, { recursive: true, force: true }).catch(() => undefined);
+        await rm(published ? finalDirectory : stagingDirectory, {
+          recursive: true,
+          force: true,
+        }).catch(() => undefined);
         throw error;
+      } finally {
+        await withBrowserLockMutation(runtimeRoot, () =>
+          releaseAttemptProcessLifecycleReservation(
+            path.join(finalDirectory, PROCESS_LIFECYCLE_RESERVATION),
+            reservation.token,
+          ),
+        );
       }
     },
     { timeoutMs: input.lockTimeoutMs },
@@ -509,13 +543,16 @@ function isPathWithin(parent: string, candidate: string): boolean {
 }
 
 async function copyProfileDirectory(source: string, destination: string): Promise<void> {
-  await cp(source, destination, {
-    recursive: true,
-    force: false,
-    errorOnExist: true,
-    preserveTimestamps: true,
-    verbatimSymlinks: true,
-  });
+  const entries = await readdir(source);
+  for (const entry of entries) {
+    await cp(path.join(source, entry), path.join(destination, entry), {
+      recursive: true,
+      force: false,
+      errorOnExist: true,
+      preserveTimestamps: true,
+      verbatimSymlinks: true,
+    });
+  }
 }
 
 async function ensurePrivateDirectory(directory: string): Promise<void> {

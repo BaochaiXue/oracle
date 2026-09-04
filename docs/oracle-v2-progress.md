@@ -414,7 +414,11 @@ Fresh T1 source-candidate and live-gate evidence:
   lookup is no longer cached across later jobs. Auth-seed and attempt-lifecycle
   lock publication, token revalidation, reclamation, and release share a short
   runtime-root SQLite mutation lock, which the OS releases on process death, so
-  a stale observer cannot rename a newly published live replacement;
+  a stale observer cannot rename a newly published live replacement. Attempt
+  creation now atomically publishes an immutable owner, an empty final profile,
+  and a live process-lifecycle reservation before any authenticated seed state
+  is copied; cleanup blocks while that exact creator is live and can reclaim a
+  partial clone only after its PID/start-time identity is stale;
 - the real proof now waits for DOM readiness plus five seconds of unchanged
   composer/attachment/recovery state before classifying a clone as initially
   clean. Candidate creation accepts only the exact fixed `browser-profile`
@@ -422,16 +426,17 @@ Fresh T1 source-candidate and live-gate evidence:
   or junction into accepted/disposable state; attempt creation atomically
   reserves one deterministic directory per job/turn/purpose before copying
   regardless of seed generation, concurrent page opens are rejected before a
-  second target can be created, and every attempt-root entry (including an
-  abandoned hidden staging clone) blocks seed acceptance;
+  second target can be created, and every attempt-root entry blocks seed
+  acceptance;
 - process identity capture is opt-in for attempt runtimes only, so the current
   fixed-profile runtime and `CertifiedChatGptProvider` retain their pre-T1
   behavior. No provider dispatch integration or T2 runner change is present;
-- the focused suite passes thirty-four tests, including delayed restored-state
+- the focused suite passes thirty-five tests, including delayed restored-state
   detection, exact migration-source enforcement, abandoned-staging refusal,
   cross-generation logical-attempt uniqueness, pre-launch process-slot and
-  concurrent-open exclusion, clone failure before owner publication, immutable
-  receipt rejection, dead-lock and PID-reuse recovery, exact-process mismatch,
+  concurrent-open exclusion, cleanup-safe ownership before interrupted profile
+  cloning, immutable receipt rejection, dead-lock and PID-reuse recovery,
+  exact-process mismatch,
   process-inspection fail-closed behavior, missing receipt/live-process refusal,
   launch-versus-cleanup exclusion, launch-finalization-versus-cleanup exclusion,
   token-conditional auth/lifecycle stale-lock recovery under a live winner,
@@ -452,9 +457,9 @@ Fresh T1 source-candidate and live-gate evidence:
   either path. The fixed profile was not cleared, adopted, or overwritten;
 - `pnpm check`, `pnpm build`, `pnpm docs:check`, `pnpm public:check`,
   `pnpm test:packed-cli`, and `git diff --check` passed. `pnpm test` passed all
-  three partitions: process-serial had 76 passing and one skipped test,
+  three partitions: process-serial had 77 passing and one skipped test,
   browser-serial had 30 passing and one skipped test, and the parallel
-  partition had 2,054 passing and 32 skipped tests (2,160 passing and 34
+  partition had 2,054 passing and 32 skipped tests (2,161 passing and 34
   skipped across 197 files in total);
 - the real T1 gate is not certified. It requires one explicit fresh auth-seed
   login, then the same two-clone no-Send proof. Fixture success is not a

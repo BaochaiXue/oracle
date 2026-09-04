@@ -35,6 +35,7 @@ import {
   observeManagedBrowserProcess,
   readAuthSeed,
   readAuthSeedCertification,
+  readAttemptSandbox,
   withAuthSeedCloneLock,
   withAuthSeedRefreshLock,
   withAttemptProcessLifecycleReservation,
@@ -258,6 +259,55 @@ describe("Oracle disposable attempt sandboxes", () => {
       }),
     ).rejects.toThrow(/injected clone failure/i);
     expect(readdirSync(path.join(runtimeRoot, "attempts"))).toEqual([]);
+  });
+
+  test("publishes cleanup ownership before profile cloning can retain authenticated state", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const create = createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_interrupted_clone",
+      turnAttemptId: "attempt_interrupted_clone",
+      purpose: "probe",
+      copyProfile: async (_source, destination) => {
+        const directory = path.dirname(destination);
+        const owned = await readAttemptSandbox(directory);
+        expect(owned.profileDir).toBe(destination);
+        writeFileSync(path.join(destination, "partial-authenticated-state"), "partial\n");
+
+        const liveCleanup = await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: directory,
+          dependencies: { findProcessesUsingProfile: noProfileProcesses },
+        });
+        expect(liveCleanup.status).toBe("blocked");
+        expect(liveCleanup.error).toMatch(/lifecycle operation is already in progress/i);
+
+        const lifecyclePath = path.join(directory, "process-lifecycle.json");
+        const lifecycle = JSON.parse(readFileSync(lifecyclePath, "utf8"));
+        writeFileSync(
+          lifecyclePath,
+          `${JSON.stringify({
+            ...lifecycle,
+            processStartTime: "simulated-dead-clone-process",
+          })}\n`,
+        );
+        const staleCleanup = await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: directory,
+          dependencies: { findProcessesUsingProfile: noProfileProcesses },
+        });
+        expect(staleCleanup.status).toBe("deleted");
+        throw new Error("simulated interrupted clone");
+      },
+    });
+
+    await expect(create).rejects.toThrow(/simulated interrupted clone/i);
+    expect(await listAttemptSandboxDirectories(runtimeRoot)).toEqual([]);
   });
 
   test("rejects an attempt sandbox as an auth-seed candidate source", async () => {
