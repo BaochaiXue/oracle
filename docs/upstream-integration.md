@@ -75,3 +75,21 @@ previous runtime and shared browser intact for existing workers. Building a
 source checkout alone does not update that installed release: verify
 `oracle --version` and refresh both the plugin cache and standalone skill
 installations before declaring deployment complete.
+
+## Validation result
+
+The 0.19.0 merge at `11c7b63f` passed on Linux/WSL:
+
+- Maintained suite: 2,244 passed, 67 skipped by the existing environment/live
+  gates; the serial and parallel phases took about 35 seconds combined.
+- Additional no-account browser fixtures: 30 passed, one existing skip.
+- Sandbox/runtime fixtures with Linux Chrome: 60 passed after the POSIX-path
+  correction. These fixture results do not certify a macOS worker or live
+  ChatGPT account behavior.
+- Formatting, TypeScript, lint, v2 import boundaries, build, mirrored README
+  and help checks, public-safety scan, packed production CLI/module imports,
+  and skill/plugin validation passed.
+- The installed CLI reports `0.19.0`; the Codex plugin and the Codex/Claude
+  standalone skill files match source. A new-process installation preserved
+  the prior runtime and shared browser. No ChatGPT prompt was submitted and
+  no shared Chrome process was stopped during integration.
