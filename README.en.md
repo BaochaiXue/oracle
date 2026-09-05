@@ -19,7 +19,7 @@ A high-cost Pro run should not depend on one fragile browser tab. This public fo
 
 Oracle owns the prompt bundle, browser actions, session truth, recovery, and follow-up lineage. The human owns the first sign-in, real account challenges, and explicit owner decisions required by Batch Oracle. OpenCLI remains an explicit alternative transport for ordinary consultations; it never takes over a failed CDP run automatically.
 
-`GPT-6 Pro` is the browser default (`gpt-5-pro`, also `gpt-6-pro`). Only confirmed GPT-6/model-effort unavailability before Send permits fallback to GPT-5.6 Sol Pro. Sessions record the actual model and reason; follow-ups retain that model.
+`GPT-6 Pro` is the browser default (`gpt-5-pro`, also `gpt-6-pro`), selected through `Latest`. Every new follow-up reselects and verifies Latest + Pro in the original conversation; only confirmed pre-Send unavailability permits Sol Pro fallback. Read-only recovery preserves the original answer without resending.
 
 → [Read the bilingual public launch note: why every Pro consultation needs a way back](./LAUNCH.md)
 

@@ -1643,7 +1643,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     };
     await captureRuntimeSnapshot();
     const modelStrategy = config.modelStrategy ?? DEFAULT_MODEL_STRATEGY;
-    if (config.desiredModel && modelStrategy !== "ignore" && !isResumingConversation) {
+    if (config.desiredModel && modelStrategy !== "ignore") {
       modelSelectionEvidence = await raceWithDisconnect(
         ensureModelSelectionWithTargetRepair({
           select: () =>
@@ -1655,7 +1655,19 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
               config.researchMode === "deep" ? null : config.thinkingTime,
             ),
           repair: async () => {
-            await navigateToChatGPT(Page, Runtime, config.url, logger);
+            await navigateToChatGPT(
+              Page,
+              Runtime,
+              config.resumeConversationUrl ?? config.url,
+              logger,
+            );
+            if (config.resumeConversationUrl) {
+              await waitForResumedConversationHydration(Runtime, config.inputTimeoutMs, logger, {
+                requirePriorTurns: true,
+                requirePromptReady: true,
+                expectedConversationUrl: config.resumeConversationUrl,
+              });
+            }
             await ensureNotBlocked(Runtime, config.headless, logger);
             await ensureLoggedIn(Runtime, logger);
             await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
@@ -1672,16 +1684,12 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       logger(
         `Prompt textarea ready (after model switch, ${promptText.length.toLocaleString()} chars queued)`,
       );
-    } else if (modelStrategy === "ignore" || isResumingConversation) {
+    } else if (modelStrategy === "ignore") {
       modelSelectionEvidence = buildSkippedModelSelectionEvidence(
         config.desiredModel,
         modelStrategy,
       );
-      logger(
-        isResumingConversation
-          ? "Model picker: skipped (resumed conversation)"
-          : "Model picker: skipped (strategy=ignore)",
-      );
+      logger("Model picker: skipped (strategy=ignore)");
     }
     const deepResearch = config.researchMode === "deep";
     // Handle thinking time selection if specified. Deep Research owns its own effort flow.
@@ -2408,6 +2416,23 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       await requireConversationIdentity(`follow-up-${index + 1}-owner`);
       await acquireProfileLockIfNeeded();
       try {
+        if (config.desiredModel && modelStrategy !== "ignore") {
+          modelSelectionEvidence = await raceWithDisconnect(
+            ensurePreferredProModel(
+              Runtime,
+              config.desiredModel,
+              logger,
+              modelStrategy,
+              thinkingTime,
+            ),
+          );
+          if (thinkingTime && !modelSelectionEvidence.selectedModel) {
+            await raceWithDisconnect(
+              ensureThinkingTime(Runtime, thinkingTime, logger, config.desiredModel),
+            );
+          }
+          await requireConversationIdentity(`follow-up-${index + 1}-model`);
+        }
         await raceWithDisconnect(clearPromptComposer(Runtime, logger));
         await raceWithDisconnect(ensurePromptReady(Runtime, config.inputTimeoutMs, logger));
         const submission = await runSubmissionWithRecovery({
@@ -3485,7 +3510,7 @@ async function runRemoteBrowserMode(
     }
 
     const modelStrategy = config.modelStrategy ?? DEFAULT_MODEL_STRATEGY;
-    if (config.desiredModel && modelStrategy !== "ignore" && !config.resumeConversationUrl) {
+    if (config.desiredModel && modelStrategy !== "ignore") {
       modelSelectionEvidence = await ensureModelSelectionWithTargetRepair({
         select: () =>
           ensurePreferredProModel(
@@ -3496,7 +3521,19 @@ async function runRemoteBrowserMode(
             config.researchMode === "deep" ? null : config.thinkingTime,
           ),
         repair: async () => {
-          await navigateToChatGPT(Page, Runtime, config.url, logger);
+          await navigateToChatGPT(
+            Page,
+            Runtime,
+            config.resumeConversationUrl ?? config.url,
+            logger,
+          );
+          if (config.resumeConversationUrl) {
+            await waitForResumedConversationHydration(Runtime, config.inputTimeoutMs, logger, {
+              requirePriorTurns: true,
+              requirePromptReady: true,
+              expectedConversationUrl: config.resumeConversationUrl,
+            });
+          }
           await ensureNotBlocked(Runtime, config.headless, logger);
           await ensureLoggedIn(Runtime, logger, { remoteSession: true });
           await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
@@ -3508,16 +3545,12 @@ async function runRemoteBrowserMode(
       logger(
         `Prompt textarea ready (after model switch, ${promptText.length.toLocaleString()} chars queued)`,
       );
-    } else if (modelStrategy === "ignore" || config.resumeConversationUrl) {
+    } else if (modelStrategy === "ignore") {
       modelSelectionEvidence = buildSkippedModelSelectionEvidence(
         config.desiredModel,
         modelStrategy,
       );
-      logger(
-        config.resumeConversationUrl
-          ? "Model picker: skipped (resumed conversation)"
-          : "Model picker: skipped (strategy=ignore)",
-      );
+      logger("Model picker: skipped (strategy=ignore)");
     }
     const deepResearch = config.researchMode === "deep";
     // Handle thinking time selection if specified. Deep Research owns its own effort flow.
@@ -4130,6 +4163,19 @@ async function runRemoteBrowserMode(
       const followUpPrompt = followUpPrompts[index];
       logger(`[browser] Sending follow-up ${index + 1}/${followUpPrompts.length}`);
       await requireConversationIdentity(`follow-up-${index + 1}-owner`);
+      if (config.desiredModel && modelStrategy !== "ignore") {
+        modelSelectionEvidence = await ensurePreferredProModel(
+          Runtime,
+          config.desiredModel,
+          logger,
+          modelStrategy,
+          thinkingTime,
+        );
+        if (thinkingTime && !modelSelectionEvidence.selectedModel) {
+          await ensureThinkingTime(Runtime, thinkingTime, logger, config.desiredModel);
+        }
+        await requireConversationIdentity(`follow-up-${index + 1}-model`);
+      }
       await clearPromptComposer(Runtime, logger);
       await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
       const submission = await runSubmissionWithRecovery({

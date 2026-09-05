@@ -173,7 +173,8 @@ does not describe it as a started consultation.
 
 `gpt-5-pro` maps to GPT-6 with reasoning tier `Pro`. Only confirmed unavailability
 before Send permits fallback to GPT-5.6 Sol Pro. Oracle verifies both controls
-and records the actual model with the session; follow-ups retain that model.
+and records the actual model with the session. New follow-ups reselect Latest
+in the same conversation; read-only recovery retains the original response.
 
 A picker receipt is not server-routing proof. Oracle also records the elapsed
 time from dispatch to the first stable answer. Tiny workloads (at most 256

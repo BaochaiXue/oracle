@@ -19,7 +19,11 @@ type ModelSelectionResult =
   | { status: "switched"; label?: string | null }
   | {
       status: "option-not-found";
-      hint?: { temporaryChat?: boolean; availableOptions?: string[] };
+      hint?: {
+        temporaryChat?: boolean;
+        availableOptions?: string[];
+        availableEnabledOptions?: string[];
+      };
     }
   | { status: "button-missing" }
   | undefined;
@@ -88,6 +92,13 @@ export async function ensureModelSelection(
       await logDomFailure(Runtime, logger, "model-switcher-option");
       const isTemporary = result.hint?.temporaryChat ?? false;
       const available = (result.hint?.availableOptions ?? []).filter(Boolean);
+      const enabled = result.hint?.availableEnabledOptions ?? available;
+      const latestStillAvailable =
+        desiredModel === "GPT-6" &&
+        enabled.some((label) => {
+          const normalized = normalizeResolvedModelLabel(label.toLowerCase());
+          return normalized === "latest" || /^(?:gpt )?6(?: |$)/.test(normalized);
+        });
       const availableHint = available.length > 0 ? ` Available: ${available.join(", ")}.` : "";
       const tempHint =
         isTemporary && /\bpro\b/i.test(desiredModel)
@@ -97,8 +108,12 @@ export async function ensureModelSelection(
         `Unable to find model option matching "${desiredModel}" in the model switcher.${availableHint}${tempHint}`,
         {
           stage: "model-selection",
-          code: available.length > 0 ? "model-option-unavailable" : "model-selection-unverified",
+          code:
+            available.length > 0 && !latestStillAvailable
+              ? "model-option-unavailable"
+              : "model-selection-unverified",
           promptSubmitted: false,
+          latestStillAvailable,
         },
       );
     }
@@ -123,7 +138,7 @@ function assertResolvedModelSelection(desiredModel: string, resolvedLabel: strin
   const normalizedResolved = normalizeResolvedModelLabel(resolved);
   if (normalizedDesired === "gpt 6" || normalizedDesired === "gpt 6 pro") {
     if (
-      !/^(?:(?:chatgpt|gpt) )?6(?: astra)?(?: (?:pro|high|extra high|thinking))?$/.test(
+      !/^(?:(?:chatgpt|gpt) )?6(?: astra)?(?: (?:pro|high|extra high|thinking|latest))?$/.test(
         normalizedResolved,
       )
     ) {
@@ -587,8 +602,15 @@ export function buildModelSelectionExpression(
           !findAdvancedToggle(menu),
       );
     };
+    const hasCheckedLatestModel = () => Array.from(document.querySelectorAll(
+      '[role="menuitemradio"][aria-checked="true"], [role="option"][aria-selected="true"]'
+    )).some((node) =>
+      isVisibleElement(node) && normalizeText(node.textContent) === 'latest' &&
+      node.disabled !== true && node.getAttribute?.('aria-disabled') !== 'true'
+    );
     const getResolvedLabel = (observedOptionLabel = '') => {
       if (desiredVersion === '6') {
+        if (hasCheckedLatestModel()) return 'GPT-6 (Latest)';
         for (const label of [getButtonLabel(), getComposerModelLabel()]) {
           if (versionFromLabel(label) === '6') return formatModelOptionLabel(label);
         }
@@ -736,6 +758,7 @@ export function buildModelSelectionExpression(
       return COMPOSER_SIGNAL_INCLUDES.some((token) => token && signal.includes(token));
     };
     const activeSelectionMatchesTarget = () => {
+      if (desiredVersion === '6' && hasCheckedLatestModel()) return true;
       if (advancedModelSignalMatchesTarget()) {
         return true;
       }
@@ -1307,10 +1330,12 @@ export function buildModelSelectionExpression(
         const body = (document.body?.innerText || '').toLowerCase();
         return body.includes('temporary chat');
       };
-      const collectAvailableOptions = () => {
+      const collectAvailableOptions = (enabledOnly = false) => {
         const menuRoots = queryPickerMenus();
         const nodes = menuRoots.flatMap((root) => Array.from(root.querySelectorAll(${menuItemLiteral})));
         const labels = nodes
+          .filter((node) => !enabledOnly ||
+            (isVisibleElement(node) && node.disabled !== true && node.getAttribute?.('aria-disabled') !== 'true'))
           .map((node) => (node?.textContent ?? '').trim())
           .filter(Boolean)
           .filter((label, index, arr) => arr.indexOf(label) === index);
@@ -1331,7 +1356,7 @@ export function buildModelSelectionExpression(
         if (performance.now() - start > MAX_WAIT_MS) {
           resolve({
             status: 'option-not-found',
-            hint: { temporaryChat: detectTemporaryChat(), availableOptions: collectAvailableOptions() },
+            hint: { temporaryChat: detectTemporaryChat(), availableOptions: collectAvailableOptions(), availableEnabledOptions: collectAvailableOptions(true) },
           });
           return;
         }
@@ -1393,7 +1418,7 @@ export function buildModelSelectionExpression(
         if (performance.now() - start > MAX_WAIT_MS) {
           resolve({
             status: 'option-not-found',
-            hint: { temporaryChat: detectTemporaryChat(), availableOptions: collectAvailableOptions() },
+            hint: { temporaryChat: detectTemporaryChat(), availableOptions: collectAvailableOptions(), availableEnabledOptions: collectAvailableOptions(true) },
           });
           return;
         }

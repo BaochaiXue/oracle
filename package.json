@@ -1,6 +1,6 @@
 {
   "name": "@steipete/oracle",
-  "version": "0.18.0",
+  "version": "0.18.1",
   "private": true,
   "description": "CLI and MCP server for GPT-6 Pro over isolated Chrome/CDP, with GPT-5.6 Sol Pro fallback before Send.",
   "keywords": [],

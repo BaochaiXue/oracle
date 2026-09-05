@@ -1,6 +1,6 @@
 {
   "name": "oracle",
-  "version": "0.18.0+codex.20260905134011",
+  "version": "0.18.1+codex.20260905182255",
   "description": "GPT-6 Pro review with repository context, recoverable conversations, and GPT-5.6 Sol Pro fallback.",
   "author": {
     "name": "Oracle fork maintainers"

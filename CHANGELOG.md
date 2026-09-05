@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.18.1 — Unreleased
+
+- Reselect Latest/GPT-6 Pro before new follow-up turns in the original chat.
+  Honor explicit follow-up model flags; do not inherit an old Sol fallback or
+  skip model verification just because a conversation is resumed.
+- Recognize a checked Latest model row as GPT-6 proof. If enabled Latest is
+  still offered, selector failure cannot trigger an unavailable-model fallback.
+- Picker repair on a resumed turn reloads the original conversation, never the
+  homepage. Read-only recovery does not change models or submit another turn.
+
 ## 0.18.0 — Unreleased
 
 - Browser default: GPT-6 Pro, with verified GPT-5.6 Sol Pro fallback only before

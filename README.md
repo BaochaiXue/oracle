@@ -19,7 +19,7 @@
 
 Oracle 负责 prompt bundle、browser action、session truth、恢复和 follow-up lineage。人负责首次登录、真实账户挑战，以及 Batch Oracle 中需要明确记录的 owner decision。OpenCLI 保留为普通咨询的显式替代 transport，不会自动接管失败的 CDP 运行。
 
-`GPT-6 Pro` 是默认浏览器目标（CLI `gpt-5-pro`，也支持 `gpt-6-pro`）。只有发送前明确确认 GPT-6 或 Pro 档位不可用，才回退到 GPT-5.6 Sol Pro；实际模型和原因写入 session，后续追问保留该模型。
+`GPT-6 Pro` 是默认浏览器目标（CLI `gpt-5-pro`，也支持 `gpt-6-pro`），对应菜单的 `Latest`。每次新的追问都在原对话中重新选择并验证 Latest + Pro；只有发送前确认不可用才回退 Sol Pro。只读恢复保留原回答，不重发。
 
 → [阅读双语公开发布说明：为什么每一次 Pro consultation 都该有一条回来的路](./LAUNCH.md)
 

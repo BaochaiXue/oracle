@@ -11,6 +11,56 @@ const expectContains = (arr: string[], value: string) => {
   expect(arr).toContain(value);
 };
 
+it("does not call Latest unavailable when it is still offered in the picker", async () => {
+  const runtime = {
+    evaluate: vi.fn(async () => ({
+      result: {
+        value: {
+          status: "option-not-found",
+          hint: {
+            availableOptions: ["Latest", "GPT-5.6 Sol"],
+            availableEnabledOptions: ["Latest", "GPT-5.6 Sol"],
+          },
+        },
+      },
+    })),
+  };
+  await expect(
+    ensureModelSelection(runtime as never, "GPT-6", vi.fn() as never),
+  ).rejects.toMatchObject({
+    details: {
+      code: "model-selection-unverified",
+      latestStillAvailable: true,
+      promptSubmitted: false,
+    },
+  });
+});
+
+it("allows the availability fallback when Latest is explicitly disabled", async () => {
+  const runtime = {
+    evaluate: vi.fn(async () => ({
+      result: {
+        value: {
+          status: "option-not-found",
+          hint: {
+            availableOptions: ["Latest", "GPT-5.6 Sol"],
+            availableEnabledOptions: ["GPT-5.6 Sol"],
+          },
+        },
+      },
+    })),
+  };
+  await expect(
+    ensureModelSelection(runtime as never, "GPT-6", vi.fn() as never),
+  ).rejects.toMatchObject({
+    details: {
+      code: "model-option-unavailable",
+      latestStillAvailable: false,
+      promptSubmitted: false,
+    },
+  });
+});
+
 it.each(["6 Pro", "6Pro", "6Extra High", "GPT-6", "GPT-6 Astra"])(
   "recognizes observed GPT-6 label %s",
   (label) => {
@@ -32,6 +82,15 @@ it("verifies version 6 after navigating the Latest menu item", async () => {
   expect(
     await evaluateMenuModelSelectionExpression("GPT-6", { label: "Latest", selectedLabel: "6Pro" }),
   ).toMatchObject({ status: "switched", label: "6Pro" });
+});
+
+it("accepts the checked Latest row when the composer displays only Thinking effort", async () => {
+  expect(
+    await evaluateMenuModelSelectionExpression("GPT-6", [
+      { label: "GPT-5.6 Sol", testId: "model-switcher-gpt-5-6" },
+      { label: "Latest", selectedLabel: "Thinking effort", checkedAfterClick: true },
+    ]),
+  ).toMatchObject({ status: "switched", label: "GPT-6 (Latest)" });
 });
 
 it("selects GPT-6 from a model menu without mistaking GPT-5.6", async () => {
@@ -110,8 +169,13 @@ const evaluateImmediateModelSelectionExpression = (
 const evaluateMenuModelSelectionExpression = async (
   targetModel: string,
   option:
-    | { label: string; testId?: string; selectedLabel?: string }
-    | Array<{ label: string; testId?: string; selectedLabel?: string }>,
+    | { label: string; testId?: string; selectedLabel?: string; checkedAfterClick?: boolean }
+    | Array<{
+        label: string;
+        testId?: string;
+        selectedLabel?: string;
+        checkedAfterClick?: boolean;
+      }>,
   extraMenus: unknown[] = [],
 ): Promise<unknown> => {
   class FakeEventTarget {
@@ -174,10 +238,12 @@ const evaluateMenuModelSelectionExpression = async (
     "data-testid": "model-switcher-dropdown-button",
   });
   const options = Array.isArray(option) ? option : [option];
+  let selectedOption: number | null = null;
   const modelOptions = options.map(
-    (item) =>
+    (item, index) =>
       new FakeElement(item.label, item.testId ? { "data-testid": item.testId } : {}, [], () => {
         modelButton.textContent = item.selectedLabel ?? item.label;
+        if (item.checkedAfterClick) selectedOption = index;
       }),
   );
   const menu = new FakeElement(
@@ -197,6 +263,9 @@ const evaluateMenuModelSelectionExpression = async (
       return null;
     },
     querySelectorAll: (selector: string) => {
+      if (selector.includes('[role="menuitemradio"][aria-checked="true"]')) {
+        return selectedOption === null ? [] : [modelOptions[selectedOption]];
+      }
       if (selector.includes('role="menu"') || selector.includes("data-radix")) {
         return menus;
       }

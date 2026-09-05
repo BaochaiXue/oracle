@@ -13,7 +13,7 @@ const baseMetadata: SessionMetadata = {
 };
 
 describe("browser follow-up resolution", () => {
-  test("pins follow-ups to the verified fallback model in the same conversation", async () => {
+  test("retries Latest for a new follow-up instead of inheriting yesterday's Sol fallback", async () => {
     const metadata = {
       ...baseMetadata,
       mode: "browser",
@@ -32,7 +32,57 @@ describe("browser follow-up resolution", () => {
       readSession: async () => metadata,
     });
     expect(result?.resumeConversationUrl).toBe("https://chatgpt.com/c/same-thread");
-    expect(result?.browserConfig.desiredModel).toBe("GPT-5.6 Sol");
+    expect(result?.browserConfig.desiredModel).toBe("GPT-6");
+    expect(result?.browserConfig.modelStrategy).toBe("select");
+    expect(result?.browserConfig.thinkingTime).toBe("pro");
+  });
+
+  test("upgrades old moving-alias Sol conversations to the current default on the next turn", async () => {
+    const metadata = {
+      ...baseMetadata,
+      mode: "browser",
+      model: "gpt-5-pro",
+      options: {
+        model: "gpt-5-pro",
+        browserConfig: {
+          desiredModel: "GPT-5.6 Sol",
+          thinkingTime: "pro",
+          modelStrategy: "ignore",
+        },
+      },
+      browser: { runtime: { conversationId: "same-thread" } },
+    } as SessionMetadata;
+    const result = await resolveBrowserFollowupReference(metadata.id, {
+      readSession: async () => metadata,
+    });
+    expect(result?.browserConfig).toMatchObject({
+      desiredModel: "GPT-6",
+      thinkingTime: "pro",
+      modelStrategy: "select",
+      resumeConversationUrl: "https://chatgpt.com/c/same-thread",
+    });
+  });
+
+  test("honors an explicit model on a follow-up while keeping its conversation URL", async () => {
+    const metadata = {
+      ...baseMetadata,
+      mode: "browser",
+      model: "gpt-5-pro",
+      browser: {
+        config: { desiredModel: "GPT-5.6 Sol", thinkingTime: "pro" },
+        runtime: { conversationId: "same-thread" },
+      },
+    } as SessionMetadata;
+    const store = { readSession: async () => metadata };
+    expect(await resolveBrowserFollowupReference(metadata.id, store, "gpt-6-pro")).toMatchObject({
+      model: "gpt-6-pro",
+      browserConfig: { desiredModel: "GPT-6", modelStrategy: "select" },
+      resumeConversationUrl: "https://chatgpt.com/c/same-thread",
+    });
+    expect(await resolveBrowserFollowupReference(metadata.id, store, "gpt-5.6-sol")).toMatchObject({
+      model: "gpt-5.6-sol",
+      browserConfig: { desiredModel: "GPT-5.6 Sol", modelStrategy: "select" },
+    });
   });
   test("derives a resume URL from conversationId", () => {
     const metadata: SessionMetadata = {

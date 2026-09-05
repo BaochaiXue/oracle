@@ -233,8 +233,13 @@ The picker may label the row `Latest`; Oracle requires version 6 in the
 composer and verified Pro effort before Send. Only a confirmed unavailable
 model or Pro option permits the GPT-5.6 Sol Pro fallback. Missing controls,
 unknown selection state, authentication, and post-Send errors do not permit
-fallback. Evidence records `selectedModel` and `fallbackReason`; continued
-conversations keep that actual model.
+fallback. Evidence records `selectedModel` and `fallbackReason`. Each new
+follow-up selects Latest/GPT-6 Pro again in the original conversation instead
+of inheriting an old Sol fallback or skipping the picker. An explicit follow-up
+model overrides the parent model. Read-only recovery does not change models.
+An enabled Latest option prevents classifying a selection failure as model
+unavailability; a checked Latest row proves GPT-6 even if the composer only
+shows the generic Thinking effort label.
 
 ### CLI Options
 
@@ -258,7 +263,7 @@ conversations keep that actual model.
 - The fallback GPT-5.6 Sol Pro uses model `GPT-5.6 Sol` plus effort `Pro`. Oracle verifies both selections independently and **fails closed** rather than silently submitting at a weaker model or effort. Detection failures write a bounded, redacted picker diagnostic to the normal session log. Versioned GPT-5.5/5.4 aliases retain their legacy picker contracts instead of being silently remapped.
 - `--browser-research deep`: activate ChatGPT Deep Research before submitting the prompt. Use this for broad public-web research and final cited reports, not as a replacement for GPT-5.x Pro Heavy code review or pure reasoning.
 - `--browser-follow-up <prompt>`: submit another prompt in the same ChatGPT conversation after the initial answer. Repeat the flag for multi-turn reviews such as “challenge your recommendation”, “compare against this constraint”, then “give the final decision”. Deep Research has its own report lifecycle, so browser follow-ups are rejected when `--browser-research deep` is enabled.
-- `--followup <session-id>`: reopen the exact saved ChatGPT conversation from a completed browser session. Oracle inherits the parent browser profile, configuration, and model, then verifies the thread and prior turns before submitting.
+- `--followup <session-id>`: reopen the exact saved ChatGPT conversation and verify prior turns. Oracle inherits its browser profile but reselects Latest/GPT-6 Pro for each new canonical turn. Explicit `--model` overrides the parent model. An old Sol fallback does not become a permanent default.
 - `--browser-port <port>` (alias: `--browser-debug-port`; env: `ORACLE_BROWSER_PORT`/`ORACLE_BROWSER_DEBUG_PORT`): pin the DevTools port (handy on WSL/Windows firewalls). When omitted, a random open port is chosen.
 - `ORACLE_CHATGPT_ACCOUNT_EMAIL`: exact saved-account email to select if ChatGPT shows its “Welcome back” account picker. Set it on the machine running browser automation. Oracle never logs the address; without it, Oracle selects only a single unambiguous saved account and fails closed when several are present.
 - `--browser-manual-login` is the historical flag name for the persistent isolated profile and is enabled by default for direct CDP in this fork. Profile persistence is separate from process lifetime: `browser.browserLifetime:"while-needed"` is the default, `persistent` is explicitly always-on, and `ephemeral` is one-shot. Legacy `browser.keepBrowser:true|false` maps to `persistent|ephemeral`; `--browser-keep-browser` remains the persistent compatibility flag. `--browser-no-cookie-sync`, `--browser-headless`, `--browser-hide-window`, and global `-v/--verbose` control the other compatibility/visibility overrides.

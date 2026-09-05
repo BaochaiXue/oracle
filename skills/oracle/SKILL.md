@@ -58,7 +58,7 @@ the installed plugin or start a new agent context first.
      sent. Correct only the transport failure and retry the same task once.
    - An unknown submission state is indeterminate and must not be resent.
 
-## Model policy (browser, version 0.18.0)
+## Model policy (browser, version 0.18.1)
 
 GPT-6 Pro is the default. GPT-5.6 Sol Pro is the only fallback, permitted
 only when the model picker explicitly reports GPT-6 or its Pro effort as
@@ -75,9 +75,12 @@ treats a generic selector failure as proof of model unavailability.
 - Use `--browser-keep-browser`: close only terminal owned tabs, retaining
   the shared Chrome process and active/recoverable work.
 
-The current picker may name GPT-6 as `Latest`. That row is only a navigation
-entry: the composer must subsequently show version 6 (including `6Pro`) and
-the Pro effort must be verified. `Latest` or bare `Pro` alone is insufficient.
+The current picker's `Latest` model row is GPT-6. Select it for every new
+canonical turn, including follow-ups in an older Sol conversation, and verify
+the Pro effort. Model proof is either a checked `Latest` model row or version 6
+in the composer (including `6Pro`). Merely seeing an unchecked `Latest` option
+or bare `Pro` is insufficient. If enabled `Latest` is still offered, a failed
+selection is not proof that GPT-6 is unavailable and must not trigger fallback.
 There is no separate `Pro` model row to select.
 
 ```bash
@@ -94,8 +97,12 @@ unverified prompt identity, or any failure after Send is not a fallback
 trigger. Recover the original session without another submission. If the
 fallback cannot be verified either, fail closed; do not substitute another model.
 
-Keep the model already used by a continued conversation. Follow-ups inherit
-the parent's actual selected model, including GPT-5.6 Sol after fallback.
+Keep the conversation, and resolve the model policy for each new turn.
+Follow-ups must select and verify Latest/GPT-6 Pro before Send; never bypass
+model selection because a conversation was resumed, and never pin a new turn
+to a previous Sol fallback. An explicit `--model` on a follow-up takes priority
+over the stored parent model. Read-only `session --live` recovery of an already
+submitted turn does not select a model, start another turn, or resend anything.
 Do not start a new conversation to upgrade an existing exchange to GPT-6.
 
 Pro browser work requests a detached worker; verify `lifecycle.detached`.
@@ -185,8 +192,8 @@ oracle --followup <session-id-or-slug> \
 ```
 
 Oracle creates a child session, reopens the parent's exact ChatGPT conversation,
-inherits its browser profile, configuration, and model, bypasses the model
-picker, and submits the new turn there. Pass the latest child, not the root, so
+inherits its browser profile, selects and verifies the requested model again,
+and submits the new turn there. Pass the latest child, not the root, so
 the lineage in `oracle status` stays linear. New evidence can be attached with
 `--file` on any turn. When the follow-up turns are known in advance, plan them
 in the initial run with repeated `--browser-follow-up "<prompt>"` instead.

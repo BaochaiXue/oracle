@@ -2370,7 +2370,11 @@ async function runRootCommand(options: CliOptions): Promise<void> {
     if (normalizedMultiModels.length > 0) {
       throw new Error("--followup cannot be combined with --models.");
     }
-    browserFollowup = await resolveBrowserFollowupReference(options.followup, sessionStore);
+    browserFollowup = await resolveBrowserFollowupReference(
+      options.followup,
+      sessionStore,
+      getSource("model") === "cli" ? options.model : undefined,
+    );
     if (browserFollowup) {
       engine = "browser";
       resolvedOptions.model = browserFollowup.model;
