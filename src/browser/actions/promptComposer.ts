@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { ChromeClient, BrowserLogger } from "../types.js";
 import {
   DEFAULT_BROWSER_ATTACHMENT_TIMEOUT_MS,
@@ -26,8 +26,10 @@ const ENTER_KEY_EVENT = {
   nativeVirtualKeyCode: 13,
 } as const;
 const ENTER_KEY_TEXT = "\r";
-const RETAINED_DRAFT_RETRY_DELAY_MS = 2_000;
-const SUBMISSION_DOCUMENT_TOKEN_PROPERTY = "__oracleSubmissionDocumentToken";
+const TARGET_COMPOSITING_SETTLE_MS = 150;
+const PREEXISTING_COMPOSER_SETTLE_MS = 5_000;
+const PREEXISTING_COMPOSER_POLL_MS = 200;
+const OWNED_DRAFT_CLEAR_SETTLE_MS = 250;
 
 // Input.insertText gives ProseMirror plain text, but ProseMirror renders each
 // line as a direct block. HTMLElement.innerText inserts an extra newline
@@ -66,36 +68,240 @@ export interface AttachmentReadyExpectation {
 
 type AttachmentReadyInput = string | AttachmentReadyExpectation;
 
-type RetainedDraftRetryStatus = "dispatched" | "blocked" | "unavailable";
+type SubmissionDispatchMethod = "trusted-click" | "enter";
+type PotentiallySubmittingEvent = "mousePressed" | "enterKeyDown";
 
-interface RetainedDraftRetryResult {
-  status: RetainedDraftRetryStatus;
-  reason?: string;
-  gate?: Record<string, unknown>;
+interface SubmissionDiagnostic {
+  initialDispatchMethod: SubmissionDispatchMethod | null;
+  targetActivationAttempted: boolean;
+  targetActivationVerified: boolean;
+  preDispatchBaseline: number | null;
+  composerLengthBeforeDispatch: number | null;
+  composerCleared: boolean | null;
+  draftRetained: boolean | null;
+  newUserTurnObserved: boolean;
+  matchingUserTurnObserved: boolean;
+  assistantObserved: boolean;
+  generationControlObserved: boolean;
+  retryEligible: boolean;
+  retryBlockedReason: string | null;
+  alternateDispatchAttempted: boolean;
+  alternateDispatchMethod: SubmissionDispatchMethod | null;
+  finalCommitClassification: string | null;
+  ownershipVerified: boolean;
+  composerMatchedPromptBeforeDispatch: boolean;
+  ownedAttachmentCleanupAttempted: boolean;
+  ownedAttachmentSetVerified: boolean;
+  ownedAttachmentCleanupSucceeded: boolean;
+  ownedDraftCleanupAttempted: boolean;
+  ownedDraftCleanupSucceeded: boolean;
+  potentiallySubmittingEventEmitted: boolean;
+  potentiallySubmittingEvent: PotentiallySubmittingEvent | null;
+}
+
+interface SubmitPromptDependencies {
+  runtime: ChromeClient["Runtime"];
+  input: ChromeClient["Input"];
+  page?: ChromeClient["Page"];
+  attachmentNames?: AttachmentReadyInput[];
+  baselineTurns?: number | null;
+  inputTimeoutMs?: number | null;
+  attachmentTimeoutMs?: number | null;
+  /** Persist the at-risk dispatch boundary before final target/input revalidation. */
+  onPromptDispatched?: () => Promise<void> | void;
+  /** Record the dispatch-event timestamp immediately before mousePressed/keyDown. */
+  onPromptDispatchEvent?: () => Promise<void> | void;
+  onPromptCommitted?: (
+    committedTurns: number | null,
+    committedUserTurnIndex: number | null,
+  ) => Promise<void> | void;
+  onPromptCommitPending?: () => Promise<void> | void;
+  isSubmissionOwner?: () => Promise<boolean> | boolean;
+}
+
+function createSubmissionDiagnostic(baselineTurns?: number | null): SubmissionDiagnostic {
+  return {
+    initialDispatchMethod: null,
+    targetActivationAttempted: false,
+    targetActivationVerified: false,
+    preDispatchBaseline:
+      typeof baselineTurns === "number" && Number.isFinite(baselineTurns) && baselineTurns >= 0
+        ? Math.floor(baselineTurns)
+        : null,
+    composerLengthBeforeDispatch: null,
+    composerCleared: null,
+    draftRetained: null,
+    newUserTurnObserved: false,
+    matchingUserTurnObserved: false,
+    assistantObserved: false,
+    generationControlObserved: false,
+    retryEligible: false,
+    retryBlockedReason: null,
+    alternateDispatchAttempted: false,
+    alternateDispatchMethod: null,
+    finalCommitClassification: null,
+    ownershipVerified: false,
+    composerMatchedPromptBeforeDispatch: false,
+    ownedAttachmentCleanupAttempted: false,
+    ownedAttachmentSetVerified: false,
+    ownedAttachmentCleanupSucceeded: false,
+    ownedDraftCleanupAttempted: false,
+    ownedDraftCleanupSucceeded: false,
+    potentiallySubmittingEventEmitted: false,
+    potentiallySubmittingEvent: null,
+  };
+}
+
+function enrichSubmissionError(error: unknown, diagnostic: SubmissionDiagnostic): Error {
+  if (error instanceof BrowserAutomationError) {
+    const noPotentiallySubmittingEvent =
+      diagnostic.potentiallySubmittingEventEmitted === false &&
+      error.details?.potentiallySubmittingEventEmitted !== true &&
+      error.details?.dispatchAttempted !== true;
+    const noRetainedDraft =
+      diagnostic.draftRetained !== true && error.details?.draftRetained === false;
+    const inferredRetrySafe =
+      error.details?.retrySafe !== false &&
+      error.details?.recoverable !== true &&
+      noPotentiallySubmittingEvent &&
+      noRetainedDraft;
+    const retrySafe =
+      noPotentiallySubmittingEvent && (error.details?.retrySafe === true || inferredRetrySafe);
+    if (inferredRetrySafe) {
+      diagnostic.retryEligible = true;
+      diagnostic.retryBlockedReason = null;
+      diagnostic.finalCommitClassification ??= "safe-pre-dispatch-failure";
+    }
+    const guidance = retrySafe
+      ? "No potentially submitting event was emitted and no draft was retained; an explicit retry is safe."
+      : "Keep this session and inspect it with `oracle session <session-id> --render`; do not immediately rerun the prompt.";
+    return new BrowserAutomationError(
+      error.message.includes("oracle session <session-id>")
+        ? error.message
+        : `${error.message} ${guidance}`,
+      {
+        ...error.details,
+        retrySafe,
+        dispatchAttempted:
+          error.details?.dispatchAttempted ?? diagnostic.potentiallySubmittingEventEmitted,
+        potentiallySubmittingEventEmitted:
+          error.details?.potentiallySubmittingEventEmitted ??
+          diagnostic.potentiallySubmittingEventEmitted,
+        submissionDiagnostic: { ...diagnostic },
+      },
+      error,
+    );
+  }
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 export async function submitPrompt(
-  deps: {
-    runtime: ChromeClient["Runtime"];
-    input: ChromeClient["Input"];
-    attachmentNames?: AttachmentReadyInput[];
-    baselineTurns?: number | null;
-    inputTimeoutMs?: number | null;
-    attachmentTimeoutMs?: number | null;
-    onPromptDispatched?: () => Promise<void> | void;
-    onPromptCommitted?: (
-      committedTurns: number | null,
-      committedUserTurnIndex: number | null,
-    ) => Promise<void> | void;
-    onPromptCommitPending?: () => Promise<void> | void;
-    isSubmissionOwner?: () => Promise<boolean> | boolean;
-  },
+  deps: SubmitPromptDependencies,
   prompt: string,
   logger: BrowserLogger,
+): Promise<number | null> {
+  const diagnostic = createSubmissionDiagnostic(deps.baselineTurns);
+  try {
+    return await submitPromptInternal(deps, prompt, logger, diagnostic);
+  } catch (error) {
+    const finalError = await cleanupOwnedDraftAfterAttachmentReadinessFailure({
+      deps,
+      prompt,
+      diagnostic,
+      error,
+    });
+    throw enrichSubmissionError(finalError, diagnostic);
+  }
+}
+
+export async function assertPromptComposerEmptyBeforeAttachmentMutation(
+  Runtime: ChromeClient["Runtime"],
+): Promise<void> {
+  const diagnostic = createSubmissionDiagnostic();
+  try {
+    await assertPromptComposerEmptyForSubmission(Runtime, diagnostic);
+    if (!(await verifyComposerAttachmentSetEmpty(Runtime))) {
+      diagnostic.draftRetained = true;
+      throw new BrowserAutomationError(
+        "The ChatGPT composer already contains attachments; refusing to remove or replace them.",
+        {
+          stage: "submit-prompt",
+          code: "preexisting-composer-attachments",
+          submissionCommitted: false,
+          draftRetained: true,
+        },
+      );
+    }
+  } catch (error) {
+    throw enrichSubmissionError(error, diagnostic);
+  }
+}
+
+export async function clearOwnedPromptAndAttachmentsForFallback(
+  Runtime: ChromeClient["Runtime"],
+  expectedPrompt: string,
+  attachmentNames: AttachmentReadyInput[],
+  observedDraftSha256?: string,
+): Promise<void> {
+  try {
+    const ownedPrompt = await readExactOwnedPromptComposer(Runtime);
+    const expectedDigest = observedDraftSha256?.toLowerCase();
+    const promptMatches = expectedDigest
+      ? /^[a-f0-9]{64}$/.test(expectedDigest) &&
+        composerSha256(ownedPrompt ?? "") === expectedDigest
+      : ownedPrompt !== null &&
+        normalizeComposerText(ownedPrompt) === normalizeComposerText(expectedPrompt);
+    if (!promptMatches || ownedPrompt === null) {
+      throw new Error("exact owned prompt changed before fallback cleanup");
+    }
+    const attachmentsMatch =
+      attachmentNames.length > 0
+        ? await verifyExactOwnedAttachmentSet(Runtime, attachmentNames)
+        : await verifyComposerAttachmentSetEmpty(Runtime);
+    if (!attachmentsMatch) {
+      throw new Error("composer attachment set changed before fallback cleanup");
+    }
+
+    if (attachmentNames.length > 0) {
+      await clearExactOwnedAttachmentSet(Runtime, attachmentNames);
+    }
+
+    if (!(await clearExactOwnedPromptComposer(Runtime, ownedPrompt))) {
+      throw new Error("exact owned prompt changed during fallback cleanup");
+    }
+
+    if (!(await verifyComposerCleanupComplete(Runtime))) {
+      throw new Error("composer state changed during final fallback cleanup verification");
+    }
+  } catch (error) {
+    throw new BrowserAutomationError(
+      "Oracle could not verify removal of only this attempt's prompt and attachments before file fallback, so the exact tab was retained for recovery.",
+      {
+        stage: "submit-prompt",
+        code: "fallback-cleanup-unverified",
+        submissionCommitted: false,
+        dispatchAttempted: false,
+        potentiallySubmittingEventEmitted: false,
+        draftRetained: true,
+        retrySafe: false,
+        recoverable: true,
+        cleanupVerified: false,
+      },
+      error,
+    );
+  }
+}
+
+async function submitPromptInternal(
+  deps: SubmitPromptDependencies,
+  prompt: string,
+  logger: BrowserLogger,
+  diagnostic: SubmissionDiagnostic,
 ): Promise<number | null> {
   const { runtime, input } = deps;
 
   await waitForDomReady(runtime, logger, deps.inputTimeoutMs ?? undefined);
+  await assertPromptComposerEmptyForSubmission(runtime, diagnostic);
   const encodedPrompt = JSON.stringify(prompt);
   const focusResult = await runtime.evaluate({
     expression: `(() => {
@@ -214,24 +420,15 @@ export async function submitPrompt(
     deps.baselineTurns >= 0
       ? Math.floor(deps.baselineTurns)
       : null;
-  const retainedDraftRecoveryEligible =
-    preDispatchBaseline !== null &&
-    !deps.attachmentNames?.length &&
-    typeof deps.isSubmissionOwner === "function";
-  const submissionDocumentToken = retainedDraftRecoveryEligible ? randomUUID() : null;
+  diagnostic.preDispatchBaseline = preDispatchBaseline;
   const promptLength = prompt.length;
+  await activateExactSubmissionTarget({
+    Page: deps.page,
+    isSubmissionOwner: deps.isSubmissionOwner,
+    diagnostic,
+  });
   const postVerification = await runtime.evaluate({
     expression: `(() => {
-      const submissionDocumentToken = ${JSON.stringify(submissionDocumentToken)};
-      const submissionDocumentTokenProperty = ${JSON.stringify(SUBMISSION_DOCUMENT_TOKEN_PROPERTY)};
-      if (submissionDocumentToken) {
-        Object.defineProperty(document, submissionDocumentTokenProperty, {
-          configurable: true,
-          enumerable: false,
-          value: submissionDocumentToken,
-          writable: true,
-        });
-      }
       const editor = document.querySelector(${primarySelectorLiteral});
       const fallback = document.querySelector(${fallbackSelectorLiteral});
       const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
@@ -249,10 +446,6 @@ export async function submitPrompt(
         editorText: readComposerValue(editor),
         fallbackValue: fallback?.value ?? '',
         activeValue: readComposerValue(active),
-        href: typeof location === 'object' && location.href ? location.href : '',
-        documentTokenStored:
-          !submissionDocumentToken ||
-          document[submissionDocumentTokenProperty] === submissionDocumentToken,
       };
     })()`,
     returnByValue: true,
@@ -260,15 +453,15 @@ export async function submitPrompt(
   const observedEditor = postVerification.result?.value?.editorText ?? "";
   const observedFallback = postVerification.result?.value?.fallbackValue ?? "";
   const observedActive = postVerification.result?.value?.activeValue ?? "";
-  const submissionOwnerHref = postVerification.result?.value?.href ?? "";
-  const submissionDocumentTokenStored =
-    postVerification.result?.value?.documentTokenStored === true;
   const observedComposer = observedActive || observedEditor || observedFallback;
   const observedLength = Math.max(
     observedEditor.length,
     observedFallback.length,
     observedActive.length,
   );
+  diagnostic.composerLengthBeforeDispatch = observedLength;
+  diagnostic.composerCleared = observedLength === 0;
+  diagnostic.draftRetained = observedLength > 0;
   if (promptLength >= 50_000 && observedLength > 0 && observedLength < promptLength - 2_000) {
     // Learned: very large prompts can truncate silently; fail fast so we can fall back to file uploads.
     await logDomFailure(runtime, logger, "prompt-too-large");
@@ -277,17 +470,16 @@ export async function submitPrompt(
       {
         stage: "submit-prompt",
         code: "prompt-too-large",
-        promptSubmitted: false,
         submissionCommitted: false,
-        retrySafe: true,
+        draftRetained: true,
         promptLength,
         observedLength,
+        observedDraftSha256: composerSha256(observedComposer),
       },
     );
   }
 
-  // The dedicated browser is deliberately visible but must never claim the
-  // operator's keyboard focus. Re-read the visible composer immediately before
+  // Re-read the exact activated target's visible composer immediately before
   // Send and fail closed if anything changed after Oracle populated it.
   if (normalizeComposerText(observedComposer) !== normalizeComposerText(prompt)) {
     throw new BrowserAutomationError(
@@ -302,60 +494,590 @@ export async function submitPrompt(
       },
     );
   }
+  diagnostic.composerMatchedPromptBeforeDispatch = true;
 
-  const clicked = await attemptSendButton(
-    runtime,
-    input,
-    logger,
-    deps?.attachmentNames,
-    deps?.attachmentTimeoutMs,
-    prompt,
-  );
-  if (!clicked) {
-    await assertComposerUnchanged(runtime, prompt);
-    await input.dispatchKeyEvent({
-      type: "keyDown",
-      ...ENTER_KEY_EVENT,
-      text: ENTER_KEY_TEXT,
-      unmodifiedText: ENTER_KEY_TEXT,
+  let dispatchIntentPersisted = false;
+  const persistDispatchIntent = async (): Promise<void> => {
+    if (dispatchIntentPersisted) return;
+    await deps.onPromptDispatched?.();
+    dispatchIntentPersisted = true;
+  };
+  const revalidateAfterDispatchIntent = async (): Promise<void> => {
+    await activateExactSubmissionTarget({
+      Page: deps.page,
+      isSubmissionOwner: deps.isSubmissionOwner,
+      diagnostic,
     });
-    await input.dispatchKeyEvent({
-      type: "keyUp",
-      ...ENTER_KEY_EVENT,
+  };
+  const markPotentiallySubmittingEvent = async (
+    method: SubmissionDispatchMethod,
+    event: PotentiallySubmittingEvent,
+  ): Promise<void> => {
+    if (diagnostic.potentiallySubmittingEventEmitted) return;
+    await deps.onPromptDispatchEvent?.();
+    diagnostic.initialDispatchMethod = method;
+    diagnostic.potentiallySubmittingEventEmitted = true;
+    diagnostic.potentiallySubmittingEvent = event;
+    diagnostic.retryEligible = false;
+    diagnostic.retryBlockedReason = "potentially-submitting-event-emitted";
+  };
+
+  try {
+    const clicked = await attemptSendButton(
+      runtime,
+      input,
+      logger,
+      deps?.attachmentNames,
+      deps?.attachmentTimeoutMs,
+      prompt,
+      () => markPotentiallySubmittingEvent("trusted-click", "mousePressed"),
+      persistDispatchIntent,
+      revalidateAfterDispatchIntent,
+    );
+    if (!clicked) {
+      await persistDispatchIntent();
+      await revalidateAfterDispatchIntent();
+      await assertComposerUnchanged(runtime, prompt);
+      await dispatchEnterKey(input, () => markPotentiallySubmittingEvent("enter", "enterKeyDown"));
+      logger("Submitted prompt via Enter key");
+    } else {
+      logger("Clicked send button");
+    }
+  } catch (error) {
+    if (!diagnostic.potentiallySubmittingEventEmitted) throw error;
+    diagnostic.finalCommitClassification = "commit-indeterminate-after-dispatch";
+    throw buildIndeterminateCommitError({
+      prompt,
+      diagnostic,
+      cause: error,
     });
-    logger("Submitted prompt via Enter key");
-  } else {
-    logger("Clicked send button");
   }
-  await deps.onPromptDispatched?.();
 
   const commitTimeoutMs = Math.max(60_000, deps.inputTimeoutMs ?? 0);
   // Learned: the send button can succeed but the turn doesn't appear immediately; verify commit via turns/stop button.
-  const committed = await verifyPromptCommitted(
-    runtime,
-    prompt,
-    commitTimeoutMs,
-    logger,
-    preDispatchBaseline ?? undefined,
-    deps.onPromptCommitPending,
-    clicked &&
-      retainedDraftRecoveryEligible &&
-      submissionOwnerHref &&
-      submissionDocumentToken &&
-      submissionDocumentTokenStored
-      ? () =>
-          attemptRetainedDraftPageRetry({
-            Runtime: runtime,
-            prompt,
-            baseline: preDispatchBaseline,
-            submissionOwnerHref,
-            submissionDocumentToken,
-            isSubmissionOwner: deps.isSubmissionOwner!,
-          })
-      : undefined,
-  );
+  let committed: { turnsCount: number | null; userTurnIndex: number | null };
+  try {
+    committed = await verifyPromptCommitted(
+      runtime,
+      prompt,
+      commitTimeoutMs,
+      logger,
+      preDispatchBaseline ?? undefined,
+      deps.onPromptCommitPending,
+      diagnostic,
+    );
+  } catch (error) {
+    const alreadyIndeterminate =
+      error instanceof BrowserAutomationError && error.details?.retrySafe === false;
+    if (diagnostic.potentiallySubmittingEventEmitted && !alreadyIndeterminate) {
+      diagnostic.finalCommitClassification = "commit-indeterminate-after-dispatch";
+      throw buildIndeterminateCommitError({
+        prompt,
+        diagnostic,
+        timeoutMs: commitTimeoutMs,
+        cause: error,
+      });
+    }
+    throw error;
+  }
+  diagnostic.finalCommitClassification = "verified-single-user-turn";
   await deps.onPromptCommitted?.(committed.turnsCount, committed.userTurnIndex);
   return committed.turnsCount;
+}
+
+async function assertPromptComposerEmptyForSubmission(
+  Runtime: ChromeClient["Runtime"],
+  diagnostic: SubmissionDiagnostic,
+): Promise<void> {
+  const deadline = Date.now() + PREEXISTING_COMPOSER_SETTLE_MS;
+  let composerLength = 0;
+  while (true) {
+    const result = await Runtime.evaluate({
+      expression: `(() => {
+        // oracle-preexisting-composer-check
+        const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
+        ${COMPOSER_VALUE_READER_SOURCE}
+        const isVisible = (node) => {
+          if (!node || typeof node.getBoundingClientRect !== 'function') return false;
+          const rect = node.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        };
+        const inputs = inputSelectors
+          .map((selector) => document.querySelector(selector))
+          .filter((node) => Boolean(node));
+        const active = inputs.find((node) => isVisible(node)) || inputs[0] || null;
+        const composerValue = readComposerValue(active);
+        return {
+          composerFound: Boolean(active),
+          composerEmpty: String(composerValue).trim().length === 0,
+          composerLength: String(composerValue).length,
+        };
+      })()`,
+      returnByValue: true,
+    });
+    const value = result.result?.value as
+      | { composerFound?: boolean; composerEmpty?: boolean; composerLength?: number }
+      | undefined;
+    if (value?.composerFound === false || typeof value?.composerEmpty !== "boolean") {
+      throw new BrowserAutomationError(
+        "Oracle could not verify the active ChatGPT composer before typing; refusing to modify the page.",
+        {
+          stage: "submit-prompt",
+          code: "composer-state-unavailable",
+          submissionCommitted: false,
+          draftRetained: false,
+        },
+      );
+    }
+    if (value.composerEmpty) return;
+
+    composerLength =
+      typeof value.composerLength === "number" && Number.isFinite(value.composerLength)
+        ? Math.max(0, Math.floor(value.composerLength))
+        : 0;
+    if (Date.now() >= deadline) break;
+    await delay(Math.min(PREEXISTING_COMPOSER_POLL_MS, Math.max(0, deadline - Date.now())));
+  }
+
+  diagnostic.composerLengthBeforeDispatch = composerLength;
+  diagnostic.composerCleared = false;
+  diagnostic.draftRetained = true;
+  diagnostic.finalCommitClassification = "preexisting-composer-content";
+  throw new BrowserAutomationError(
+    "The ChatGPT composer already contains text that Oracle cannot prove it owns; refusing to append, clear, or submit it.",
+    {
+      stage: "submit-prompt",
+      code: "preexisting-composer-content",
+      submissionCommitted: false,
+      draftRetained: true,
+      composerLengthBeforeDispatch: composerLength,
+      composerSettleTimeoutMs: PREEXISTING_COMPOSER_SETTLE_MS,
+    },
+  );
+}
+
+async function cleanupOwnedDraftAfterAttachmentReadinessFailure({
+  deps,
+  prompt,
+  diagnostic,
+  error,
+}: {
+  deps: SubmitPromptDependencies;
+  prompt: string;
+  diagnostic: SubmissionDiagnostic;
+  error: unknown;
+}): Promise<unknown> {
+  if (
+    !(error instanceof BrowserAutomationError) ||
+    error.details?.code !== "attachment-send-not-ready"
+  ) {
+    return error;
+  }
+
+  diagnostic.finalCommitClassification = "pre-dispatch-attachment-readiness-failed";
+  const canAttemptCleanup =
+    !diagnostic.potentiallySubmittingEventEmitted &&
+    diagnostic.targetActivationVerified &&
+    diagnostic.ownershipVerified &&
+    diagnostic.composerMatchedPromptBeforeDispatch &&
+    Array.isArray(deps.attachmentNames) &&
+    deps.attachmentNames.length > 0 &&
+    typeof deps.isSubmissionOwner === "function";
+
+  if (!canAttemptCleanup) {
+    diagnostic.retryEligible = false;
+    diagnostic.retryBlockedReason = diagnostic.potentiallySubmittingEventEmitted
+      ? "potentially-submitting-event-emitted"
+      : "owned-pre-dispatch-cleanup-not-provable";
+    return new BrowserAutomationError(
+      `${error.message} Oracle could not prove a complete pre-dispatch cleanup, so the exact tab was retained for recovery.`,
+      {
+        ...error.details,
+        submissionCommitted: false,
+        draftRetained: diagnostic.draftRetained !== false,
+        retrySafe: false,
+        recoverable: true,
+        cleanupVerified: false,
+      },
+      error,
+    );
+  }
+
+  try {
+    if (!(await deps.isSubmissionOwner?.())) {
+      throw new Error("submission target ownership changed before cleanup");
+    }
+
+    if (!(await matchesExactOwnedPromptComposer(deps.runtime, prompt))) {
+      throw new Error("exact owned prompt changed before attachment cleanup");
+    }
+    if (!(await verifyExactOwnedAttachmentSet(deps.runtime, deps.attachmentNames ?? []))) {
+      throw new Error("exact owned attachment set changed before cleanup");
+    }
+    diagnostic.ownedAttachmentSetVerified = true;
+
+    diagnostic.ownedAttachmentCleanupAttempted = true;
+    await clearExactOwnedAttachmentSet(deps.runtime, deps.attachmentNames ?? []);
+    diagnostic.ownedAttachmentCleanupSucceeded = true;
+
+    if (!(await deps.isSubmissionOwner?.())) {
+      throw new Error("submission target ownership changed during cleanup");
+    }
+
+    diagnostic.ownedDraftCleanupAttempted = true;
+    const draftCleared = await clearExactOwnedPromptComposer(deps.runtime, prompt);
+    if (!draftCleared) {
+      throw new Error("exact owned prompt was not present and empty after cleanup");
+    }
+    diagnostic.ownedDraftCleanupSucceeded = true;
+    if (!(await deps.isSubmissionOwner?.())) {
+      throw new Error("submission target ownership changed after cleanup");
+    }
+    if (!(await verifyComposerCleanupComplete(deps.runtime))) {
+      throw new Error("composer state changed during final cleanup verification");
+    }
+    diagnostic.composerCleared = true;
+    diagnostic.draftRetained = false;
+    diagnostic.retryEligible = true;
+    diagnostic.retryBlockedReason = null;
+    diagnostic.finalCommitClassification = "safe-pre-dispatch-cleanup";
+    return new BrowserAutomationError(
+      `${error.message} Oracle verified that no submitting event was emitted and cleared only this attempt's exact prompt and attachments; an explicit new attempt is safe.`,
+      {
+        ...error.details,
+        submissionCommitted: false,
+        dispatchAttempted: false,
+        potentiallySubmittingEventEmitted: false,
+        draftRetained: false,
+        retrySafe: true,
+        recoverable: false,
+        cleanupVerified: true,
+      },
+      error,
+    );
+  } catch (cleanupError) {
+    diagnostic.retryEligible = false;
+    diagnostic.retryBlockedReason = "owned-pre-dispatch-cleanup-unverified";
+    return new BrowserAutomationError(
+      `${error.message} Oracle could not verify a complete pre-dispatch cleanup, so the exact tab was retained for recovery.`,
+      {
+        ...error.details,
+        submissionCommitted: false,
+        draftRetained: diagnostic.draftRetained !== false,
+        retrySafe: false,
+        recoverable: true,
+        cleanupVerified: false,
+        cleanupFailure: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+      },
+      error,
+    );
+  }
+}
+
+async function matchesExactOwnedPromptComposer(
+  Runtime: ChromeClient["Runtime"],
+  expectedPrompt: string,
+): Promise<boolean> {
+  const result = await Runtime.evaluate({
+    expression: `(() => {
+      // oracle-owned-draft-cleanup-precheck
+      const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
+      ${COMPOSER_VALUE_READER_SOURCE}
+      const normalizeComposer = (value) => String(value ?? '')
+        .replace(/\\r\\n?/g, '\\n')
+        .replace(/\\u00a0/g, ' ');
+      const expected = normalizeComposer(${JSON.stringify(expectedPrompt)});
+      const isVisible = (node) => {
+        if (!node || typeof node.getBoundingClientRect !== 'function') return false;
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+      const nodes = Array.from(new Set(inputSelectors.flatMap((selector) =>
+        Array.from(document.querySelectorAll(selector)))));
+      const active = nodes.find((node) => isVisible(node)) || nodes[0] || null;
+      const nonEmptyNodes = nodes.filter((node) =>
+        normalizeComposer(readComposerValue(node)).trim().length > 0);
+      return {
+        matches:
+          Boolean(active) &&
+          normalizeComposer(readComposerValue(active)) === expected &&
+          nonEmptyNodes.length > 0 &&
+          nonEmptyNodes.every((node) => normalizeComposer(readComposerValue(node)) === expected),
+      };
+    })()`,
+    returnByValue: true,
+  });
+  return result.result?.value?.matches === true;
+}
+
+async function readExactOwnedPromptComposer(
+  Runtime: ChromeClient["Runtime"],
+): Promise<string | null> {
+  const result = await Runtime.evaluate({
+    expression: `(() => {
+      // oracle-owned-draft-read
+      const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
+      ${COMPOSER_VALUE_READER_SOURCE}
+      const normalizeComposer = (value) => String(value ?? '')
+        .replace(/\\r\\n?/g, '\\n')
+        .replace(/\\u00a0/g, ' ');
+      const isVisible = (node) => {
+        if (!node || typeof node.getBoundingClientRect !== 'function') return false;
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+      const nodes = Array.from(new Set(inputSelectors.flatMap((selector) =>
+        Array.from(document.querySelectorAll(selector)))));
+      const active = nodes.find((node) => isVisible(node)) || nodes[0] || null;
+      const observed = readComposerValue(active);
+      const normalizedObserved = normalizeComposer(observed);
+      const nonEmptyNodes = nodes.filter((node) =>
+        normalizeComposer(readComposerValue(node)).trim().length > 0);
+      return {
+        exact:
+          Boolean(active) &&
+          normalizedObserved.trim().length > 0 &&
+          nonEmptyNodes.length > 0 &&
+          nonEmptyNodes.every((node) =>
+            normalizeComposer(readComposerValue(node)) === normalizedObserved),
+        observed,
+      };
+    })()`,
+    returnByValue: true,
+  });
+  const value = result.result?.value as { exact?: boolean; observed?: string } | undefined;
+  return value?.exact === true && typeof value.observed === "string" ? value.observed : null;
+}
+
+async function verifyExactOwnedAttachmentSet(
+  Runtime: ChromeClient["Runtime"],
+  attachmentNames: AttachmentReadyInput[],
+): Promise<boolean> {
+  if (attachmentNames.length === 0) return false;
+  const result = await Runtime.evaluate({
+    expression: buildAttachmentReadyExpression(attachmentNames, true),
+    returnByValue: true,
+  });
+  return result.result?.value === true;
+}
+
+async function clearExactOwnedAttachmentSet(
+  Runtime: ChromeClient["Runtime"],
+  attachmentNames: AttachmentReadyInput[],
+): Promise<void> {
+  if (attachmentNames.length === 0) {
+    throw new Error("exact owned attachment set is empty");
+  }
+  const marker = `oracle-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const result = await Runtime.evaluate({
+    expression: buildAttachmentReadyExpression(attachmentNames, true, marker),
+    returnByValue: true,
+  });
+  const value = result.result?.value as
+    | { exactSetMatched?: boolean; removeClicks?: number }
+    | undefined;
+  if (value?.exactSetMatched !== true || value.removeClicks !== attachmentNames.length) {
+    throw new Error("exact owned attachment snapshot changed before targeted cleanup");
+  }
+
+  await delay(OWNED_DRAFT_CLEAR_SETTLE_MS);
+  const verification = await Runtime.evaluate({
+    expression: `document.querySelectorAll(${JSON.stringify(
+      `[data-oracle-owned-attachment-cleanup="${marker}"]`,
+    )}).length`,
+    returnByValue: true,
+  });
+  if (verification.result?.value !== 0) {
+    throw new Error("targeted attachment controls did not detach after cleanup");
+  }
+  if (!(await verifyComposerAttachmentSetEmpty(Runtime))) {
+    throw new Error("composer attachment set was not empty after targeted cleanup");
+  }
+}
+
+async function verifyComposerAttachmentSetEmpty(
+  Runtime: ChromeClient["Runtime"],
+): Promise<boolean> {
+  const result = await Runtime.evaluate({
+    expression: buildAttachmentReadyExpression([], true),
+    returnByValue: true,
+  });
+  return result.result?.value === true;
+}
+
+async function verifyComposerCleanupComplete(Runtime: ChromeClient["Runtime"]): Promise<boolean> {
+  const result = await Runtime.evaluate({
+    expression: `(() => {
+      // oracle-owned-draft-cleanup-final-verify
+      const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
+      ${COMPOSER_VALUE_READER_SOURCE}
+      const nodes = Array.from(new Set(inputSelectors.flatMap((selector) =>
+        Array.from(document.querySelectorAll(selector)))));
+      const attachmentSetEmpty = ${buildAttachmentReadyExpression([], true)};
+      return {
+        composerFound: nodes.length > 0,
+        composerEmpty: nodes.every((node) => String(readComposerValue(node)).trim().length === 0),
+        attachmentSetEmpty,
+      };
+    })()`,
+    returnByValue: true,
+  });
+  return (
+    result.result?.value?.composerFound === true &&
+    result.result?.value?.composerEmpty === true &&
+    result.result?.value?.attachmentSetEmpty === true
+  );
+}
+
+async function clearExactOwnedPromptComposer(
+  Runtime: ChromeClient["Runtime"],
+  expectedPrompt: string,
+): Promise<boolean> {
+  const result = await Runtime.evaluate({
+    expression: `(() => {
+      // oracle-owned-draft-cleanup
+      const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
+      ${COMPOSER_VALUE_READER_SOURCE}
+      const normalizeComposer = (value) => String(value ?? '')
+        .replace(/\\r\\n?/g, '\\n')
+        .replace(/\\u00a0/g, ' ');
+      const expected = normalizeComposer(${JSON.stringify(expectedPrompt)});
+      const isVisible = (node) => {
+        if (!node || typeof node.getBoundingClientRect !== 'function') return false;
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+      const nodes = Array.from(new Set(inputSelectors.flatMap((selector) =>
+        Array.from(document.querySelectorAll(selector)))));
+      const active = nodes.find((node) => isVisible(node)) || nodes[0] || null;
+      const nonEmptyNodes = nodes.filter((node) =>
+        normalizeComposer(readComposerValue(node)).trim().length > 0);
+      if (
+        !active ||
+        normalizeComposer(readComposerValue(active)) !== expected ||
+        nonEmptyNodes.length === 0 ||
+        nonEmptyNodes.some((node) => normalizeComposer(readComposerValue(node)) !== expected)
+      ) {
+        return { cleared: false };
+      }
+      for (const node of nonEmptyNodes) {
+        if (node instanceof HTMLTextAreaElement || node instanceof HTMLInputElement) {
+          node.value = '';
+          node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }));
+          node.dispatchEvent(new Event('change', { bubbles: true }));
+        } else if (node instanceof HTMLElement) {
+          node.textContent = '';
+          node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }));
+        }
+      }
+      return { cleared: true };
+    })()`,
+    returnByValue: true,
+  });
+  if (result.result?.value?.cleared !== true) return false;
+
+  await delay(OWNED_DRAFT_CLEAR_SETTLE_MS);
+  const verification = await Runtime.evaluate({
+    expression: `(() => {
+      // oracle-owned-draft-cleanup-verify
+      const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
+      ${COMPOSER_VALUE_READER_SOURCE}
+      const nodes = Array.from(new Set(inputSelectors.flatMap((selector) =>
+        Array.from(document.querySelectorAll(selector)))));
+      return {
+        composerFound: nodes.length > 0,
+        empty: nodes.every((node) => String(readComposerValue(node)).trim().length === 0),
+      };
+    })()`,
+    returnByValue: true,
+  });
+  return (
+    verification.result?.value?.composerFound === true && verification.result?.value?.empty === true
+  );
+}
+
+async function dispatchEnterKey(
+  Input: ChromeClient["Input"],
+  onPotentiallySubmittingEvent?: () => Promise<void> | void,
+): Promise<void> {
+  await onPotentiallySubmittingEvent?.();
+  await Input.dispatchKeyEvent({
+    type: "keyDown",
+    ...ENTER_KEY_EVENT,
+    text: ENTER_KEY_TEXT,
+    unmodifiedText: ENTER_KEY_TEXT,
+  });
+  await Input.dispatchKeyEvent({
+    type: "keyUp",
+    ...ENTER_KEY_EVENT,
+  });
+}
+
+async function activateExactSubmissionTarget({
+  Page,
+  isSubmissionOwner,
+  diagnostic,
+}: {
+  Page?: ChromeClient["Page"];
+  isSubmissionOwner?: () => Promise<boolean> | boolean;
+  diagnostic: SubmissionDiagnostic;
+}): Promise<void> {
+  if (!Page || typeof Page.bringToFront !== "function") return;
+  diagnostic.targetActivationAttempted = true;
+
+  const ownershipCode = "ownership-changed-before-send";
+  const verifyOwner = async (): Promise<boolean> => {
+    if (typeof isSubmissionOwner !== "function") return false;
+    try {
+      return (await isSubmissionOwner()) === true;
+    } catch {
+      return false;
+    }
+  };
+  if (!(await verifyOwner())) {
+    diagnostic.ownershipVerified = false;
+    throw new BrowserAutomationError(
+      "The exact Oracle-owned browser target could not be verified before dispatch.",
+      {
+        stage: "submit-prompt",
+        code: ownershipCode,
+        submissionCommitted: false,
+        draftRetained: true,
+      },
+    );
+  }
+  diagnostic.ownershipVerified = true;
+
+  try {
+    await Page.bringToFront();
+  } catch (error) {
+    throw new BrowserAutomationError(
+      "The exact Oracle-owned browser target could not be activated before dispatch.",
+      {
+        stage: "submit-prompt",
+        code: "target-activation-failed",
+        submissionCommitted: false,
+        draftRetained: true,
+      },
+      error,
+    );
+  }
+  await delay(TARGET_COMPOSITING_SETTLE_MS);
+
+  if (!(await verifyOwner())) {
+    diagnostic.ownershipVerified = false;
+    throw new BrowserAutomationError(
+      "The exact Oracle-owned browser target changed during activation; refusing to dispatch.",
+      {
+        stage: "submit-prompt",
+        code: ownershipCode,
+        submissionCommitted: false,
+        draftRetained: true,
+      },
+    );
+  }
+  diagnostic.ownershipVerified = true;
+  diagnostic.targetActivationVerified = true;
 }
 
 export async function clearPromptComposer(Runtime: ChromeClient["Runtime"], logger: BrowserLogger) {
@@ -460,7 +1182,11 @@ async function waitForDomReady(
   logger?.(`Page did not reach ready/composer state within ${timeoutMs}ms; continuing cautiously.`);
 }
 
-function buildAttachmentReadyExpression(attachmentNames: AttachmentReadyInput[]): string {
+function buildAttachmentReadyExpression(
+  attachmentNames: AttachmentReadyInput[],
+  requireExactSet = false,
+  cleanupMarker?: string,
+): string {
   const attachmentExpectations = attachmentNames.map((attachment) => {
     const name = typeof attachment === "string" ? attachment : attachment.name;
     const normalized = name.toLowerCase().replace(/\s+/g, " ").trim();
@@ -474,6 +1200,9 @@ function buildAttachmentReadyExpression(attachmentNames: AttachmentReadyInput[])
   const namesLiteral = JSON.stringify(attachmentExpectations);
   return `(() => {
     const expected = ${namesLiteral};
+    const requireExactSet = ${JSON.stringify(requireExactSet)};
+    const cleanupMode = ${JSON.stringify(Boolean(cleanupMarker))};
+    const cleanupMarker = ${JSON.stringify(cleanupMarker ?? null)};
     const sendSelectors = ${JSON.stringify(SEND_BUTTON_SELECTORS)};
     const normalize = (value) => String(value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
     const hasNameBoundary = (text, name) => {
@@ -747,12 +1476,76 @@ function buildAttachmentReadyExpression(attachmentNames: AttachmentReadyInput[])
       visibleExtensionLabelsMatchExpected &&
       removeAffordances.length >= expected.length;
 
-    return chipsReady || inputsReady || countReady;
+    const exactDistinctIndexes = (labels) => {
+      if (labels.length !== expected.length) return null;
+      const used = new Set();
+      const indexes = [];
+      for (const item of expected) {
+        const index = labels.findIndex((label, candidateIndex) =>
+          !used.has(candidateIndex) && matchesExpected(label, item),
+        );
+        if (index === -1) return null;
+        used.add(index);
+        indexes.push(index);
+      }
+      return indexes;
+    };
+    const removeLabels = removeAffordances.map((node) => collectLabelHaystack(node));
+    const fileInputs = Array.from(new Set(attachmentRoots.flatMap((root) =>
+      Array.from(root.querySelectorAll('input[type="file"]')),
+    ))).filter((input) => input instanceof HTMLInputElement);
+    const readInputNames = (input) =>
+      Array.from(input.files || []).map((file) => normalize(file?.name));
+    const inputNames = fileInputs.flatMap(readInputNames);
+    const exactRemoveIndexes = exactDistinctIndexes(removeLabels);
+    const exactInputIndexes = exactDistinctIndexes(inputNames);
+    const exactSetReady = expected.length === 0
+      ? exactRemoveIndexes !== null && exactInputIndexes !== null
+      : exactRemoveIndexes !== null || exactInputIndexes !== null;
+
+    if (cleanupMode) {
+      if (!(chipsReady || inputsReady || countReady) || exactRemoveIndexes === null) {
+        return { exactSetMatched: false, removeClicks: 0 };
+      }
+      const capturedButtons = exactRemoveIndexes.map((index) => removeAffordances[index]);
+      const capturedInputs = exactInputIndexes === null
+        ? []
+        : fileInputs
+            .map((input) => ({ input, signature: readInputNames(input).sort().join('\0') }))
+            .filter(({ signature }) => Boolean(signature));
+      for (const button of capturedButtons) {
+        button.setAttribute('data-oracle-owned-attachment-cleanup', cleanupMarker);
+      }
+      for (const button of capturedButtons) {
+        try {
+          if (button instanceof HTMLButtonElement) button.type = 'button';
+          button.click();
+        } catch {}
+      }
+      // ChatGPT can detach the owned attachment chip while leaving the selected
+      // FileList on its hidden input. Clear only an input set that independently
+      // matches this attempt exactly, otherwise the stale DOM value makes a
+      // successful targeted removal look incomplete and strands the owned draft.
+      for (const { input, signature } of capturedInputs) {
+        const currentSignature = readInputNames(input).sort().join('\0');
+        if (!currentSignature || currentSignature !== signature) continue;
+        try {
+          input.value = '';
+        } catch {}
+      }
+      return { exactSetMatched: true, removeClicks: capturedButtons.length };
+    }
+
+    return (chipsReady || inputsReady || countReady) && (!requireExactSet || exactSetReady);
   })()`;
 }
 
-export function buildAttachmentReadyExpressionForTest(attachmentNames: AttachmentReadyInput[]) {
-  return buildAttachmentReadyExpression(attachmentNames);
+export function buildAttachmentReadyExpressionForTest(
+  attachmentNames: AttachmentReadyInput[],
+  requireExactSet = false,
+  cleanupMarker?: string,
+) {
+  return buildAttachmentReadyExpression(attachmentNames, requireExactSet, cleanupMarker);
 }
 
 async function attemptSendButton(
@@ -762,6 +1555,9 @@ async function attemptSendButton(
   attachmentNames?: AttachmentReadyInput[],
   attachmentTimeoutMs?: number | null,
   expectedPrompt?: string,
+  onPotentiallySubmittingEvent?: () => Promise<void> | void,
+  persistDispatchIntent?: () => Promise<void> | void,
+  revalidateAfterDispatchIntent?: () => Promise<void> | void,
 ): Promise<boolean> {
   const needAttachment = Array.isArray(attachmentNames) && attachmentNames.length > 0;
   const expectedPromptLiteral = JSON.stringify(expectedPrompt ?? null);
@@ -809,43 +1605,62 @@ async function attemptSendButton(
     }
     const button = candidates.find((node) => isVisible(node) && isEnabled(node)) || null;
     if (!button) return { status: 'missing' };
-    button.scrollIntoView({ block: 'center', inline: 'center' });
     const rect = button.getBoundingClientRect();
     if (rect.width > 0 && rect.height > 0) {
-      return { status: 'point', x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      const viewportWidth = Number.isFinite(window.innerWidth) ? window.innerWidth : 0;
+      const viewportHeight = Number.isFinite(window.innerHeight) ? window.innerHeight : 0;
+      const outsideViewport =
+        viewportWidth > 0 && viewportHeight > 0 &&
+        (x < 0 || y < 0 || x >= viewportWidth || y >= viewportHeight);
+      const canHitTest = typeof document.elementFromPoint === 'function';
+      const hit = outsideViewport || !canHitTest ? null : document.elementFromPoint(x, y);
+      if (
+        outsideViewport ||
+        !canHitTest ||
+        !hit ||
+        (hit !== button && !button.contains?.(hit))
+      ) {
+        button.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+        return { status: 'settling' };
+      }
+      return { status: 'point', x, y };
     }
-    // Last-resort fallback for unusual DOMs where the button is visible but has no useful rect.
-    dispatchClickSequence(button);
-    return { status: 'clicked' };
+    return { status: 'settling' };
   })()`;
 
   // Give attachment-bearing submissions more headroom. ChatGPT's chip render can
   // settle slowly for multi-file uploads, but plain text sends should keep the
   // shorter historical deadline.
   const timeoutMs = sendButtonTimeoutMs(attachmentNames, attachmentTimeoutMs);
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  type SendButtonProbe = {
+    status?: "missing" | "mutated" | "point" | "settling" | "attachments-not-ready";
+    x?: number;
+    y?: number;
+    observedLength?: number;
+  };
+  const readSendButtonProbe = async (): Promise<SendButtonProbe> => {
     if (needAttachment) {
       const ready = await Runtime.evaluate({
-        expression: buildAttachmentReadyExpression(attachmentNames),
+        expression: buildAttachmentReadyExpression(attachmentNames, true),
         returnByValue: true,
       });
       if (!ready?.result?.value) {
-        await delay(150);
-        continue;
+        return { status: "attachments-not-ready" };
       }
     }
     const { result } = await Runtime.evaluate({ expression: script, returnByValue: true });
     const value = result.value as
       | {
-          status?: "clicked" | "missing" | "mutated" | "point";
+          status?: "missing" | "mutated" | "point" | "settling";
           x?: number;
           y?: number;
           observedLength?: number;
         }
       | string
       | undefined;
-    const status = typeof value === "string" ? value : value?.status;
+    const status = (typeof value === "string" ? value : value?.status) as SendButtonProbe["status"];
     if (status === "mutated") {
       throwComposerMutationError(
         expectedPrompt ?? "",
@@ -854,22 +1669,76 @@ async function attemptSendButton(
           : 0,
       );
     }
-    if (
-      status === "point" &&
-      typeof value === "object" &&
-      typeof value.x === "number" &&
-      typeof value.y === "number"
-    ) {
-      await clickTrustedPoint(Runtime, Input, value.x, value.y);
-      return true;
+    return typeof value === "object" && value !== null ? value : { status };
+  };
+
+  const deadline = Date.now() + timeoutMs;
+  let dispatchIntentPrepared = false;
+  while (Date.now() < deadline) {
+    let value = await readSendButtonProbe();
+    let status = value.status;
+    if (status === "attachments-not-ready") {
+      await delay(150);
+      continue;
     }
-    if (status === "clicked") {
-      return true;
-    }
-    if (status === "missing") {
+    if (status === "point" && typeof value.x === "number" && typeof value.y === "number") {
+      if (persistDispatchIntent || revalidateAfterDispatchIntent) {
+        if (!dispatchIntentPrepared) {
+          await persistDispatchIntent?.();
+          dispatchIntentPrepared = true;
+        }
+        await revalidateAfterDispatchIntent?.();
+        value = await readSendButtonProbe();
+        status = value.status;
+        if (status === "attachments-not-ready" || status === "settling") {
+          await delay(TARGET_COMPOSITING_SETTLE_MS);
+          continue;
+        }
+        if (status === "missing") {
+          if (needAttachment) {
+            await delay(150);
+            continue;
+          }
+          break;
+        }
+        if (status !== "point" || typeof value.x !== "number" || typeof value.y !== "number") {
+          await delay(100);
+          continue;
+        }
+      }
+      if (!Input || typeof Input.dispatchMouseEvent !== "function") break;
+      await Input.dispatchMouseEvent({ type: "mouseMoved", x: value.x, y: value.y });
+      await revalidateAfterDispatchIntent?.();
+      value = await readSendButtonProbe();
+      status = value.status;
+      if (status === "attachments-not-ready" || status === "settling") {
+        await delay(TARGET_COMPOSITING_SETTLE_MS);
+        continue;
+      }
+      if (status === "missing") {
+        if (needAttachment) {
+          await delay(150);
+          continue;
+        }
+        break;
+      }
+      if (status !== "point" || typeof value.x !== "number" || typeof value.y !== "number") {
+        await delay(100);
+        continue;
+      }
+      if (await clickTrustedPoint(Input, value.x, value.y, onPotentiallySubmittingEvent)) {
+        return true;
+      }
       break;
     }
-    await delay(100);
+    if (status === "missing") {
+      if (needAttachment) {
+        await delay(150);
+        continue;
+      }
+      break;
+    }
+    await delay(status === "settling" ? TARGET_COMPOSITING_SETTLE_MS : 100);
   }
   if (Array.isArray(attachmentNames) && attachmentNames.length > 0) {
     throw new BrowserAutomationError(
@@ -890,168 +1759,13 @@ async function attemptSendButton(
   return false;
 }
 
-async function attemptRetainedDraftPageRetry({
-  Runtime,
-  prompt,
-  baseline,
-  submissionOwnerHref,
-  submissionDocumentToken,
-  isSubmissionOwner,
-}: {
-  Runtime: ChromeClient["Runtime"];
-  prompt: string;
-  baseline: number;
-  submissionOwnerHref: string;
-  submissionDocumentToken: string;
-  isSubmissionOwner: () => Promise<boolean> | boolean;
-}): Promise<RetainedDraftRetryResult> {
-  let ownerConfirmed = false;
-  try {
-    ownerConfirmed = (await isSubmissionOwner()) === true;
-  } catch {
-    return { status: "blocked", reason: "target-owner-check-failed" };
-  }
-  if (!ownerConfirmed) {
-    return { status: "blocked", reason: "target-owner-mismatch" };
-  }
-
-  const script = `(() => {
-    const expectedPrompt = ${JSON.stringify(prompt)};
-    const expectedOwnerHref = ${JSON.stringify(submissionOwnerHref)};
-    const expectedDocumentToken = ${JSON.stringify(submissionDocumentToken)};
-    const submissionDocumentTokenProperty = ${JSON.stringify(SUBMISSION_DOCUMENT_TOKEN_PROPERTY)};
-    const baseline = ${JSON.stringify(baseline)};
-    const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
-    const sendSelectors = ${JSON.stringify(SEND_BUTTON_SELECTORS)};
-    const stopSelector = ${JSON.stringify(STOP_BUTTON_SELECTOR)};
-    ${COMPOSER_VALUE_READER_SOURCE}
-    const normalizeComposer = (value) => String(value ?? '')
-      .replace(/\\r\\n?/g, '\\n')
-      .replace(/\\u00a0/g, ' ');
-    const normalizeTurn = ${PROMPT_TEXT_NORMALIZER_SOURCE};
-    const normalizeOwner = (value) => {
-      try {
-        const url = new URL(String(value ?? ''), location.href);
-        return url.origin + url.pathname.replace(/\\/$/, '');
-      } catch {
-        return '';
-      }
-    };
-    const isVisible = (node) => {
-      if (!(node instanceof HTMLElement)) return false;
-      const rect = node.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return false;
-      const style = window.getComputedStyle(node);
-      return style.display !== 'none' && style.visibility !== 'hidden';
-    };
-    const isEnabled = (node) => {
-      if (!(node instanceof HTMLElement)) return false;
-      const style = window.getComputedStyle(node);
-      return !(
-        node.hasAttribute('disabled') ||
-        node.getAttribute('aria-disabled') === 'true' ||
-        node.getAttribute('data-disabled') === 'true' ||
-        style.pointerEvents === 'none' ||
-        style.display === 'none'
-      );
-    };
-    const roleOf = (node) => String(
-      node?.getAttribute?.('data-message-author-role') ||
-      node?.getAttribute?.('data-turn') ||
-      node?.dataset?.turn ||
-      node?.querySelector?.('[data-message-author-role], [data-turn]')?.getAttribute?.(
-        'data-message-author-role',
-      ) ||
-      node?.querySelector?.('[data-message-author-role], [data-turn]')?.getAttribute?.('data-turn') ||
-      '',
-    ).toLowerCase();
-    const articles = ${buildConversationTurnListExpression()};
-    const turnsCount = articles.length;
-    const newArticles = baseline >= 0 ? articles.slice(baseline) : articles;
-    const userMatched = normalizeTurn(expectedPrompt).length > 0 && newArticles.some((node) => {
-      if (roleOf(node) !== 'user') return false;
-      const roleNode = node?.getAttribute?.('data-message-author-role') === 'user' ||
-        node?.getAttribute?.('data-turn') === 'user'
-        ? node
-        : node?.querySelector?.('[data-message-author-role="user"], [data-turn="user"]');
-      const messageNode = roleNode?.querySelector?.('.whitespace-pre-wrap') || roleNode;
-      return normalizeTurn(messageNode?.innerText || messageNode?.textContent || '') ===
-        normalizeTurn(expectedPrompt);
-    });
-    const hasNewTurn = baseline >= 0 && turnsCount > baseline;
-    const submissionCommitted = hasNewTurn && userMatched;
-    const assistantVisible = baseline < 0 || newArticles.some((node) => roleOf(node) === 'assistant');
-    const stopVisible = Array.from(document.querySelectorAll(stopSelector)).some(isVisible);
-    const inputs = inputSelectors
-      .map((selector) => document.querySelector(selector))
-      .filter((node) => Boolean(node));
-    const active = inputs.find((node) => isVisible(node)) || inputs[0] || null;
-    const observed = readComposerValue(active);
-    const composerMatchesPrompt =
-      normalizeComposer(observed) === normalizeComposer(expectedPrompt);
-    const composerCleared = !String(observed).trim();
-    const draftRetained = !composerCleared;
-    const ownerMatched =
-      normalizeOwner(location.href) === normalizeOwner(expectedOwnerHref);
-    const documentTokenMatched =
-      document[submissionDocumentTokenProperty] === expectedDocumentToken;
-    const gate = {
-      submissionCommitted,
-      draftRetained,
-      composerMatchesPrompt,
-      hasNewTurn,
-      userMatched,
-      stopVisible,
-      assistantVisible,
-      baselineKnown: baseline >= 0,
-      baselineUnchanged: baseline >= 0 && turnsCount === baseline,
-      ownerMatched,
-      documentTokenMatched,
-      turnsCount,
-    };
-    const allowed =
-      gate.submissionCommitted === false &&
-      gate.draftRetained === true &&
-      gate.composerMatchesPrompt === true &&
-      gate.hasNewTurn === false &&
-      gate.userMatched === false &&
-      gate.stopVisible === false &&
-      gate.assistantVisible === false &&
-      gate.baselineKnown === true &&
-      gate.baselineUnchanged === true &&
-      gate.ownerMatched === true &&
-      gate.documentTokenMatched === true;
-    if (!allowed) return { status: 'blocked', reason: 'gate-closed', gate };
-    const candidates = sendSelectors.flatMap((selector) =>
-      Array.from(document.querySelectorAll(selector)),
-    );
-    const button = candidates.find((node) => isVisible(node) && isEnabled(node)) || null;
-    if (!button) return { status: 'unavailable', reason: 'send-button-unavailable', gate };
-    button.click();
-    return { status: 'dispatched', gate };
-  })()`;
-  const result = await Runtime.evaluate({ expression: script, returnByValue: true }).catch(
-    () => null,
-  );
-  if (!result) {
-    return { status: "blocked", reason: "retry-evidence-unavailable" };
-  }
-  const value = result.result?.value as RetainedDraftRetryResult | undefined;
-  if (
-    !value ||
-    (value.status !== "dispatched" && value.status !== "blocked" && value.status !== "unavailable")
-  ) {
-    return { status: "blocked", reason: "retry-evidence-unavailable" };
-  }
-  return value;
-}
-
 async function assertComposerUnchanged(
   Runtime: ChromeClient["Runtime"],
   expectedPrompt: string,
 ): Promise<void> {
   const result = await Runtime.evaluate({
     expression: `(() => {
+      // oracle-composer-unchanged-check
       const inputSelectors = ${JSON.stringify(INPUT_SELECTORS)};
       ${COMPOSER_VALUE_READER_SOURCE}
       const isVisible = (node) => {
@@ -1097,26 +1811,16 @@ function throwComposerMutationError(expectedPrompt: string, observedLength: numb
 }
 
 async function clickTrustedPoint(
-  Runtime: ChromeClient["Runtime"],
   Input: ChromeClient["Input"],
   x: number,
   y: number,
-): Promise<void> {
-  if (Input && typeof Input.dispatchMouseEvent === "function") {
-    await Input.dispatchMouseEvent({ type: "mouseMoved", x, y });
-    await Input.dispatchMouseEvent({ type: "mousePressed", x, y, button: "left", clickCount: 1 });
-    await Input.dispatchMouseEvent({ type: "mouseReleased", x, y, button: "left", clickCount: 1 });
-    return;
-  }
-  await Runtime.evaluate({
-    expression: `(() => {
-      const el = document.elementFromPoint(${JSON.stringify(x)}, ${JSON.stringify(y)});
-      if (!(el instanceof HTMLElement)) return false;
-      el.click();
-      return true;
-    })()`,
-    returnByValue: true,
-  });
+  onPotentiallySubmittingEvent?: () => Promise<void> | void,
+): Promise<boolean> {
+  if (!Input || typeof Input.dispatchMouseEvent !== "function") return false;
+  await onPotentiallySubmittingEvent?.();
+  await Input.dispatchMouseEvent({ type: "mousePressed", x, y, button: "left", clickCount: 1 });
+  await Input.dispatchMouseEvent({ type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+  return true;
 }
 
 function sendButtonTimeoutMs(
@@ -1131,6 +1835,42 @@ function sendButtonTimeoutMs(
     : DEFAULT_BROWSER_ATTACHMENT_TIMEOUT_MS;
 }
 
+function buildIndeterminateCommitError({
+  prompt,
+  diagnostic,
+  timeoutMs,
+  probe,
+  cause,
+}: {
+  prompt: string;
+  diagnostic: SubmissionDiagnostic;
+  timeoutMs?: number;
+  probe?: CommitProbeState;
+  cause?: unknown;
+}): BrowserAutomationError {
+  const draftRetained = probe?.composerCleared === false || diagnostic.draftRetained === true;
+  return new BrowserAutomationError(
+    "Oracle emitted one potentially submitting input event but could not verify the exact committed user turn. The exact tab remains recoverable and automatic redispatch is disabled.",
+    {
+      stage: "submit-prompt",
+      code: "commit-indeterminate-after-dispatch",
+      outcome: "indeterminate",
+      submissionCommitted: false,
+      commitVerification: "indeterminate",
+      dispatchAttempted: true,
+      potentiallySubmittingEventEmitted: true,
+      potentiallySubmittingEvent: diagnostic.potentiallySubmittingEvent,
+      retrySafe: false,
+      recoverable: true,
+      draftRetained,
+      promptLength: prompt.trim().length,
+      timeoutMs,
+      commitProbe: probe ? summarizeCommitProbe(probe) : undefined,
+    },
+    cause,
+  );
+}
+
 async function verifyPromptCommitted(
   Runtime: ChromeClient["Runtime"],
   prompt: string,
@@ -1138,10 +1878,9 @@ async function verifyPromptCommitted(
   logger?: BrowserLogger,
   baselineTurns?: number,
   onCommitPending?: () => Promise<void> | void,
-  retryRetainedDraft?: () => Promise<RetainedDraftRetryResult>,
+  diagnostic: SubmissionDiagnostic = createSubmissionDiagnostic(baselineTurns),
 ): Promise<{ turnsCount: number | null; userTurnIndex: number | null }> {
   const deadline = Date.now() + timeoutMs;
-  const retainedDraftRetryAt = Date.now() + RETAINED_DRAFT_RETRY_DELAY_MS;
   const encodedPrompt = JSON.stringify(prompt.trim());
   const primarySelectorLiteral = JSON.stringify(PROMPT_PRIMARY_SELECTOR);
   const fallbackSelectorLiteral = JSON.stringify(PROMPT_FALLBACK_SELECTOR);
@@ -1224,16 +1963,29 @@ async function verifyPromptCommitted(
 			      normalizedPrompt.length > 0 && lastTurn === normalizedPrompt;
 		    const baseline = ${baselineLiteral};
 		    const hasNewTurn = baseline < 0 ? false : normalizedTurns.length > baseline;
-		    // A new *user-role* turn is the safety boundary for "a prompt was sent":
-		    // total growth can also come from an assistant or progress container.
-		    const newUserTurns = baseline < 0 ? [] : userTurns.filter((entry) => entry && entry.index >= baseline);
-		    const hasNewUserTurn = newUserTurns.length > 0;
-		    const newestUserTurnIndex = hasNewUserTurn ? newUserTurns[newUserTurns.length - 1].index : null;
-		    const stopVisible = Boolean(document.querySelector(${stopSelectorLiteral}));
-		    const assistantVisible = Boolean(
-		      document.querySelector(${assistantSelectorLiteral}) ||
-		      document.querySelector('[data-testid*="assistant"]'),
+		    const newUserTurns = baseline < 0
+		      ? []
+		      : userTurns.filter((entry) => entry.index >= baseline);
+		    const matchingNewUserTurns = newUserTurns.filter(
+		      (entry) => entry.text === normalizedPrompt,
 		    );
+		    const hasNewUserTurn = newUserTurns.length > 0;
+		    const newestUserTurnIndex = newUserTurns.at(-1)?.index ?? null;
+		    const stopVisible = Boolean(document.querySelector(${stopSelectorLiteral}));
+        const assistantVisible = baseline < 0
+          ? false
+          : articles.slice(baseline).some((node) => {
+              const role = String(
+                node?.getAttribute?.('data-message-author-role') ||
+                node?.getAttribute?.('data-turn') ||
+                node?.dataset?.turn ||
+                '',
+              ).toLowerCase();
+              return role === 'assistant' || Boolean(
+                node?.querySelector?.(${assistantSelectorLiteral}) ||
+                node?.querySelector?.('[data-testid*="assistant"]'),
+              );
+            });
 	    // Learned: composer clearing + stop button or assistant presence is a reliable fallback signal.
       const editorValue = editor?.innerText ?? '';
       const fallbackValue = fallback?.value ?? '';
@@ -1245,6 +1997,8 @@ async function verifyPromptCommitted(
 		    return {
         baseline,
 	      userMatched,
+	      newUserTurnCount: newUserTurns.length,
+	      matchingUserTurnCount: matchingNewUserTurns.length,
 	      matchedUserTurnIndex: matchedUserTurn?.index ?? null,
 	      lastMatched,
 	      lastUserTurnAvailable: userTurnTexts.length > 0,
@@ -1265,30 +2019,65 @@ async function verifyPromptCommitted(
 
   let lastProbe: CommitProbeState | undefined;
   let nextPendingCheckAt = 0;
-  let retainedDraftRetryDecided = false;
   while (Date.now() < deadline) {
     const { result } = await Runtime.evaluate({ expression: script, returnByValue: true });
     const info = result.value as CommitProbeState | undefined;
     if (info && typeof info === "object") {
       lastProbe = info;
+      updateSubmissionDiagnosticFromProbe(diagnostic, info);
     }
     const turnsCount = (result.value as { turnsCount?: number } | undefined)?.turnsCount;
     const matchesPrompt = Boolean(info?.lastMatched);
-    // In a resumed, long conversation ChatGPT virtualizes the transcript: the
-    // new user turn appears while an older turn leaves the DOM, so the rendered
-    // turn count never exceeds the baseline. The prompt is nevertheless
-    // committed when it is the last user turn, the composer has been cleared,
-    // and generation is visibly in progress. This never fires for a historical
-    // match of a resent identical prompt: then the composer still holds the
-    // draft and no generation is running.
+    const newUserTurnCount =
+      typeof info?.newUserTurnCount === "number"
+        ? info.newUserTurnCount
+        : matchesPrompt && info?.hasNewTurn
+          ? 1
+          : 0;
+    const matchingUserTurnCount =
+      typeof info?.matchingUserTurnCount === "number"
+        ? info.matchingUserTurnCount
+        : matchesPrompt && info?.hasNewTurn
+          ? 1
+          : 0;
+    if (info && (newUserTurnCount > 1 || matchingUserTurnCount > 1)) {
+      diagnostic.finalCommitClassification = "ambiguous-multiple-user-turns";
+      throw new BrowserAutomationError(
+        "More than one new user turn appeared after dispatch; Oracle cannot certify an exactly-once submission.",
+        {
+          stage: "submit-prompt",
+          code: "commit-ambiguous-multiple-user-turns",
+          outcome: "indeterminate",
+          submissionCommitted: false,
+          commitVerification: "indeterminate",
+          dispatchAttempted: diagnostic.potentiallySubmittingEventEmitted,
+          retrySafe: false,
+          recoverable: true,
+          draftRetained: info?.composerCleared === false,
+          commitProbe: summarizeCommitProbe(info),
+        },
+      );
+    }
+    // Long conversations can replace old rendered turns without increasing
+    // the DOM count. Keep exact prompt + cleared composer + active generation
+    // evidence, but never override the multiple-new-user-turn ambiguity above.
     const committedInVirtualizedThread =
       matchesPrompt &&
       typeof info?.baseline === "number" &&
       info.baseline >= 0 &&
-      info?.composerCleared === true &&
-      info?.stopVisible === true;
-    if (matchesPrompt && (info?.hasNewTurn || committedInVirtualizedThread)) {
+      !info.hasNewTurn &&
+      newUserTurnCount === 0 &&
+      info.composerCleared === true &&
+      info.stopVisible === true;
+    if (
+      (matchesPrompt &&
+        info?.hasNewTurn &&
+        newUserTurnCount === 1 &&
+        matchingUserTurnCount === 1) ||
+      committedInVirtualizedThread
+    ) {
       const userTurnIndex = info?.matchedUserTurnIndex;
+      diagnostic.finalCommitClassification = "verified-single-user-turn";
       return {
         turnsCount:
           typeof turnsCount === "number" && Number.isFinite(turnsCount) ? turnsCount : null,
@@ -1297,16 +2086,6 @@ async function verifyPromptCommitted(
             ? userTurnIndex
             : null,
       };
-    }
-    if (retryRetainedDraft && !retainedDraftRetryDecided && Date.now() >= retainedDraftRetryAt) {
-      retainedDraftRetryDecided = true;
-      const retry = await retryRetainedDraft();
-      logger?.(
-        `Retained-draft Send retry decision: ${retry.status}${
-          retry.reason ? ` (${retry.reason})` : ""
-        }`,
-      );
-      continue;
     }
     if (onCommitPending && Date.now() >= nextPendingCheckAt) {
       nextPendingCheckAt = Date.now() + 500;
@@ -1319,6 +2098,7 @@ async function verifyPromptCommitted(
     .then((res) => res?.result?.value as CommitProbeState | undefined)
     .catch(() => undefined);
   const probe = finalProbe && typeof finalProbe === "object" ? finalProbe : lastProbe;
+  if (probe) updateSubmissionDiagnosticFromProbe(diagnostic, probe);
   if (logger) {
     logger(
       `Prompt commit check failed; latest state: ${
@@ -1327,20 +2107,8 @@ async function verifyPromptCommitted(
     );
     await logDomFailure(Runtime, logger, "prompt-commit");
   }
-  if (prompt.trim().length >= 50_000) {
-    throw new BrowserAutomationError(
-      "Prompt did not appear in conversation before timeout (likely too large).",
-      {
-        stage: "submit-prompt",
-        code: "prompt-too-large",
-        promptSubmitted: false,
-        submissionCommitted: false,
-        retrySafe: true,
-        promptLength: prompt.trim().length,
-        timeoutMs,
-      },
-    );
-  }
+  // Prompt size is not evidence that Send failed. Only observed truncation
+  // before dispatch can authorize the owned-draft attachment fallback.
   // A new user-role turn appeared and the composer emptied: something was sent
   // even though its text did not match the expected prompt exactly (ChatGPT
   // renders Markdown, a mutation slipped in, or the turn was virtualized).
@@ -1356,6 +2124,7 @@ async function verifyPromptCommitted(
       {
         stage: "submit-prompt",
         code: "prompt-commit-identity-unverified",
+        submissionCommitted: false,
         promptSubmitted: true,
         submissionState: "submitted-unverified",
         promptIdentityVerified: false,
@@ -1371,21 +2140,31 @@ async function verifyPromptCommitted(
   const draftRetained = Boolean(
     probe &&
     probe.composerCleared === false &&
-    typeof probe.editorValue === "string" &&
-    probe.editorValue.trim().length > 0 &&
-    !probe.hasNewTurn &&
-    !probe.stopVisible &&
-    !probe.assistantVisible &&
-    !probe.inConversation,
+    ((typeof probe.editorValue === "string" && probe.editorValue.trim().length > 0) ||
+      (typeof probe.fallbackValue === "string" && probe.fallbackValue.trim().length > 0)),
   );
+  diagnostic.draftRetained = draftRetained;
+  diagnostic.composerCleared = probe?.composerCleared ?? null;
+  if (diagnostic.potentiallySubmittingEventEmitted) {
+    diagnostic.finalCommitClassification = "commit-indeterminate-after-dispatch";
+    throw buildIndeterminateCommitError({
+      prompt,
+      diagnostic,
+      timeoutMs,
+      probe,
+    });
+  }
+  const failureCode = classifyFinalCommitFailure(diagnostic, draftRetained);
+  diagnostic.finalCommitClassification = failureCode;
   throw new BrowserAutomationError(
     draftRetained
-      ? "Prompt remained in the composer after the send attempt; submission did not commit."
-      : "Prompt did not appear in conversation before timeout (send may have failed)",
+      ? "The exact prompt remains in the composer after the bounded dispatch path; Oracle did not certify a committed user turn."
+      : "The composer cleared but the exact user turn did not become observable; commit remains ambiguous and Oracle will not resend.",
     {
       stage: "submit-prompt",
-      code: "prompt-commit-timeout",
+      code: failureCode,
       submissionCommitted: false,
+      retrySafe: false,
       draftRetained,
       promptLength: prompt.trim().length,
       timeoutMs,
@@ -1397,6 +2176,8 @@ async function verifyPromptCommitted(
 interface CommitProbeState {
   baseline?: number;
   userMatched?: boolean;
+  newUserTurnCount?: number;
+  matchingUserTurnCount?: number;
   matchedUserTurnIndex?: number | null;
   lastMatched?: boolean;
   lastUserTurnAvailable?: boolean;
@@ -1414,12 +2195,45 @@ interface CommitProbeState {
   lastTurn?: string;
 }
 
+function updateSubmissionDiagnosticFromProbe(
+  diagnostic: SubmissionDiagnostic,
+  probe: CommitProbeState,
+): void {
+  diagnostic.composerCleared = probe.composerCleared ?? diagnostic.composerCleared;
+  diagnostic.draftRetained =
+    typeof probe.composerCleared === "boolean" ? !probe.composerCleared : diagnostic.draftRetained;
+  diagnostic.newUserTurnObserved =
+    diagnostic.newUserTurnObserved ||
+    probe.hasNewTurn === true ||
+    (probe.newUserTurnCount ?? 0) > 0;
+  diagnostic.matchingUserTurnObserved =
+    diagnostic.matchingUserTurnObserved ||
+    probe.userMatched === true ||
+    (probe.matchingUserTurnCount ?? 0) > 0;
+  diagnostic.assistantObserved = diagnostic.assistantObserved || probe.assistantVisible === true;
+  diagnostic.generationControlObserved =
+    diagnostic.generationControlObserved || probe.stopVisible === true;
+}
+
+function classifyFinalCommitFailure(
+  diagnostic: SubmissionDiagnostic,
+  draftRetained: boolean,
+): string {
+  if (diagnostic.potentiallySubmittingEventEmitted) {
+    return "commit-indeterminate-after-dispatch";
+  }
+  if (!draftRetained) return "commit-ambiguous-composer-cleared";
+  return diagnostic.initialDispatchMethod === "trusted-click" ? "trusted-click-noop" : "enter-noop";
+}
+
 // Keep booleans/counts but replace free text with lengths so session metadata stays lean.
 function summarizeCommitProbe(probe: CommitProbeState): Record<string, unknown> {
   return {
     baseline: probe.baseline,
     turnsCount: probe.turnsCount,
     userMatched: probe.userMatched,
+    newUserTurnCount: probe.newUserTurnCount,
+    matchingUserTurnCount: probe.matchingUserTurnCount,
     matchedUserTurnIndex: probe.matchedUserTurnIndex,
     lastMatched: probe.lastMatched,
     lastUserTurnAvailable: probe.lastUserTurnAvailable,
@@ -1439,12 +2253,14 @@ function normalizeComposerText(value: string): string {
   return value.replace(/\r\n?/gu, "\n").replace(/\u00a0/gu, " ");
 }
 
+function composerSha256(value: string): string {
+  return createHash("sha256").update(normalizeComposerText(value), "utf8").digest("hex");
+}
+
 // biome-ignore lint/style/useNamingConvention: test-only export used in vitest suite
 export const __test__ = {
-  attemptRetainedDraftPageRetry,
   attemptSendButton,
   composerValueReaderSource: COMPOSER_VALUE_READER_SOURCE,
   sendButtonTimeoutMs,
-  submissionDocumentTokenProperty: SUBMISSION_DOCUMENT_TOKEN_PROPERTY,
   verifyPromptCommitted,
 };

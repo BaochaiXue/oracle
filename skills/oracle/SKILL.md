@@ -58,7 +58,7 @@ the installed plugin or start a new agent context first.
      sent. Correct only the transport failure and retry the same task once.
    - An unknown submission state is indeterminate and must not be resent.
 
-## Model policy (browser, version 0.18.1)
+## Model policy (browser, version 0.19.0)
 
 GPT-6 Pro is the default. GPT-5.6 Sol Pro is the only fallback, permitted
 only when the model picker explicitly reports GPT-6 or its Pro effort as
@@ -112,6 +112,12 @@ Base aliases without Pro effort do not imply Pro work or detachment.
 This change is browser-scoped. API/provider defaults remain explicit and
 separate. OpenCLI retains its GPT-5.6 Pro adapter contract and is not used
 as an automatic transport fallback. GPT-5.5 is outside this skill's workflow.
+
+The imported v2 `broker` is an explicit upstream macOS-only candidate, not this
+skill's execution path or an installation prerequisite. Ordinary consultations
+and Batch still use the dedicated shared CDP browser. Do not start a worker,
+migrate an auth seed, close Chrome, or disable Linux/WSL use merely because an
+upstream v2 planning document describes a future cutover.
 
 ## Golden path
 

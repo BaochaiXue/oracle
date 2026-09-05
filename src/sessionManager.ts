@@ -143,6 +143,12 @@ export interface BrowserRuntimeMetadata {
   browserRepairOutcome?: string;
   /** A healthy older managed Chrome generation is serving this run until the next idle drain. */
   browserRolloverPending?: boolean;
+  /** SHA-256 of the normalized current direct-CDP prompt, independent of model tier. */
+  browserPromptSha256?: string;
+  /** Conversation turn count captured immediately before the current prompt dispatch. */
+  browserPromptBaselineTurns?: number;
+  /** Zero-based DOM turn index after the current prompt identity is verified. */
+  browserPromptCommittedTurnIndex?: number;
   /** Dispatch timestamp used for transport-independent Pro response timing. */
   proDispatchAt?: string;
   /** First observed elapsed time from dispatch to a stable Pro answer. */

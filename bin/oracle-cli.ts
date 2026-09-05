@@ -89,6 +89,7 @@ import {
 } from "../src/cli/perfTrace.js";
 import { resolveBrowserFollowupReference } from "../src/cli/followup.js";
 import { registerBatchCommand } from "../src/cli/batchCommand.js";
+import { registerBrokerJobCommands } from "../src/cli/brokerJobsCommand.js";
 import { assertGenericSessionActionAllowed } from "../src/batch/sessionAuthority.js";
 
 interface CliOptions extends OptionValues {
@@ -125,6 +126,8 @@ interface CliOptions extends OptionValues {
   renderMarkdown?: boolean;
   sessionId?: string;
   engine?: EngineMode;
+  requestId?: string;
+  idempotencyKey?: string;
   browser?: boolean;
   timeout?: number | "auto";
   background?: boolean;
@@ -465,14 +468,19 @@ program
   .addOption(
     new Option(
       "-e, --engine <mode>",
-      "Execution engine (api | browser). Browser engine automates ChatGPT. If omitted, oracle picks api when OPENAI_API_KEY is set, otherwise browser.",
-    ).choices(["api", "browser"]),
+      "Execution engine (api | browser | broker). Broker is the opt-in Oracle v2 worker path; legacy defaults remain unchanged until G3.",
+    ).choices(["api", "browser", "broker"]),
   )
   .addOption(
-    new Option("--mode <mode>", "Alias for --engine (api | browser).")
-      .choices(["api", "browser"])
+    new Option("--mode <mode>", "Alias for --engine (api | browser | broker).")
+      .choices(["api", "browser", "broker"])
       .hideHelp(),
   )
+  .option(
+    "--idempotency-key <key>",
+    "Stable logical request key required for live broker runs; the same key and inputs reattach to one v2 job.",
+  )
+  .addOption(new Option("--request-id <id>").hideHelp())
   .option(
     "--files-report",
     "Show token usage per attached file (also prints automatically when files exceed the token budget).",
@@ -1420,6 +1428,7 @@ program
 const docsCommand = program.command("docs").description("Documentation maintenance utilities.");
 
 registerBatchCommand(program);
+registerBrokerJobCommands(program);
 
 docsCommand
   .command("check")
@@ -2182,6 +2191,12 @@ async function runRootCommand(options: CliOptions): Promise<void> {
     apiProviderRequested: explicitApiProviderRequested,
     env: process.env,
   });
+  if (engine === "broker" && multiModelProvided) {
+    throw new Error("Oracle broker supports exactly one GPT-5.6 Sol / Pro route.");
+  }
+  if (engine !== "broker" && (options.idempotencyKey || options.requestId)) {
+    throw new Error("--idempotency-key and --request-id are broker-only options.");
+  }
   const browserEngineRequested =
     options.browser ||
     options.engine === "browser" ||
@@ -2297,6 +2312,56 @@ async function runRootCommand(options: CliOptions): Promise<void> {
     }
     await waitForDetachedStartGate();
     await executeSession(options.execSession);
+    return;
+  }
+
+  if (engine === "broker") {
+    if (explicitApiProviderRequested) {
+      throw new Error("Oracle broker does not accept API provider routing overrides.");
+    }
+    if (!optionUsesDefault("model")) {
+      const requested = normalizeModelOption(options.model).toLowerCase();
+      if (!["gpt-5.6-sol", "gpt-5.6", "gpt-5-pro"].includes(requested)) {
+        throw new Error("Oracle broker requires GPT-5.6 Sol with Pro effort.");
+      }
+    }
+    if (options.followup || (options.browserFollowUp?.length ?? 0) > 0) {
+      throw new Error("Oracle broker R8 does not support follow-up turns.");
+    }
+    if (remoteHost || options.remoteChrome || options.browserTab) {
+      throw new Error(
+        "Oracle broker owns its certified local browser runtime; remote/tab overrides are unsupported.",
+      );
+    }
+    if (renderMarkdown || copyMarkdown) {
+      throw new Error("Use --dry-run full to render the Oracle broker prompt and sealed bundle.");
+    }
+    if (!options.prompt) {
+      throw new Error("Prompt is required when starting an Oracle broker job.");
+    }
+    if (!previewMode && !options.idempotencyKey && !options.requestId) {
+      throw new Error(
+        "Oracle broker live runs require --idempotency-key so an interrupted caller can reattach safely.",
+      );
+    }
+    if (userConfig.promptSuffix) {
+      options.prompt = `${options.prompt.trim()}\n${userConfig.promptSuffix}`;
+    }
+    const timeoutMs = typeof options.timeout === "number" ? options.timeout * 1000 : 60 * 60_000;
+    const { runBrokerCliCommand } = await import("../src/cli/brokerCommand.js");
+    await runBrokerCliCommand({
+      prompt: options.prompt,
+      files: options.file,
+      system: options.system,
+      maxFileSizeBytes: resolvedOptions.maxFileSizeBytes,
+      cwd: process.cwd(),
+      requestId: options.requestId,
+      idempotencyKey: options.idempotencyKey,
+      wait: options.wait !== false,
+      timeoutMs,
+      previewMode,
+      writeOutputPath: resolvedOptions.writeOutputPath,
+    });
     return;
   }
 

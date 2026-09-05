@@ -1,0 +1,10 @@
+{
+  "name": "@oracle-v2/chatgpt-adapter",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@oracle-v2/kernel": "workspace:*",
+    "playwright-core": "^1.62.1"
+  }
+}

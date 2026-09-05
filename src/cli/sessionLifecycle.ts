@@ -2,7 +2,7 @@ import type { SessionLifecycleMetadata, SessionMetadata } from "../sessionManage
 import type { EngineMode } from "./engine.js";
 
 export interface BuildSessionLifecycleOptions {
-  engine: EngineMode;
+  engine: Exclude<EngineMode, "broker">;
   detached: boolean;
   workerPid?: number;
   reattachCommand: string;

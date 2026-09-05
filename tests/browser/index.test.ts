@@ -5,10 +5,14 @@ import { describe, expect, test, vi } from "vitest";
 import {
   __test__,
   classifyPreservedBrowserErrorForTest,
+  classifyRemotePreservedBrowserErrorForTest,
   formatBrowserTurnTranscript,
   isLocalChromeHostForTest,
+  normalizeCopiedProfilePreservedErrorForTest,
+  normalizeHeadlessPreservedErrorForTest,
   redactBrowserConfigForDebugLogForTest,
   resolveRemoteTabLeaseProfileDirForTest,
+  requirePreDispatchTurnBaselineForTest,
   runBrowserMode,
   runSubmissionWithRecoveryForTest,
   shouldPreferSystemTmpDirForTest,
@@ -92,6 +96,29 @@ describe("shouldPreserveBrowserOnErrorForTest", () => {
     expect(classifyPreservedBrowserErrorForTest(error, false)).toBe("draft-retained");
   });
 
+  test("preserves a truncated pre-dispatch prompt for manual recovery", () => {
+    const error = new BrowserAutomationError("Prompt was truncated in the composer.", {
+      stage: "submit-prompt",
+      code: "prompt-too-large",
+      submissionCommitted: false,
+      draftRetained: true,
+    });
+
+    expect(classifyPreservedBrowserErrorForTest(error, false)).toBe("draft-retained");
+  });
+
+  test("preserves an unverified inline fallback cleanup for manual recovery", () => {
+    const error = new BrowserAutomationError("Fallback cleanup could not be verified.", {
+      stage: "submit-prompt",
+      code: "fallback-cleanup-unverified",
+      submissionCommitted: false,
+      draftRetained: true,
+      retrySafe: false,
+    });
+
+    expect(classifyPreservedBrowserErrorForTest(error, false)).toBe("draft-retained");
+  });
+
   test("does not retain a failed uncommitted send when no draft remains", () => {
     const error = new BrowserAutomationError("Prompt did not commit.", {
       stage: "submit-prompt",
@@ -101,6 +128,93 @@ describe("shouldPreserveBrowserOnErrorForTest", () => {
     });
 
     expect(classifyPreservedBrowserErrorForTest(error, false)).toBeNull();
+  });
+
+  test("retains an attachment-readiness failure when owned cleanup is unverified", () => {
+    const error = new BrowserAutomationError("Attachment send never became ready.", {
+      stage: "submit-prompt",
+      code: "attachment-send-not-ready",
+      submissionCommitted: false,
+      draftRetained: true,
+      retrySafe: false,
+      cleanupVerified: false,
+    });
+
+    expect(classifyPreservedBrowserErrorForTest(error, false)).toBe("draft-retained");
+  });
+
+  test("does not retain an attachment-readiness failure after verified owned cleanup", () => {
+    const error = new BrowserAutomationError("Attachment send never became ready.", {
+      stage: "submit-prompt",
+      code: "attachment-send-not-ready",
+      submissionCommitted: false,
+      draftRetained: false,
+      retrySafe: true,
+      cleanupVerified: true,
+    });
+
+    expect(classifyPreservedBrowserErrorForTest(error, false)).toBeNull();
+  });
+
+  test.each([
+    ["content", "preexisting-composer-content"],
+    ["attachments", "preexisting-composer-attachments"],
+  ] as const)("preserves unowned pre-existing composer %s for manual inspection", (_kind, code) => {
+    const error = new BrowserAutomationError("Composer already contains an unowned draft.", {
+      stage: "submit-prompt",
+      code,
+      submissionCommitted: false,
+      draftRetained: true,
+    });
+
+    expect(classifyPreservedBrowserErrorForTest(error, false)).toBe("preexisting-composer");
+  });
+
+  test("preserves an ambiguous cleared composer for reattach instead of resending", () => {
+    const error = new BrowserAutomationError("Composer cleared without an observable turn.", {
+      stage: "submit-prompt",
+      code: "commit-ambiguous-composer-cleared",
+      submissionCommitted: false,
+      draftRetained: false,
+    });
+
+    expect(classifyPreservedBrowserErrorForTest(error, false)).toBe("commit-ambiguous");
+  });
+
+  test("preserves an indeterminate post-dispatch tab for recovery", () => {
+    const error = new BrowserAutomationError("Commit could not be verified after input.", {
+      stage: "submit-prompt",
+      code: "commit-indeterminate-after-dispatch",
+      submissionCommitted: false,
+      dispatchAttempted: true,
+      retrySafe: false,
+    });
+
+    expect(classifyPreservedBrowserErrorForTest(error, false)).toBe("commit-ambiguous");
+    expect(shouldPreserveBrowserOnErrorForTest(error, false)).toBe(true);
+  });
+
+  test("classifies remote recovery independently of ignored local headless state", () => {
+    const error = new BrowserAutomationError("Prompt remained in the remote composer.", {
+      stage: "submit-prompt",
+      code: "composer-mutated-before-send",
+      submissionCommitted: false,
+      draftRetained: true,
+    });
+
+    expect(classifyPreservedBrowserErrorForTest(error, true)).toBeNull();
+    expect(classifyRemotePreservedBrowserErrorForTest(error)).toBe("draft-retained");
+  });
+
+  test("classifies remote attachment-only drafts for manual inspection", () => {
+    const error = new BrowserAutomationError("Composer already contains attachments.", {
+      stage: "submit-prompt",
+      code: "preexisting-composer-attachments",
+      submissionCommitted: false,
+      draftRetained: true,
+    });
+
+    expect(classifyRemotePreservedBrowserErrorForTest(error)).toBe("preexisting-composer");
   });
 });
 
@@ -188,6 +302,96 @@ describe("browser run target cleanup", () => {
         usingCopiedProfile: true,
       }),
     ).toBe(false);
+  });
+
+  test("does not advertise an indeterminate copied-profile submission as recoverable", () => {
+    const error = new BrowserAutomationError("The exact tab remains recoverable.", {
+      stage: "submit-prompt",
+      code: "commit-indeterminate-after-dispatch",
+      submissionCommitted: false,
+      retrySafe: false,
+      recoverable: true,
+      runtime: { chromePort: 9222, chromeTargetId: "target-1" },
+    });
+
+    const normalized = normalizeCopiedProfilePreservedErrorForTest(error, "commit-ambiguous");
+
+    expect(normalized.message).toMatch(/cannot retain its temporary tab or profile/i);
+    expect(normalized.details).toMatchObject({
+      code: "commit-indeterminate-after-dispatch",
+      retrySafe: false,
+      recoverable: false,
+      reattachable: false,
+      copiedProfileRetained: false,
+      runtime: undefined,
+    });
+  });
+
+  test("does not advertise an indeterminate headless submission as recoverable", () => {
+    const error = new BrowserAutomationError("The exact tab remains recoverable.", {
+      stage: "submit-prompt",
+      code: "commit-indeterminate-after-dispatch",
+      submissionCommitted: false,
+      retrySafe: false,
+      recoverable: true,
+      runtime: { chromePort: 9222, chromeTargetId: "target-1" },
+    });
+
+    const normalized = normalizeHeadlessPreservedErrorForTest(error, "commit-ambiguous");
+
+    expect(normalized.message).toMatch(/--browser-headless run cannot retain/i);
+    expect(normalized.details).toMatchObject({
+      code: "commit-indeterminate-after-dispatch",
+      retrySafe: false,
+      recoverable: false,
+      reattachable: false,
+      runtime: undefined,
+    });
+  });
+
+  test.each([
+    ["draft-retained", "composer-mutated-before-send"],
+    ["preexisting-composer", "preexisting-composer-content"],
+    ["preexisting-composer", "preexisting-composer-attachments"],
+  ] as const)("does not advertise a headless %s target as recoverable", (kind, code) => {
+    const error = new BrowserAutomationError("The exact tab remains recoverable.", {
+      stage: "submit-prompt",
+      code,
+      submissionCommitted: false,
+      draftRetained: true,
+      retrySafe: false,
+      recoverable: true,
+      runtime: { chromePort: 9222, chromeTargetId: "target-1" },
+    });
+
+    const normalized = normalizeHeadlessPreservedErrorForTest(error, kind);
+
+    expect(normalized.message).toMatch(/--browser-headless run cannot retain/i);
+    expect(normalized.details).toMatchObject({
+      code,
+      retrySafe: false,
+      recoverable: false,
+      reattachable: false,
+      runtime: undefined,
+    });
+  });
+
+  test("requires a durable turn baseline before dispatch", () => {
+    expect(requirePreDispatchTurnBaselineForTest(3)).toBe(3);
+    let baselineError: unknown;
+    try {
+      requirePreDispatchTurnBaselineForTest(null);
+    } catch (error) {
+      baselineError = error;
+    }
+    expect(baselineError).toMatchObject({
+      details: expect.objectContaining({
+        code: "conversation-turn-baseline-unavailable",
+        dispatchAttempted: false,
+        potentiallySubmittingEventEmitted: false,
+        retrySafe: true,
+      }),
+    });
   });
 
   test("keeps existing retention semantics for ordinary profiles", () => {
@@ -509,7 +713,7 @@ describe("ChatGPT UI warning detection", () => {
     );
   });
 
-  test("records a request-frequency gate as not submitted and retry-safe", async () => {
+  test("records a request-frequency gate after dispatch as indeterminate and not retry-safe", async () => {
     const Runtime = {
       evaluate: vi.fn().mockResolvedValue({
         result: {
@@ -541,15 +745,18 @@ describe("ChatGPT UI warning detection", () => {
       dispatchAttempted: true,
     });
 
-    expect(error?.message).toContain("No prompt was committed");
-    expect(error?.message).toContain("retrying after the page gate clears is safe");
+    expect(error?.message).toContain("Exact commit is indeterminate");
+    expect(error?.message).toContain("do not resend");
     expect(error?.details).toMatchObject({
       stage: "submit-prompt",
-      code: "chatgpt-submission-gate",
+      code: "commit-indeterminate-after-dispatch",
+      outcome: "indeterminate",
       submissionCommitted: false,
       dispatchAttempted: true,
-      retrySafe: true,
-      retryGuidance: "wait-for-page-gate-to-clear",
+      commitVerification: "indeterminate",
+      retrySafe: false,
+      recoverable: true,
+      retryGuidance: "reattach-exact-tab-do-not-resend",
       runtime: {
         browserTransport: "cdp",
         chromePort: 9333,
@@ -559,6 +766,42 @@ describe("ChatGPT UI warning detection", () => {
         type: "rate_limit",
         message: "请求频繁，请稍后再试",
       },
+    });
+  });
+
+  test("keeps a request-frequency gate before input retry-safe", async () => {
+    const Runtime = {
+      evaluate: vi.fn().mockResolvedValue({
+        result: {
+          value: [
+            {
+              text: "请求频繁，请稍后再试",
+              source: "selector",
+              role: "alert",
+              ariaLive: "assertive",
+              selector: '[role="alert"]',
+            },
+          ],
+        },
+      }),
+    };
+
+    const error = await __test__.createChatGptUiWarningError({
+      Runtime: Runtime as never,
+      logger: vi.fn() as never,
+      runtime: { browserTransport: "cdp", chromePort: 9333, promptSubmitted: false },
+      stage: "submit-prompt",
+      waitTarget: "prompt dispatch",
+      submissionCommitted: false,
+      dispatchAttempted: false,
+    });
+
+    expect(error?.details).toMatchObject({
+      code: "chatgpt-submission-gate",
+      submissionCommitted: false,
+      dispatchAttempted: false,
+      retrySafe: true,
+      retryGuidance: "wait-for-page-gate-to-clear",
     });
   });
 
@@ -965,6 +1208,60 @@ describe("runSubmissionWithRecoveryForTest", () => {
     expect(submit).toHaveBeenNthCalledWith(3, "fallback prompt", [
       expect.objectContaining({ displayPath: "fallback.txt" }),
     ]);
+  });
+
+  test("passes already-uploaded raw attachments to inline fallback cleanup", async () => {
+    const rawAttachment = {
+      path: "/tmp/evidence.bin",
+      displayPath: "evidence.bin",
+      sizeBytes: 12,
+    };
+    const fallbackBundle = {
+      path: "/tmp/fallback.txt",
+      displayPath: "fallback.txt",
+      sizeBytes: 24,
+    };
+    const submit = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new BrowserAutomationError("prompt too large", {
+          code: "prompt-too-large",
+          observedDraftSha256: "a".repeat(64),
+        }),
+      )
+      .mockResolvedValueOnce({
+        baselineTurns: 7,
+        baselineAssistantText: "done",
+      });
+    const prepareFallbackSubmission = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      runSubmissionWithRecoveryForTest({
+        prompt: "inline prompt",
+        attachments: [rawAttachment],
+        fallbackSubmission: {
+          prompt: "fallback prompt",
+          attachments: [fallbackBundle, rawAttachment],
+        },
+        submit,
+        reloadPromptComposer: vi.fn().mockResolvedValue(undefined),
+        prepareFallbackSubmission,
+        logger: vi.fn<(message: string) => void>(),
+      }),
+    ).resolves.toEqual({
+      baselineTurns: 7,
+      baselineAssistantText: "done",
+    });
+
+    expect(prepareFallbackSubmission).toHaveBeenCalledTimes(1);
+    expect(prepareFallbackSubmission).toHaveBeenCalledWith(
+      "inline prompt",
+      [rawAttachment],
+      expect.objectContaining({
+        details: expect.objectContaining({ observedDraftSha256: "a".repeat(64) }),
+      }),
+    );
+    expect(submit).toHaveBeenNthCalledWith(2, "fallback prompt", [fallbackBundle, rawAttachment]);
   });
 
   test("throws when prompt-too-large happens again after fallback", async () => {

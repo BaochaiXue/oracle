@@ -1,0 +1,2057 @@
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { cp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import type { BrowserContext, Page } from "playwright-core";
+import { OracleProviderFixture } from "../../apps/oracle-provider-fixture/src/index.js";
+import {
+  dirtyAttemptSandboxWithoutSend,
+  monitorPotentialSubmissions,
+  observeAttemptSandboxPage,
+  observeStableAttemptSandboxPage,
+  type AttemptSandboxPageObservation,
+} from "../../packages/chatgpt-adapter/src/index.js";
+import {
+  acceptAuthSeedCandidate,
+  authSeedTestHooks,
+  closeManagedBrowserOverCdp,
+  cleanupAttemptSandbox,
+  createAttemptSandbox,
+  createAuthSeedCandidate,
+  discardAuthSeedCandidate,
+  digestProfile,
+  launchAttemptBrowserRuntime,
+  listAttemptQuarantineEntries,
+  listAttemptSandboxDirectories,
+  managedBrowserTestHooks,
+  observeManagedBrowserProcess,
+  readAuthSeed,
+  readAuthSeedCertification,
+  readAttemptSandbox,
+  reconcileAttemptSandboxQuarantines,
+  withAuthSeedCloneLock,
+  withAuthSeedRefreshLock,
+  withAttemptProcessLifecycleReservation,
+  writeAttemptProcessReceipt,
+  type AuthSeedCloneProofReceipt,
+  type LaunchManagedBrowser,
+  type ObservedManagedBrowserProcess,
+} from "../../packages/oracle-browser-runtime/src/index.js";
+import { findFixtureBrowserExecutable } from "./browser-runtime.js";
+
+const roots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+function temporaryRoot(): string {
+  const root = mkdtempSync(path.join(tmpdir(), "oracle-attempt-sandbox-"));
+  roots.push(root);
+  return root;
+}
+
+function seedSource(root: string): string {
+  const source = path.join(root, "browser-profile");
+  mkdirSync(path.join(source, "Default"), { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(source, "Local State"), '{"profile":{"last_used":"Default"}}\n');
+  writeFileSync(path.join(source, "Default", "Preferences"), '{"fixture":true}\n');
+  return source;
+}
+
+describe("Oracle disposable attempt sandboxes", () => {
+  test("seed refresh and clone locks exclude one another", async () => {
+    const runtimeRoot = temporaryRoot();
+    let releaseShared!: () => void;
+    let sharedEntered!: () => void;
+    const sharedRelease = new Promise<void>((resolve) => (releaseShared = resolve));
+    const entered = new Promise<void>((resolve) => (sharedEntered = resolve));
+    const shared = withAuthSeedCloneLock(runtimeRoot, async () => {
+      sharedEntered();
+      await sharedRelease;
+    });
+    await entered;
+    await expect(
+      withAuthSeedRefreshLock(runtimeRoot, async () => undefined, { timeoutMs: 20 }),
+    ).rejects.toThrow(/exclusive auth-seed lock/i);
+    releaseShared();
+    await shared;
+
+    let releaseExclusive!: () => void;
+    let exclusiveEntered!: () => void;
+    const exclusiveRelease = new Promise<void>((resolve) => (releaseExclusive = resolve));
+    const exclusiveReady = new Promise<void>((resolve) => (exclusiveEntered = resolve));
+    const exclusive = withAuthSeedRefreshLock(runtimeRoot, async () => {
+      exclusiveEntered();
+      await exclusiveRelease;
+    });
+    await exclusiveReady;
+    await expect(
+      withAuthSeedCloneLock(runtimeRoot, async () => undefined, { timeoutMs: 20 }),
+    ).rejects.toThrow(/shared auth-seed lock/i);
+    releaseExclusive();
+    await exclusive;
+  }, 60_000);
+
+  test("waits through delayed restored state before classifying a clone start", async () => {
+    const clean = sandboxPageObservation();
+    const restored: AttemptSandboxPageObservation = {
+      ...clean,
+      composerEmpty: false,
+      attachmentPresent: true,
+    };
+    let clock = 0;
+    const observation = await observeStableAttemptSandboxPage(
+      {} as Page,
+      {
+        marker: "delayed-restoration",
+        filename: "delayed-restoration.md",
+        timeoutMs: 1_000,
+        quietPeriodMs: 200,
+        pollIntervalMs: 50,
+      },
+      {
+        now: () => clock,
+        wait: async (milliseconds) => {
+          clock += milliseconds;
+        },
+        waitForReady: async () => undefined,
+        observe: async () => (clock < 150 ? clean : restored),
+      },
+    );
+    expect(observation).toEqual(restored);
+    expect(clock).toBeGreaterThanOrEqual(350);
+  });
+
+  test("atomically clones, isolates, cleans, and accepts one unchanged seed generation", async () => {
+    const runtimeRoot = temporaryRoot();
+    const sourceProfile = seedSource(runtimeRoot);
+    const sourceBefore = readFileSync(path.join(sourceProfile, "Default", "Preferences"), "utf8");
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: sourceProfile,
+    });
+    const candidateRoot = path.dirname(candidate.profileRealpath);
+    expect(candidate.profileDigest).toBe(await digestProfile(candidate.profileRealpath));
+    expect(readFileSync(path.join(sourceProfile, "Default", "Preferences"), "utf8")).toBe(
+      sourceBefore,
+    );
+
+    const cloneA = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_fixture_a",
+      turnAttemptId: "attempt_fixture_a",
+      purpose: "probe",
+    });
+    if (process.platform !== "win32") {
+      expect(statSync(cloneA.directory).mode & 0o777).toBe(0o700);
+      expect(statSync(path.join(cloneA.directory, "owner.json")).mode & 0o777).toBe(0o400);
+    }
+    writeFileSync(path.join(cloneA.profileDir, "retained-draft"), "synthetic marker\n");
+    writeFileSync(path.join(cloneA.profileDir, "retained-attachment"), "synthetic file\n");
+    expect(
+      (
+        await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: cloneA.directory,
+          dependencies: { findProcessesUsingProfile: noProfileProcesses },
+        })
+      ).status,
+    ).toBe("deleted");
+
+    const cloneB = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_fixture_b",
+      turnAttemptId: "attempt_fixture_b",
+      purpose: "probe",
+    });
+    expect(existsSync(path.join(cloneB.profileDir, "retained-draft"))).toBe(false);
+    expect(existsSync(path.join(cloneB.profileDir, "retained-attachment"))).toBe(false);
+    expect(
+      (
+        await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: cloneB.directory,
+          dependencies: { findProcessesUsingProfile: noProfileProcesses },
+        })
+      ).status,
+    ).toBe("deleted");
+    expect(await digestProfile(candidate.profileRealpath)).toBe(candidate.profileDigest);
+    expect(await listAttemptSandboxDirectories(runtimeRoot)).toEqual([]);
+
+    const proof = passingCloneProof(candidate.candidateId, candidate.profileDigest, {
+      cloneA: cloneA.sandboxId,
+      cloneB: cloneB.sandboxId,
+    });
+    const certification = await acceptAuthSeedCandidate({
+      runtimeRoot,
+      candidateRoot,
+      cloneProof: proof,
+    });
+    const seed = await readAuthSeed(runtimeRoot);
+    expect(seed).toMatchObject({
+      schemaVersion: "oracle.auth-seed.v1",
+      profileDigest: candidate.profileDigest,
+    });
+    expect(seed!.generation).toBe(certification.seedGeneration);
+    expect(seed!.generation).not.toBe(candidate.candidateId);
+    expect(await readAuthSeedCertification(runtimeRoot)).toEqual(certification);
+    expect(readFileSync(path.join(sourceProfile, "Default", "Preferences"), "utf8")).toBe(
+      sourceBefore,
+    );
+    const forbiddenLaunches: Parameters<LaunchManagedBrowser>[0][] = [];
+    await expect(
+      launchAttemptBrowserRuntime({
+        sandboxDirectory: path.dirname(seed!.profileRealpath),
+        headless: true,
+        inspection: {
+          chromeForTestingExecutablePath: "/runtime/chrome",
+          executableExists: () => true,
+        },
+        launchManagedBrowser: fakeAttemptLaunch(forbiddenLaunches, seed!.profileRealpath),
+      }),
+    ).rejects.toThrow(/owner marker|attempts directory/i);
+    expect(forbiddenLaunches).toEqual([]);
+  });
+
+  test("rejects an unreceipted seed and removes an incomplete clone before publication", async () => {
+    const runtimeRoot = temporaryRoot();
+    const sourceProfile = seedSource(runtimeRoot);
+    await expect(
+      createAttemptSandbox({
+        runtimeRoot,
+        seed: {
+          generation: "forged",
+          profileRealpath: realpathSync(sourceProfile),
+          profileDigest: await digestProfile(sourceProfile),
+        },
+        jobId: "job_forged_seed",
+        turnAttemptId: "attempt_forged_seed",
+        purpose: "probe",
+      }),
+    ).rejects.toThrow(/exact profile realpath|neither an accepted seed nor one exact candidate/i);
+
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: sourceProfile,
+    });
+    await expect(
+      createAttemptSandbox({
+        runtimeRoot,
+        seed: candidate,
+        jobId: "job_partial_clone",
+        turnAttemptId: "attempt_partial_clone",
+        purpose: "probe",
+        copyProfile: async (_source, destination) => {
+          mkdirSync(destination, { recursive: true });
+          writeFileSync(path.join(destination, "partial"), "partial\n");
+          throw new Error("injected clone failure");
+        },
+      }),
+    ).rejects.toThrow(/injected clone failure/i);
+    expect(readdirSync(path.join(runtimeRoot, "attempts"))).toEqual([]);
+  });
+
+  test("publishes cleanup ownership before profile cloning can retain authenticated state", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const create = createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_interrupted_clone",
+      turnAttemptId: "attempt_interrupted_clone",
+      purpose: "probe",
+      copyProfile: async (_source, destination) => {
+        const directory = path.dirname(destination);
+        const owned = await readAttemptSandbox(directory);
+        expect(owned.profileDir).toBe(destination);
+        writeFileSync(path.join(destination, "partial-authenticated-state"), "partial\n");
+
+        const liveCleanup = await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: directory,
+          dependencies: { findProcessesUsingProfile: noProfileProcesses },
+        });
+        expect(liveCleanup.status).toBe("blocked");
+        expect(liveCleanup.error).toMatch(/lifecycle operation is already in progress/i);
+
+        const lifecyclePath = path.join(directory, "process-lifecycle.json");
+        const lifecycle = JSON.parse(readFileSync(lifecyclePath, "utf8"));
+        writeFileSync(
+          lifecyclePath,
+          `${JSON.stringify({
+            ...lifecycle,
+            processStartTime: "simulated-dead-clone-process",
+          })}\n`,
+        );
+        const staleCleanup = await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: directory,
+          dependencies: { findProcessesUsingProfile: noProfileProcesses },
+        });
+        expect(staleCleanup.status).toBe("deleted");
+        throw new Error("simulated interrupted clone");
+      },
+    });
+
+    await expect(create).rejects.toThrow(/simulated interrupted clone/i);
+    expect(await listAttemptSandboxDirectories(runtimeRoot)).toEqual([]);
+  });
+
+  test("rejects an attempt sandbox as an auth-seed candidate source", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_no_copyback",
+      turnAttemptId: "attempt_no_copyback",
+      purpose: "probe",
+    });
+    await expect(
+      createAuthSeedCandidate({
+        runtimeRoot,
+        sourceProfileDir: sandbox.profileDir,
+      }),
+    ).rejects.toThrow(/exact fixed migration profile/i);
+    const migrationProfile = path.join(runtimeRoot, "browser-profile");
+    await rm(migrationProfile, { recursive: true, force: true });
+    symlinkSync(
+      sandbox.profileDir,
+      migrationProfile,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    await expect(
+      createAuthSeedCandidate({
+        runtimeRoot,
+        sourceProfileDir: migrationProfile,
+      }),
+    ).rejects.toThrow(/exact fixed migration profile|disposable/i);
+    expect(
+      (
+        await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: sandbox.directory,
+          dependencies: { findProcessesUsingProfile: noProfileProcesses },
+        })
+      ).status,
+    ).toBe("deleted");
+  });
+
+  test("blocks seed acceptance while an abandoned staging clone remains", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const staging = path.join(runtimeRoot, "attempts", ".abandoned-clone.tmp");
+    mkdirSync(path.join(staging, "profile"), { recursive: true });
+    expect(await listAttemptSandboxDirectories(runtimeRoot)).toEqual([staging]);
+    await expect(
+      acceptAuthSeedCandidate({
+        runtimeRoot,
+        candidateRoot: path.dirname(candidate.profileRealpath),
+        cloneProof: passingCloneProof(candidate.candidateId, candidate.profileDigest, {
+          cloneA: "deleted-clone-a",
+          cloneB: "deleted-clone-b",
+        }),
+      }),
+    ).rejects.toThrow(/attempt sandbox.*residue remains/i);
+  });
+
+  test("blocks seed acceptance while unreceipted quarantine residue remains", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const foreignQuarantine = path.join(runtimeRoot, "quarantine", "unreceipted-residue");
+    mkdirSync(foreignQuarantine, { recursive: true });
+    writeFileSync(path.join(foreignQuarantine, "keep"), "foreign state\n");
+
+    await expect(
+      acceptAuthSeedCandidate({
+        runtimeRoot,
+        candidateRoot: path.dirname(candidate.profileRealpath),
+        cloneProof: passingCloneProof(candidate.candidateId, candidate.profileDigest, {
+          cloneA: "deleted-clone-a",
+          cloneB: "deleted-clone-b",
+        }),
+      }),
+    ).rejects.toThrow(/quarantine residue remains/i);
+    expect(readFileSync(path.join(foreignQuarantine, "keep"), "utf8")).toBe("foreign state\n");
+  });
+
+  test("serializes the combined residue check against sandbox quarantine moves", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_acceptance_cleanup_race",
+      turnAttemptId: "attempt_acceptance_cleanup_race",
+      purpose: "probe",
+    });
+    let attemptsCountStarted!: () => void;
+    let quarantineCountStarted!: () => void;
+    let releaseAttemptsCount!: () => void;
+    const attemptsCounting = new Promise<void>((resolve) => (attemptsCountStarted = resolve));
+    const quarantineCounting = new Promise<void>((resolve) => (quarantineCountStarted = resolve));
+    const attemptsCountReleased = new Promise<void>((resolve) => (releaseAttemptsCount = resolve));
+    const acceptance = authSeedTestHooks.acceptAuthSeedCandidateWithCount(
+      {
+        runtimeRoot,
+        candidateRoot: path.dirname(candidate.profileRealpath),
+        cloneProof: passingCloneProof(candidate.candidateId, candidate.profileDigest, {
+          cloneA: "deleted-clone-a",
+          cloneB: "deleted-clone-b",
+        }),
+      },
+      async (root, directoryName) => {
+        if (directoryName === "quarantine") {
+          quarantineCountStarted();
+          return 0;
+        }
+        attemptsCountStarted();
+        await attemptsCountReleased;
+        return readdirSync(path.join(root, directoryName)).length;
+      },
+    );
+    await Promise.all([attemptsCounting, quarantineCounting]);
+
+    let cleanupSettled = false;
+    const cleanup = cleanupAttemptSandbox({
+      runtimeRoot,
+      sandboxDirectory: sandbox.directory,
+      expectedOwner: sandbox.owner,
+      dependencies: { findProcessesUsingProfile: noProfileProcesses },
+    }).finally(() => {
+      cleanupSettled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(cleanupSettled).toBe(false);
+    expect(existsSync(sandbox.directory)).toBe(true);
+
+    releaseAttemptsCount();
+    await expect(acceptance).rejects.toThrow(/attempt sandbox.*residue remains/i);
+    await expect(cleanup).resolves.toMatchObject({ status: "deleted", processStatus: "none" });
+    expect(await listAttemptSandboxDirectories(runtimeRoot)).toEqual([]);
+    expect(await listAttemptQuarantineEntries(runtimeRoot)).toEqual([]);
+  });
+
+  test("requires the promoted candidate to be the only candidate entry", async () => {
+    const runtimeRoot = temporaryRoot();
+    const sourceProfileDir = seedSource(runtimeRoot);
+    const retained = await createAuthSeedCandidate({ runtimeRoot, sourceProfileDir });
+    const promoted = await createAuthSeedCandidate({ runtimeRoot, sourceProfileDir });
+    const acceptPromoted = () =>
+      acceptAuthSeedCandidate({
+        runtimeRoot,
+        candidateRoot: path.dirname(promoted.profileRealpath),
+        cloneProof: passingCloneProof(promoted.candidateId, promoted.profileDigest, {
+          cloneA: "deleted-clone-a",
+          cloneB: "deleted-clone-b",
+        }),
+      });
+
+    await expect(acceptPromoted()).rejects.toThrow(/other candidate entries remain/i);
+    await discardAuthSeedCandidate({
+      runtimeRoot,
+      candidateRoot: path.dirname(retained.profileRealpath),
+      expectedCandidateId: retained.candidateId,
+    });
+    await expect(acceptPromoted()).resolves.toMatchObject({
+      schemaVersion: "oracle.auth-seed-certification.v1",
+    });
+    await expect(createAuthSeedCandidate({ runtimeRoot, sourceProfileDir })).rejects.toThrow(
+      /accepted auth seed already exists/i,
+    );
+  });
+
+  test("reclaims only a dead, receipted candidate staging clone before acceptance", async () => {
+    const runtimeRoot = temporaryRoot();
+    const sourceProfileDir = seedSource(runtimeRoot);
+    const promoted = await createAuthSeedCandidate({ runtimeRoot, sourceProfileDir });
+    const candidatesRoot = path.join(runtimeRoot, "auth-seed-candidates");
+    const candidateId = "interrupted-candidate";
+    const token = "dead-candidate-token";
+    const stagingRoot = path.join(candidatesRoot, `.${candidateId}.${token}.tmp`);
+    mkdirSync(path.join(stagingRoot, "profile"), { recursive: true });
+    writeFileSync(path.join(stagingRoot, "profile", "partial-auth-state"), "partial\n");
+    writeFileSync(
+      path.join(stagingRoot, "creation.json"),
+      `${JSON.stringify({
+        schemaVersion: "oracle.auth-seed-candidate-creation.v1",
+        candidateId,
+        token,
+        pid: 999_999,
+        processStartTime: "dead-process-start-time",
+        sourceProfileRealpath: realpathSync(sourceProfileDir),
+        stagingRoot: realpathSync(stagingRoot),
+        createdAt: new Date().toISOString(),
+      })}\n`,
+    );
+
+    await expect(
+      acceptAuthSeedCandidate({
+        runtimeRoot,
+        candidateRoot: path.dirname(promoted.profileRealpath),
+        cloneProof: passingCloneProof(promoted.candidateId, promoted.profileDigest, {
+          cloneA: "deleted-clone-a",
+          cloneB: "deleted-clone-b",
+        }),
+      }),
+    ).resolves.toMatchObject({ schemaVersion: "oracle.auth-seed-certification.v1" });
+    expect(existsSync(stagingRoot)).toBe(false);
+  });
+
+  test("resumes deletion of a dead candidate already moved to stale quarantine", async () => {
+    const runtimeRoot = temporaryRoot();
+    const sourceProfileDir = seedSource(runtimeRoot);
+    const promoted = await createAuthSeedCandidate({ runtimeRoot, sourceProfileDir });
+    const candidatesRoot = path.join(runtimeRoot, "auth-seed-candidates");
+    const candidateId = "interrupted-candidate";
+    const token = "dead-candidate-token";
+    const stagingRoot = path.join(candidatesRoot, `.${candidateId}.${token}.tmp`);
+    const staleRoot = `${stagingRoot}.stale-interrupted-cleanup`;
+    mkdirSync(path.join(staleRoot, "profile"), { recursive: true });
+    writeFileSync(path.join(staleRoot, "profile", "partial-auth-state"), "partial\n");
+    writeFileSync(
+      path.join(staleRoot, "creation.json"),
+      `${JSON.stringify({
+        schemaVersion: "oracle.auth-seed-candidate-creation.v1",
+        candidateId,
+        token,
+        pid: 999_999,
+        processStartTime: "dead-process-start-time",
+        sourceProfileRealpath: realpathSync(sourceProfileDir),
+        stagingRoot,
+        createdAt: new Date().toISOString(),
+      })}\n`,
+    );
+
+    await expect(
+      acceptAuthSeedCandidate({
+        runtimeRoot,
+        candidateRoot: path.dirname(promoted.profileRealpath),
+        cloneProof: passingCloneProof(promoted.candidateId, promoted.profileDigest, {
+          cloneA: "deleted-clone-a",
+          cloneB: "deleted-clone-b",
+        }),
+      }),
+    ).resolves.toMatchObject({ schemaVersion: "oracle.auth-seed-certification.v1" });
+    expect(existsSync(staleRoot)).toBe(false);
+  });
+
+  test("atomically reserves one sandbox for each logical attempt purpose", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    let copyStarted!: () => void;
+    let continueCopy!: () => void;
+    const started = new Promise<void>((resolve) => (copyStarted = resolve));
+    const released = new Promise<void>((resolve) => (continueCopy = resolve));
+    const createInput = {
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_unique_attempt",
+      turnAttemptId: "attempt_unique_attempt",
+      purpose: "probe" as const,
+    };
+    const first = createAttemptSandbox({
+      ...createInput,
+      copyProfile: async (source, destination) => {
+        copyStarted();
+        await released;
+        await cp(source, destination, { recursive: true });
+      },
+    });
+    await started;
+    const secondError = await createAttemptSandbox(createInput).catch((error: unknown) => error);
+    continueCopy();
+    const sandbox = await first;
+    expect(secondError).toBeInstanceOf(Error);
+    expect((secondError as Error).message).toMatch(/already own an attempt sandbox/i);
+    const activeSandboxes = await listAttemptSandboxDirectories(runtimeRoot);
+    expect(activeSandboxes).toHaveLength(1);
+    expect(path.basename(activeSandboxes[0]!)).toBe(sandbox.sandboxId);
+    expect(
+      (
+        await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: sandbox.directory,
+          dependencies: { findProcessesUsingProfile: noProfileProcesses },
+        })
+      ).status,
+    ).toBe("deleted");
+  });
+
+  test("keeps logical attempt uniqueness across seed generations", async () => {
+    const runtimeRoot = temporaryRoot();
+    const sourceProfileDir = seedSource(runtimeRoot);
+    const firstCandidate = await createAuthSeedCandidate({ runtimeRoot, sourceProfileDir });
+    const secondCandidate = await createAuthSeedCandidate({ runtimeRoot, sourceProfileDir });
+    const createInput = {
+      runtimeRoot,
+      jobId: "job_cross_generation",
+      turnAttemptId: "attempt_cross_generation",
+      purpose: "probe" as const,
+    };
+    const sandbox = await createAttemptSandbox({ ...createInput, seed: firstCandidate });
+    await expect(createAttemptSandbox({ ...createInput, seed: secondCandidate })).rejects.toThrow(
+      /already own an attempt sandbox/i,
+    );
+    expect(
+      (
+        await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: sandbox.directory,
+          dependencies: { findProcessesUsingProfile: noProfileProcesses },
+        })
+      ).status,
+    ).toBe("deleted");
+  });
+
+  test("reclaims auth-seed locks whose recorded processes are dead", async () => {
+    const runtimeRoot = temporaryRoot();
+    const lockRoot = path.join(runtimeRoot, "run", "auth-seed.lock");
+    const exclusive = path.join(lockRoot, "exclusive");
+    mkdirSync(lockRoot, { recursive: true });
+    writeDeadLockOwner(exclusive, "exclusive");
+    await expect(withAuthSeedCloneLock(runtimeRoot, async () => "clone-ready")).resolves.toBe(
+      "clone-ready",
+    );
+
+    const reader = path.join(lockRoot, "readers", "dead-reader");
+    mkdirSync(path.dirname(reader), { recursive: true });
+    writeDeadLockOwner(reader, "shared");
+    await expect(withAuthSeedRefreshLock(runtimeRoot, async () => "refresh-ready")).resolves.toBe(
+      "refresh-ready",
+    );
+  });
+
+  test("does not displace the live winner after dead auth-lock reclamation", async () => {
+    const runtimeRoot = temporaryRoot();
+    const exclusive = path.join(runtimeRoot, "run", "auth-seed.lock", "exclusive");
+    mkdirSync(path.dirname(exclusive), { recursive: true });
+    writeDeadLockOwner(exclusive, "exclusive");
+    let winnerEntered!: () => void;
+    let releaseWinner!: () => void;
+    const entered = new Promise<void>((resolve) => (winnerEntered = resolve));
+    const released = new Promise<void>((resolve) => (releaseWinner = resolve));
+    const winner = withAuthSeedRefreshLock(runtimeRoot, async () => {
+      winnerEntered();
+      await released;
+    });
+    await entered;
+    await expect(
+      withAuthSeedRefreshLock(runtimeRoot, async () => undefined, { timeoutMs: 75 }),
+    ).rejects.toThrow(/exclusive auth-seed lock/i);
+    releaseWinner();
+    await winner;
+    await expect(withAuthSeedCloneLock(runtimeRoot, async () => "next-job")).resolves.toBe(
+      "next-job",
+    );
+  });
+
+  test("reclaims an auth-seed lock after its PID is reused", async () => {
+    const runtimeRoot = temporaryRoot();
+    const lockRoot = path.join(runtimeRoot, "run", "auth-seed.lock");
+    const exclusive = path.join(lockRoot, "exclusive");
+    mkdirSync(lockRoot, { recursive: true });
+    writeFileSync(
+      exclusive,
+      `${JSON.stringify({
+        schemaVersion: "oracle.auth-seed-lock-owner.v2",
+        token: "dead-owner-reused-pid",
+        pid: process.pid,
+        processStartTime: "not-the-current-process-start-time",
+        mode: "exclusive",
+        createdAt: new Date().toISOString(),
+      })}\n`,
+    );
+    await expect(withAuthSeedCloneLock(runtimeRoot, async () => "clone-ready")).resolves.toBe(
+      "clone-ready",
+    );
+  });
+
+  test("publishes complete auth-seed lock ownership atomically", async () => {
+    const runtimeRoot = temporaryRoot();
+    await withAuthSeedCloneLock(runtimeRoot, async () => {
+      const readersRoot = path.join(runtimeRoot, "run", "auth-seed.lock", "readers");
+      const readers = readdirSync(readersRoot);
+      expect(readers).toHaveLength(1);
+      const lockPath = path.join(readersRoot, readers[0]!);
+      expect(statSync(lockPath).isFile()).toBe(true);
+      expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({
+        schemaVersion: "oracle.auth-seed-lock-owner.v2",
+        pid: process.pid,
+        processStartTime: expect.any(String),
+        mode: "shared",
+      });
+    });
+    await withAuthSeedRefreshLock(runtimeRoot, async () => {
+      const lockPath = path.join(runtimeRoot, "run", "auth-seed.lock", "exclusive");
+      expect(statSync(lockPath).isFile()).toBe(true);
+      expect(JSON.parse(readFileSync(lockPath, "utf8"))).toMatchObject({
+        schemaVersion: "oracle.auth-seed-lock-owner.v2",
+        pid: process.pid,
+        processStartTime: expect.any(String),
+        mode: "exclusive",
+      });
+    });
+  });
+
+  test("rejects symlinked profile state instead of risking copyback outside the sandbox", async () => {
+    const runtimeRoot = temporaryRoot();
+    const sourceProfile = seedSource(runtimeRoot);
+    const outside = path.join(runtimeRoot, "outside-profile-state");
+    writeFileSync(outside, "must remain outside\n");
+    symlinkSync(outside, path.join(sourceProfile, "Default", "linked-state"));
+    await expect(
+      createAuthSeedCandidate({ runtimeRoot, sourceProfileDir: sourceProfile }),
+    ).rejects.toThrow(/unsupported symlink/i);
+    expect(readFileSync(outside, "utf8")).toBe("must remain outside\n");
+    expect(readdirSync(path.join(runtimeRoot, "auth-seed-candidates"))).toEqual([]);
+  });
+
+  test("blocks a foreign symlink cleanup target without touching its contents", async () => {
+    const runtimeRoot = temporaryRoot();
+    const outside = path.join(runtimeRoot, "outside");
+    const attempts = path.join(runtimeRoot, "attempts");
+    mkdirSync(outside, { recursive: true });
+    mkdirSync(attempts, { recursive: true });
+    writeFileSync(path.join(outside, "keep"), "keep\n");
+    const link = path.join(attempts, "foreign-link");
+    symlinkSync(outside, link);
+
+    const cleanup = await cleanupAttemptSandbox({
+      runtimeRoot,
+      sandboxDirectory: link,
+    });
+    expect(cleanup).toMatchObject({
+      status: "blocked",
+      processStatus: "identity-unproven",
+    });
+    expect(readFileSync(path.join(outside, "keep"), "utf8")).toBe("keep\n");
+  });
+
+  test("never signals or deletes when the process identity is not exact", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_process",
+      turnAttemptId: "attempt_process",
+      purpose: "probe",
+    });
+    const processReceipt = await writeAttemptProcessReceipt(sandbox, {
+      pid: 4242,
+      processStartTime: "Fri Sep 4 01:02:03 2026",
+      executableRealpath: "/runtime/chrome",
+      profileRealpath: sandbox.profileDir,
+      debugHost: "127.0.0.1",
+      debugPort: 9444,
+    });
+    let closeCount = 0;
+    const wrongProcess: ObservedManagedBrowserProcess = {
+      pid: processReceipt.pid,
+      processStartTime: processReceipt.processStartTime,
+      command: "/runtime/chrome --user-data-dir=/foreign --remote-debugging-port=9444",
+      executableRealpath: "/runtime/chrome",
+    };
+    const cleanup = await cleanupAttemptSandbox({
+      runtimeRoot,
+      sandboxDirectory: sandbox.directory,
+      expectedOwner: sandbox.owner,
+      dependencies: {
+        observeProcess: async () => wrongProcess,
+        closeOverCdp: async () => {
+          closeCount += 1;
+        },
+      },
+    });
+    expect(cleanup.status).toBe("blocked");
+    expect(cleanup.processStatus).toBe("identity-unproven");
+    expect(closeCount).toBe(0);
+    expect(existsSync(sandbox.directory)).toBe(true);
+  });
+
+  test("blocks cleanup when process inspection fails", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_process_unobservable",
+      turnAttemptId: "attempt_process_unobservable",
+      purpose: "probe",
+    });
+    await writeAttemptProcessReceipt(sandbox, {
+      pid: 4444,
+      processStartTime: "Fri Sep 4 01:04:05 2026",
+      executableRealpath: "/runtime/chrome",
+      profileRealpath: sandbox.profileDir,
+      debugHost: "127.0.0.1",
+      debugPort: 9655,
+    });
+    const cleanup = await cleanupAttemptSandbox({
+      runtimeRoot,
+      sandboxDirectory: sandbox.directory,
+      dependencies: {
+        observeProcess: async () => {
+          throw new Error("injected process inspection failure");
+        },
+      },
+    });
+    expect(cleanup).toMatchObject({
+      status: "blocked",
+      processStatus: "identity-unproven",
+    });
+    expect(cleanup.error).toMatch(/process inspection failure/i);
+    expect(existsSync(sandbox.directory)).toBe(true);
+  });
+
+  test("does not classify a process inspection error as process exit", async () => {
+    await expect(
+      observeManagedBrowserProcess(process.pid, "/runtime/chrome", {
+        processExists: async () => true,
+        execProcess: async () => {
+          throw new Error("injected ps permission failure");
+        },
+      }),
+    ).rejects.toThrow(/process inspection failed.*permission failure/i);
+  });
+
+  test("blocks cleanup when a profile process exists without a process receipt", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_missing_process_receipt",
+      turnAttemptId: "attempt_missing_process_receipt",
+      purpose: "probe",
+    });
+    const cleanup = await cleanupAttemptSandbox({
+      runtimeRoot,
+      sandboxDirectory: sandbox.directory,
+      dependencies: {
+        findProcessesUsingProfile: async () => [
+          { pid: 4545, processStartTime: "Fri Sep 4 01:05:06 2026" },
+        ],
+      },
+    });
+    expect(cleanup).toMatchObject({
+      status: "blocked",
+      processStatus: "identity-unproven",
+    });
+    expect(cleanup.error).toMatch(/no process receipt.*live process/i);
+    expect(existsSync(sandbox.directory)).toBe(true);
+  });
+
+  test("closes an exact process receipt before deleting its sandbox", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_process_exact",
+      turnAttemptId: "attempt_process_exact",
+      purpose: "probe",
+    });
+    const processReceipt = await writeAttemptProcessReceipt(sandbox, {
+      pid: 4343,
+      processStartTime: "Fri Sep 4 01:03:04 2026",
+      executableRealpath: "/runtime/chrome",
+      profileRealpath: sandbox.profileDir,
+      debugHost: "127.0.0.1",
+      debugPort: 9555,
+    });
+    let running = true;
+    let closeCount = 0;
+    const exactProcess: ObservedManagedBrowserProcess = {
+      pid: processReceipt.pid,
+      processStartTime: processReceipt.processStartTime,
+      command: `/runtime/chrome --user-data-dir=${sandbox.profileDir} --remote-debugging-port=9555`,
+      executableRealpath: "/runtime/chrome",
+    };
+    const cleanup = await cleanupAttemptSandbox({
+      runtimeRoot,
+      sandboxDirectory: sandbox.directory,
+      dependencies: {
+        observeProcess: async () => (running ? exactProcess : undefined),
+        closeOverCdp: async () => {
+          closeCount += 1;
+          running = false;
+        },
+        wait: async () => undefined,
+        findProcessesUsingProfile: noProfileProcesses,
+      },
+    });
+    expect(cleanup).toMatchObject({ status: "deleted", processStatus: "stopped" });
+    expect(closeCount).toBe(1);
+    expect(existsSync(sandbox.directory)).toBe(false);
+  });
+
+  test("never signals a bare PID when verified CDP close does not stop the process", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_stuck_after_cdp_close",
+      turnAttemptId: "attempt_stuck_after_cdp_close",
+      purpose: "probe",
+    });
+    const processReceipt = await writeAttemptProcessReceipt(sandbox, {
+      pid: 4646,
+      processStartTime: "Fri Sep 4 01:06:07 2026",
+      executableRealpath: "/runtime/chrome",
+      profileRealpath: sandbox.profileDir,
+      debugHost: "127.0.0.1",
+      debugPort: 9755,
+    });
+    let running = true;
+    const exactProcess: ObservedManagedBrowserProcess = {
+      pid: processReceipt.pid,
+      processStartTime: processReceipt.processStartTime,
+      command: `/runtime/chrome --user-data-dir=${sandbox.profileDir} --remote-debugging-port=9755`,
+      executableRealpath: "/runtime/chrome",
+    };
+    const signalSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      running = false;
+      return true;
+    });
+    try {
+      const cleanup = await cleanupAttemptSandbox({
+        runtimeRoot,
+        sandboxDirectory: sandbox.directory,
+        expectedOwner: sandbox.owner,
+        dependencies: {
+          observeProcess: async () => (running ? exactProcess : undefined),
+          closeOverCdp: async () => undefined,
+          wait: async () => undefined,
+          closeWaitMs: 0,
+          findProcessesUsingProfile: noProfileProcesses,
+        },
+      });
+      expect(cleanup).toMatchObject({
+        status: "blocked",
+        processStatus: "identity-unproven",
+      });
+      expect(cleanup.error).toMatch(/stable process handle/i);
+      expect(signalSpy).not.toHaveBeenCalled();
+      expect(existsSync(sandbox.directory)).toBe(true);
+    } finally {
+      signalSpy.mockRestore();
+    }
+  });
+
+  test("resumes receipt-bound sandbox quarantine deletion after an interrupted cleanup", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_quarantine_resume",
+      turnAttemptId: "attempt_quarantine_resume",
+      purpose: "probe",
+    });
+    writeFileSync(path.join(sandbox.profileDir, "partial-state"), "delete on resume\n");
+
+    const cleanup = await cleanupAttemptSandbox({
+      runtimeRoot,
+      sandboxDirectory: sandbox.directory,
+      expectedOwner: sandbox.owner,
+      dependencies: {
+        findProcessesUsingProfile: noProfileProcesses,
+        removeQuarantinedSandbox: async () => {
+          throw new Error("injected cleanup interruption");
+        },
+      },
+    });
+    expect(cleanup).toMatchObject({
+      status: "quarantined",
+      processStatus: "none",
+      error: "injected cleanup interruption",
+    });
+    expect(cleanup.quarantinePath).toEqual(expect.any(String));
+    expect(existsSync(sandbox.directory)).toBe(false);
+    expect(await listAttemptSandboxDirectories(runtimeRoot)).toEqual([]);
+    expect(await listAttemptQuarantineEntries(runtimeRoot)).toEqual([cleanup.quarantinePath]);
+    expect(existsSync(path.join(cleanup.quarantinePath!, "quarantine.json"))).toBe(true);
+    expect(existsSync(path.join(cleanup.quarantinePath!, "profile", "partial-state"))).toBe(true);
+
+    await reconcileAttemptSandboxQuarantines(runtimeRoot);
+
+    expect(await listAttemptQuarantineEntries(runtimeRoot)).toEqual([]);
+    expect(existsSync(cleanup.quarantinePath!)).toBe(false);
+  });
+
+  test("launches only the marked sandbox and permits only one page", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_runtime",
+      turnAttemptId: "attempt_runtime",
+      purpose: "probe",
+    });
+    const launches: Parameters<LaunchManagedBrowser>[0][] = [];
+    await expect(
+      launchAttemptBrowserRuntime({
+        sandboxDirectory: path.dirname(candidate.profileRealpath),
+        headless: true,
+        inspection: {
+          chromeForTestingExecutablePath: "/runtime/chrome",
+          executableExists: () => true,
+        },
+        launchManagedBrowser: fakeAttemptLaunch(launches, candidate.profileRealpath),
+      }),
+    ).rejects.toThrow(/owner marker|attempts directory/i);
+    expect(launches).toEqual([]);
+    const runtime = await launchAttemptBrowserRuntime({
+      sandboxDirectory: sandbox.directory,
+      headless: true,
+      inspection: {
+        chromeForTestingExecutablePath: "/runtime/chrome",
+        executableExists: () => true,
+      },
+      launchManagedBrowser: fakeAttemptLaunch(launches, sandbox.profileDir),
+    });
+    await runtime.openPage("https://fixture.invalid/");
+    await expect(runtime.openPage("https://fixture.invalid/second")).rejects.toThrow(
+      /only one page/i,
+    );
+    await runtime.close();
+    expect(launches).toEqual([
+      {
+        executablePath: "/runtime/chrome",
+        profileDir: sandbox.profileDir,
+        headless: true,
+        singlePageLifetime: true,
+        captureProcessIdentity: true,
+      },
+    ]);
+    await expect(writeAttemptProcessReceipt(sandbox, runtime.processReceipt)).rejects.toMatchObject(
+      { code: "EEXIST" },
+    );
+    expect(
+      (
+        await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: sandbox.directory,
+          dependencies: {
+            observeProcess: noObservedProcess,
+            findProcessesUsingProfile: noProfileProcesses,
+          },
+        })
+      ).status,
+    ).toBe("deleted");
+  });
+
+  test("keeps the attempt receipt live when a restored page arrives after launch", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_late_restored_receipt",
+      turnAttemptId: "attempt_late_restored_receipt",
+      purpose: "probe",
+    });
+    let restoredPageCount = 0;
+    const runtime = await launchAttemptBrowserRuntime({
+      sandboxDirectory: sandbox.directory,
+      headless: true,
+      inspection: {
+        chromeForTestingExecutablePath: "/runtime/chrome",
+        executableExists: () => true,
+      },
+      launchManagedBrowser: async (input) => ({
+        context: { pages: () => [] } as unknown as BrowserContext,
+        browserVersion: "test-browser",
+        executablePath: input.executablePath,
+        get restoredPageCount() {
+          return restoredPageCount;
+        },
+        preservedPages: () => [],
+        processIdentity: {
+          pid: 5152,
+          processStartTime: "Fri Sep 4 02:03:05 2026",
+          executableRealpath: input.executablePath,
+          profileRealpath: sandbox.profileDir,
+          debugHost: "127.0.0.1",
+          debugPort: 9667,
+        },
+        openPage: async () => fakeClosablePage().page,
+        close: async () => undefined,
+      }),
+    });
+    expect(runtime.receipt.restoredPageCount).toBe(0);
+    restoredPageCount = 1;
+    expect(runtime.receipt.restoredPageCount).toBe(1);
+    await runtime.close();
+    expect(
+      JSON.parse(readFileSync(path.join(sandbox.directory, "browser-runtime-launch.json"), "utf8")),
+    ).toMatchObject({ restoredPageCount: 1 });
+    expect(
+      (
+        await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: sandbox.directory,
+          dependencies: {
+            observeProcess: noObservedProcess,
+            findProcessesUsingProfile: noProfileProcesses,
+          },
+        })
+      ).status,
+    ).toBe("deleted");
+  });
+
+  test("reserves process ownership before a concurrent browser launch", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_concurrent_process",
+      turnAttemptId: "attempt_concurrent_process",
+      purpose: "probe",
+    });
+    let launchStarted!: () => void;
+    let continueLaunch!: () => void;
+    const started = new Promise<void>((resolve) => (launchStarted = resolve));
+    const released = new Promise<void>((resolve) => (continueLaunch = resolve));
+    let launchCount = 0;
+    const launchManagedBrowser: LaunchManagedBrowser = async (input) => {
+      launchCount += 1;
+      launchStarted();
+      await released;
+      return {
+        context: { pages: () => [] } as unknown as BrowserContext,
+        browserVersion: "test-browser",
+        executablePath: input.executablePath,
+        restoredPageCount: 0,
+        preservedPages: () => [],
+        processIdentity: {
+          pid: 5555,
+          processStartTime: "Fri Sep 4 02:07:08 2026",
+          executableRealpath: input.executablePath,
+          profileRealpath: sandbox.profileDir,
+          debugHost: "127.0.0.1",
+          debugPort: 9977,
+        },
+        openPage: async () => fakeClosablePage().page,
+        close: async () => undefined,
+      };
+    };
+    const firstLaunch = launchAttemptBrowserRuntime({
+      sandboxDirectory: sandbox.directory,
+      headless: true,
+      inspection: {
+        chromeForTestingExecutablePath: "/runtime/chrome",
+        executableExists: () => true,
+      },
+      launchManagedBrowser,
+    });
+    await started;
+    const cleanupWhileLaunching = await cleanupAttemptSandbox({
+      runtimeRoot,
+      sandboxDirectory: sandbox.directory,
+      dependencies: { findProcessesUsingProfile: noProfileProcesses },
+    });
+    expect(cleanupWhileLaunching).toMatchObject({
+      status: "blocked",
+      processStatus: "identity-unproven",
+    });
+    expect(existsSync(sandbox.directory)).toBe(true);
+    const secondLaunches: Parameters<LaunchManagedBrowser>[0][] = [];
+    const secondError = await launchAttemptBrowserRuntime({
+      sandboxDirectory: sandbox.directory,
+      headless: true,
+      inspection: {
+        chromeForTestingExecutablePath: "/runtime/chrome",
+        executableExists: () => true,
+      },
+      launchManagedBrowser: async (input) => {
+        launchCount += 1;
+        return fakeAttemptLaunch(secondLaunches, sandbox.profileDir)(input);
+      },
+    }).catch((error: unknown) => error);
+    continueLaunch();
+    const runtime = await firstLaunch;
+    expect(secondError).toBeInstanceOf(Error);
+    expect((secondError as Error).message).toMatch(/process launch is already in progress/i);
+    expect(launchCount).toBe(1);
+    expect(secondLaunches).toEqual([]);
+    await runtime.close();
+    expect(
+      (
+        await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: sandbox.directory,
+          dependencies: {
+            observeProcess: noObservedProcess,
+            findProcessesUsingProfile: noProfileProcesses,
+          },
+        })
+      ).status,
+    ).toBe("deleted");
+  });
+
+  test("keeps launch finalization inside the process lifecycle reservation", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_launch_finalization",
+      turnAttemptId: "attempt_launch_finalization",
+      purpose: "probe",
+    });
+    let finalizationStarted!: () => void;
+    let continueFinalization!: () => void;
+    const started = new Promise<void>((resolve) => (finalizationStarted = resolve));
+    const released = new Promise<void>((resolve) => (continueFinalization = resolve));
+    const launches: Parameters<LaunchManagedBrowser>[0][] = [];
+    const launchAttempt = launchAttemptBrowserRuntime({
+      sandboxDirectory: sandbox.directory,
+      headless: true,
+      inspection: {
+        chromeForTestingExecutablePath: "/runtime/chrome",
+        executableExists: () => true,
+      },
+      launchManagedBrowser: fakeAttemptLaunch(launches, sandbox.profileDir),
+      writeLaunchReceipt: async (filePath, receipt) => {
+        finalizationStarted();
+        await released;
+        writeFileSync(filePath, `${JSON.stringify(receipt, null, 2)}\n`);
+      },
+    });
+    await started;
+    const cleanupDuringFinalization = await cleanupAttemptSandbox({
+      runtimeRoot,
+      sandboxDirectory: sandbox.directory,
+      dependencies: { findProcessesUsingProfile: noProfileProcesses },
+    });
+    expect(cleanupDuringFinalization).toMatchObject({
+      status: "blocked",
+      processStatus: "identity-unproven",
+    });
+    expect(existsSync(sandbox.directory)).toBe(true);
+    continueFinalization();
+    const runtime = await launchAttempt;
+    await runtime.close();
+    expect(
+      (
+        await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: sandbox.directory,
+          dependencies: {
+            observeProcess: noObservedProcess,
+            findProcessesUsingProfile: noProfileProcesses,
+          },
+        })
+      ).status,
+    ).toBe("deleted");
+  });
+
+  test("revalidates endpoint PID and process start before CDP close", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_reused_cdp_port",
+      turnAttemptId: "attempt_reused_cdp_port",
+      purpose: "probe",
+    });
+    const receipt = await writeAttemptProcessReceipt(sandbox, {
+      pid: 5656,
+      processStartTime: "Fri Sep 4 02:08:09 2026",
+      executableRealpath: "/runtime/chrome",
+      profileRealpath: sandbox.profileDir,
+      debugHost: "127.0.0.1",
+      debugPort: 9988,
+    });
+    let processInfoCount = 0;
+    let browserCloseCount = 0;
+    let disconnectCount = 0;
+    await expect(
+      closeManagedBrowserOverCdp(receipt, {
+        readVersion: async () => ({
+          webSocketDebuggerUrl: "ws://127.0.0.1:9988/devtools/browser/reused",
+        }),
+        connect: async () => ({
+          SystemInfo: {
+            getProcessInfo: async () => {
+              processInfoCount += 1;
+              return { processInfo: [{ type: "browser", id: receipt.pid }] };
+            },
+          },
+          Browser: {
+            close: async () => {
+              browserCloseCount += 1;
+            },
+          },
+          close: async () => {
+            disconnectCount += 1;
+          },
+        }),
+        observeProcess: async () => ({
+          pid: receipt.pid,
+          processStartTime: "Fri Sep 4 03:08:09 2026",
+          executableRealpath: receipt.executableRealpath,
+          command: `${receipt.executableRealpath} --user-data-dir=${receipt.profileRealpath} --remote-debugging-port=${receipt.debugPort}`,
+        }),
+      }),
+    ).rejects.toThrow(/process identity does not match/i);
+    expect(processInfoCount).toBe(1);
+    expect(browserCloseCount).toBe(0);
+    expect(disconnectCount).toBe(1);
+  });
+
+  test("reclaims a process lifecycle reservation after its exact owner exits", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_dead_lifecycle_owner",
+      turnAttemptId: "attempt_dead_lifecycle_owner",
+      purpose: "probe",
+    });
+    writeFileSync(
+      path.join(sandbox.directory, "process-lifecycle.json"),
+      `${JSON.stringify({
+        schemaVersion: "oracle.attempt-process-lifecycle.v1",
+        token: "dead-lifecycle-owner",
+        jobId: sandbox.owner.jobId,
+        turnAttemptId: sandbox.owner.turnAttemptId,
+        pid: 999_999,
+        processStartTime: "dead-process-start-time",
+        createdAt: new Date().toISOString(),
+      })}\n`,
+    );
+    const cleanup = await cleanupAttemptSandbox({
+      runtimeRoot,
+      sandboxDirectory: sandbox.directory,
+      dependencies: { findProcessesUsingProfile: noProfileProcesses },
+    });
+    expect(cleanup).toMatchObject({ status: "deleted", processStatus: "none" });
+    expect(existsSync(sandbox.directory)).toBe(false);
+  });
+
+  test("does not displace the live winner after dead lifecycle reclamation", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_lifecycle_reclaim_winner",
+      turnAttemptId: "attempt_lifecycle_reclaim_winner",
+      purpose: "probe",
+    });
+    writeFileSync(
+      path.join(sandbox.directory, "process-lifecycle.json"),
+      `${JSON.stringify({
+        schemaVersion: "oracle.attempt-process-lifecycle.v1",
+        token: "dead-lifecycle-contended",
+        jobId: sandbox.owner.jobId,
+        turnAttemptId: sandbox.owner.turnAttemptId,
+        pid: 999_999,
+        processStartTime: "dead-process-start-time",
+        createdAt: new Date().toISOString(),
+      })}\n`,
+    );
+    let winnerEntered!: () => void;
+    let releaseWinner!: () => void;
+    const entered = new Promise<void>((resolve) => (winnerEntered = resolve));
+    const released = new Promise<void>((resolve) => (releaseWinner = resolve));
+    const winner = withAttemptProcessLifecycleReservation(sandbox, async () => {
+      winnerEntered();
+      await released;
+    });
+    await entered;
+    await expect(
+      withAttemptProcessLifecycleReservation(sandbox, async () => undefined),
+    ).rejects.toThrow(/lifecycle operation is already in progress/i);
+    releaseWinner();
+    await winner;
+    await expect(
+      withAttemptProcessLifecycleReservation(sandbox, async () => "next-job"),
+    ).resolves.toBe("next-job");
+    expect(
+      (
+        await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: sandbox.directory,
+          dependencies: { findProcessesUsingProfile: noProfileProcesses },
+        })
+      ).status,
+    ).toBe("deleted");
+  });
+
+  test("rejects a concurrent page open before creating a second target", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_concurrent_page",
+      turnAttemptId: "attempt_concurrent_page",
+      purpose: "probe",
+    });
+    const page = fakeClosablePage();
+    let openStarted!: () => void;
+    let continueOpen!: () => void;
+    const started = new Promise<void>((resolve) => (openStarted = resolve));
+    const released = new Promise<void>((resolve) => (continueOpen = resolve));
+    let targetCount = 0;
+    const runtime = await launchAttemptBrowserRuntime({
+      sandboxDirectory: sandbox.directory,
+      headless: true,
+      inspection: {
+        chromeForTestingExecutablePath: "/runtime/chrome",
+        executableExists: () => true,
+      },
+      launchManagedBrowser: async (input) => ({
+        context: { pages: () => [] } as unknown as BrowserContext,
+        browserVersion: "test-browser",
+        executablePath: input.executablePath,
+        restoredPageCount: 0,
+        preservedPages: () => [],
+        processIdentity: {
+          pid: 5454,
+          processStartTime: "Fri Sep 4 02:06:07 2026",
+          executableRealpath: input.executablePath,
+          profileRealpath: sandbox.profileDir,
+          debugHost: "127.0.0.1",
+          debugPort: 9966,
+        },
+        openPage: async () => {
+          targetCount += 1;
+          openStarted();
+          await released;
+          return page.page;
+        },
+        close: async () => undefined,
+      }),
+    });
+    const firstOpen = runtime.openPage("https://fixture.invalid/first");
+    await started;
+    await expect(runtime.openPage("https://fixture.invalid/second")).rejects.toThrow(
+      /already in progress/i,
+    );
+    continueOpen();
+    await expect(firstOpen).resolves.toBe(page.page);
+    expect(targetCount).toBe(1);
+    await runtime.close();
+  });
+
+  test("returns one restored recovery page without opening an alternate page", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_recovery_page",
+      turnAttemptId: "attempt_recovery_page",
+      purpose: "dispatch",
+    });
+    const recoveryPage = { isClosed: () => false } as unknown as Page;
+    let alternateOpenCount = 0;
+    const runtime = await launchAttemptBrowserRuntime({
+      sandboxDirectory: sandbox.directory,
+      headless: true,
+      preserveWindowNames: ["oracle-v2-at-risk:fixture"],
+      inspection: {
+        chromeForTestingExecutablePath: "/runtime/chrome",
+        executableExists: () => true,
+      },
+      launchManagedBrowser: async (input) => ({
+        context: { pages: () => [recoveryPage] } as unknown as BrowserContext,
+        browserVersion: "test-browser",
+        executablePath: input.executablePath,
+        restoredPageCount: 0,
+        preservedPages: () => [recoveryPage],
+        processIdentity: {
+          pid: 5252,
+          processStartTime: "Fri Sep 4 02:04:05 2026",
+          executableRealpath: input.executablePath,
+          profileRealpath: sandbox.profileDir,
+          debugHost: "127.0.0.1",
+          debugPort: 9766,
+        },
+        openPage: async () => {
+          alternateOpenCount += 1;
+          return { isClosed: () => false } as unknown as Page;
+        },
+        close: async () => undefined,
+      }),
+    });
+    expect(runtime.receipt.restoredPageCount).toBe(0);
+    await expect(runtime.openPage("https://fixture.invalid/alternate")).resolves.toBe(recoveryPage);
+    await expect(runtime.openPage("https://fixture.invalid/second")).rejects.toThrow(
+      /only one page/i,
+    );
+    expect(alternateOpenCount).toBe(0);
+    await runtime.close();
+    expect(
+      (
+        await cleanupAttemptSandbox({
+          runtimeRoot,
+          sandboxDirectory: sandbox.directory,
+          dependencies: {
+            observeProcess: noObservedProcess,
+            findProcessesUsingProfile: noProfileProcesses,
+          },
+        })
+      ).status,
+    ).toBe("deleted");
+  });
+
+  test("replaces a closed initial recovery page before the first open", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_initial_recovery_replacement",
+      turnAttemptId: "attempt_initial_recovery_replacement",
+      purpose: "dispatch",
+    });
+    const initial = fakeClosablePage();
+    const replacement = fakeClosablePage();
+    let preservedPages = [initial.page];
+    let alternateOpenCount = 0;
+    const runtime = await launchAttemptBrowserRuntime({
+      sandboxDirectory: sandbox.directory,
+      headless: true,
+      preserveWindowNames: ["oracle-v2-at-risk:replacement"],
+      inspection: {
+        chromeForTestingExecutablePath: "/runtime/chrome",
+        executableExists: () => true,
+      },
+      launchManagedBrowser: async (input) => ({
+        context: { pages: () => preservedPages } as unknown as BrowserContext,
+        browserVersion: "test-browser",
+        executablePath: input.executablePath,
+        restoredPageCount: 1,
+        preservedPages: () => preservedPages.filter((page) => !page.isClosed()),
+        processIdentity: {
+          pid: 5253,
+          processStartTime: "Fri Sep 4 02:04:06 2026",
+          executableRealpath: input.executablePath,
+          profileRealpath: sandbox.profileDir,
+          debugHost: "127.0.0.1",
+          debugPort: 9767,
+        },
+        openPage: async () => {
+          alternateOpenCount += 1;
+          return { isClosed: () => false } as unknown as Page;
+        },
+        close: async () => undefined,
+      }),
+    });
+    await initial.page.close({ runBeforeUnload: false });
+    preservedPages = [replacement.page];
+    await expect(runtime.openPage("https://fixture.invalid/recover")).resolves.toBe(
+      replacement.page,
+    );
+    expect(alternateOpenCount).toBe(0);
+    await runtime.close();
+  });
+
+  test("late recovery selection closes an in-flight alternate target", async () => {
+    const ordinary = fakeClosablePage();
+    const recovery = fakeClosablePage();
+    const ownedPages = new Set<Page>([ordinary.page]);
+    const preservedPages = new Set<Page>();
+    const selected = await managedBrowserTestHooks.preserveManagedPage(recovery.page, {
+      ownedPages,
+      preservedPages,
+      singlePageLifetime: true,
+      ownPage: (page) => ownedPages.add(page),
+      abort: async () => undefined,
+    });
+    expect(selected).toBe(recovery.page);
+    expect(ordinary.closed()).toBe(true);
+    expect(recovery.closed()).toBe(false);
+    expect([...ownedPages].filter((page) => !page.isClosed())).toEqual([recovery.page]);
+    expect([...preservedPages]).toEqual([recovery.page]);
+    expect(managedBrowserTestHooks.findLivePreservedPage(preservedPages)).toBe(recovery.page);
+  });
+
+  test("closes the browser runtime instead of choosing between recovery pages", async () => {
+    const first = fakeClosablePage();
+    const duplicate = fakeClosablePage();
+    const ownedPages = new Set<Page>([first.page]);
+    const preservedPages = new Set<Page>([first.page]);
+    let abortCount = 0;
+    await expect(
+      managedBrowserTestHooks.preserveManagedPage(duplicate.page, {
+        ownedPages,
+        preservedPages,
+        singlePageLifetime: true,
+        ownPage: (page) => ownedPages.add(page),
+        abort: async () => {
+          abortCount += 1;
+        },
+      }),
+    ).rejects.toThrow(/multiple live preserved recovery pages.*closed fail-safe/i);
+    expect(abortCount).toBe(1);
+    expect(first.closed()).toBe(false);
+    expect(duplicate.closed()).toBe(false);
+  });
+
+  test("reserves the first recovery page before awaiting alternate-page closure", async () => {
+    let closeStarted!: () => void;
+    let releaseClose!: () => void;
+    const started = new Promise<void>((resolve) => (closeStarted = resolve));
+    const released = new Promise<void>((resolve) => (releaseClose = resolve));
+    let ordinaryClosed = false;
+    const ordinary = {
+      isClosed: () => ordinaryClosed,
+      close: async () => {
+        closeStarted();
+        await released;
+        ordinaryClosed = true;
+      },
+    } as unknown as Page;
+    const first = fakeClosablePage();
+    const duplicate = fakeClosablePage();
+    const ownedPages = new Set<Page>([ordinary]);
+    const preservedPages = new Set<Page>();
+    let abortCount = 0;
+    const input = {
+      ownedPages,
+      preservedPages,
+      singlePageLifetime: true,
+      ownPage: (page: Page) => ownedPages.add(page),
+      abort: async () => {
+        abortCount += 1;
+      },
+    };
+
+    const firstPreservation = managedBrowserTestHooks.preserveManagedPage(first.page, input);
+    await started;
+    await expect(
+      managedBrowserTestHooks.preserveManagedPage(duplicate.page, input),
+    ).rejects.toThrow(/multiple live preserved recovery pages.*closed fail-safe/i);
+    expect(abortCount).toBe(1);
+    expect([...preservedPages]).toEqual([first.page]);
+    releaseClose();
+    await expect(firstPreservation).resolves.toBe(first.page);
+    expect(ordinaryClosed).toBe(true);
+  });
+
+  test("closes the browser runtime when an alternate page cannot close", async () => {
+    const recovery = fakeClosablePage();
+    const stubbornPage = {
+      isClosed: () => false,
+      close: async () => {
+        throw new Error("fixture close failure");
+      },
+    } as unknown as Page;
+    const ownedPages = new Set<Page>([stubbornPage]);
+    const preservedPages = new Set<Page>();
+    let abortCount = 0;
+    await expect(
+      managedBrowserTestHooks.preserveManagedPage(recovery.page, {
+        ownedPages,
+        preservedPages,
+        singlePageLifetime: true,
+        ownPage: (page) => ownedPages.add(page),
+        abort: async () => {
+          abortCount += 1;
+        },
+      }),
+    ).rejects.toThrow(/browser runtime was closed fail-safe/i);
+    expect(abortCount).toBe(1);
+    expect(preservedPages.size).toBe(0);
+  });
+
+  test("closes the browser runtime when a failed open target cannot close", async () => {
+    let abortCount = 0;
+    await expect(
+      managedBrowserTestHooks.closeFailedAttemptTarget(
+        async () => {
+          throw new Error("fixture target close failure");
+        },
+        async () => {
+          abortCount += 1;
+        },
+      ),
+    ).rejects.toThrow(/browser runtime was closed fail-safe/i);
+    expect(abortCount).toBe(1);
+  });
+
+  test("reattaches a late recovery page after the first open has resolved", async () => {
+    const runtimeRoot = temporaryRoot();
+    const candidate = await createAuthSeedCandidate({
+      runtimeRoot,
+      sourceProfileDir: seedSource(runtimeRoot),
+    });
+    const sandbox = await createAttemptSandbox({
+      runtimeRoot,
+      seed: candidate,
+      jobId: "job_late_recovery_page",
+      turnAttemptId: "attempt_late_recovery_page",
+      purpose: "dispatch",
+    });
+    const ordinary = fakeClosablePage();
+    const recovery = fakeClosablePage();
+    let preservedPages: Page[] = [];
+    let alternateOpenCount = 0;
+    const runtime = await launchAttemptBrowserRuntime({
+      sandboxDirectory: sandbox.directory,
+      headless: true,
+      preserveWindowNames: ["oracle-v2-at-risk:late"],
+      inspection: {
+        chromeForTestingExecutablePath: "/runtime/chrome",
+        executableExists: () => true,
+      },
+      launchManagedBrowser: async (input) => ({
+        context: { pages: () => preservedPages } as unknown as BrowserContext,
+        browserVersion: "test-browser",
+        executablePath: input.executablePath,
+        restoredPageCount: 0,
+        preservedPages: () => preservedPages,
+        processIdentity: {
+          pid: 5353,
+          processStartTime: "Fri Sep 4 02:05:06 2026",
+          executableRealpath: input.executablePath,
+          profileRealpath: sandbox.profileDir,
+          debugHost: "127.0.0.1",
+          debugPort: 9866,
+        },
+        openPage: async () => {
+          alternateOpenCount += 1;
+          return ordinary.page;
+        },
+        close: async () => undefined,
+      }),
+    });
+    await expect(runtime.openPage("https://fixture.invalid/ordinary")).resolves.toBe(ordinary.page);
+    await ordinary.page.close({ runBeforeUnload: false });
+    preservedPages = [recovery.page];
+    await expect(runtime.openPage("https://fixture.invalid/recover")).resolves.toBe(recovery.page);
+    await expect(runtime.openPage("https://fixture.invalid/third")).rejects.toThrow(
+      /only one page/i,
+    );
+    expect(alternateOpenCount).toBe(1);
+    await runtime.close();
+  });
+
+  test.skipIf(!findFixtureBrowserExecutable())(
+    "destroys a dirty browser clone and starts the next clone clean with zero Send",
+    async () => {
+      const executablePath = findFixtureBrowserExecutable();
+      if (!executablePath) throw new Error("Fixture browser executable is unavailable");
+      const runtimeRoot = temporaryRoot();
+      const sourceProfile = seedSource(runtimeRoot);
+      const candidate = await createAuthSeedCandidate({
+        runtimeRoot,
+        sourceProfileDir: sourceProfile,
+      });
+      const fixture = new OracleProviderFixture();
+      const marker = `oracle-no-send-${crypto.randomUUID()}`;
+      const filename = "oracle-attempt-no-send.txt";
+      await fixture.start();
+      try {
+        const cloneA = await createAttemptSandbox({
+          runtimeRoot,
+          seed: candidate,
+          jobId: "job_clone_a",
+          turnAttemptId: "attempt_clone_a",
+          purpose: "probe",
+        });
+        const runtimeA = await launchAttemptBrowserRuntime({
+          sandboxDirectory: cloneA.directory,
+          headless: true,
+          inspection: { chromeForTestingExecutablePath: executablePath },
+        });
+        const pageA = await runtimeA.openPage(fixture.urlFor("clone-a"));
+        const monitorA = monitorPotentialSubmissions(pageA);
+        const initialA = await observeAttemptSandboxPage(pageA, { marker, filename });
+        expect(initialA).toMatchObject({
+          composerEmpty: true,
+          markerPresent: false,
+          attachmentPresent: false,
+          recoveryWindowNamePresent: false,
+          recoveryStoragePresent: false,
+        });
+        const dirtyA = await dirtyAttemptSandboxWithoutSend(pageA, {
+          marker,
+          filename,
+          timeoutMs: 5_000,
+        });
+        await pageA.evaluate(() => {
+          window.name = "oracle-v2-recovery-fixture";
+          localStorage.setItem("oracle-v2-recovery-fixture", "present");
+        });
+        expect(dirtyA).toMatchObject({
+          markerPresent: true,
+          attachmentPresent: true,
+          promptSubmitted: false,
+        });
+        expect(monitorA.count()).toBe(0);
+        monitorA.stop();
+        await runtimeA.close();
+        expect(
+          (
+            await cleanupAttemptSandbox({
+              runtimeRoot,
+              sandboxDirectory: cloneA.directory,
+            })
+          ).status,
+        ).toBe("deleted");
+
+        const cloneB = await createAttemptSandbox({
+          runtimeRoot,
+          seed: candidate,
+          jobId: "job_clone_b",
+          turnAttemptId: "attempt_clone_b",
+          purpose: "probe",
+        });
+        const runtimeB = await launchAttemptBrowserRuntime({
+          sandboxDirectory: cloneB.directory,
+          headless: true,
+          inspection: { chromeForTestingExecutablePath: executablePath },
+        });
+        const pageB = await runtimeB.openPage(fixture.urlFor("clone-b"));
+        const monitorB = monitorPotentialSubmissions(pageB);
+        const cleanB = await observeAttemptSandboxPage(pageB, { marker, filename });
+        expect(cleanB).toMatchObject({
+          composerEmpty: true,
+          markerPresent: false,
+          attachmentPresent: false,
+          attachmentInputSelected: false,
+          recoveryWindowNamePresent: false,
+          recoveryStoragePresent: false,
+          promptSubmitted: false,
+        });
+        expect(runtimeB.receipt.restoredPageCount).toBe(0);
+        expect(monitorB.count()).toBe(0);
+        monitorB.stop();
+        await runtimeB.close();
+        expect(
+          (
+            await cleanupAttemptSandbox({
+              runtimeRoot,
+              sandboxDirectory: cloneB.directory,
+            })
+          ).status,
+        ).toBe("deleted");
+        expect(fixture.totalSendCount()).toBe(0);
+        expect(await digestProfile(candidate.profileRealpath)).toBe(candidate.profileDigest);
+        expect(await listAttemptSandboxDirectories(runtimeRoot)).toEqual([]);
+      } finally {
+        await fixture.stop();
+      }
+    },
+    120_000,
+  );
+});
+
+function passingCloneProof(
+  candidateId: string,
+  digest: string,
+  sandboxes: { cloneA: string; cloneB: string },
+): AuthSeedCloneProofReceipt {
+  return {
+    schemaVersion: "oracle.auth-seed-clone-proof.v1",
+    candidateId,
+    seedProfileDigestBefore: digest,
+    seedProfileDigestAfter: digest,
+    browserRuntimeId: "managed-chrome-for-testing-direct-cdp:test",
+    executableRealpath: "/runtime/chrome",
+    cloneA: {
+      sandboxId: sandboxes.cloneA,
+      authenticated: true,
+      modelVerified: true,
+      effortVerified: true,
+      initiallyClean: true,
+      dirtyStateObserved: true,
+      inheritedStateObserved: false,
+      promptSubmitted: false,
+    },
+    cloneACleanup: {
+      schemaVersion: "oracle.attempt-sandbox-cleanup.v1",
+      sandboxId: sandboxes.cloneA,
+      status: "deleted",
+      processStatus: "already-stopped",
+      completedAt: new Date().toISOString(),
+    },
+    cloneB: {
+      sandboxId: sandboxes.cloneB,
+      authenticated: true,
+      modelVerified: true,
+      effortVerified: true,
+      initiallyClean: true,
+      dirtyStateObserved: false,
+      inheritedStateObserved: false,
+      promptSubmitted: false,
+    },
+    cloneBCleanup: {
+      schemaVersion: "oracle.attempt-sandbox-cleanup.v1",
+      sandboxId: sandboxes.cloneB,
+      status: "deleted",
+      processStatus: "already-stopped",
+      completedAt: new Date().toISOString(),
+    },
+    sendEventCount: 0,
+    remainingAttemptCount: 0,
+    completedAt: new Date().toISOString(),
+  };
+}
+
+function fakeAttemptLaunch(
+  launches: Parameters<LaunchManagedBrowser>[0][],
+  profileRealpath: string,
+): LaunchManagedBrowser {
+  return async (input) => {
+    launches.push(input);
+    let closed = false;
+    return {
+      context: { pages: () => [] } as unknown as BrowserContext,
+      browserVersion: "test-browser",
+      executablePath: input.executablePath,
+      restoredPageCount: 0,
+      preservedPages: () => [],
+      processIdentity: {
+        pid: 5151,
+        processStartTime: "Fri Sep 4 02:03:04 2026",
+        executableRealpath: input.executablePath,
+        profileRealpath,
+        debugHost: "127.0.0.1",
+        debugPort: 9666,
+      },
+      openPage: async () => ({ isClosed: () => closed }) as unknown as Page,
+      close: async () => {
+        closed = true;
+      },
+    };
+  };
+}
+
+const noProfileProcesses = async (): Promise<[]> => [];
+const noObservedProcess = async (): Promise<undefined> => undefined;
+
+function writeDeadLockOwner(lockPath: string, mode: "shared" | "exclusive"): void {
+  writeFileSync(
+    lockPath,
+    `${JSON.stringify({
+      schemaVersion: "oracle.auth-seed-lock-owner.v2",
+      token: `dead-${mode}`,
+      pid: 999_999,
+      processStartTime: "dead-process-start-time",
+      mode,
+      createdAt: new Date().toISOString(),
+    })}\n`,
+  );
+}
+
+function fakeClosablePage(): { page: Page; closed: () => boolean } {
+  let closed = false;
+  const page = {
+    isClosed: () => closed,
+    close: async () => {
+      closed = true;
+    },
+  } as unknown as Page;
+  return { page, closed: () => closed };
+}
+
+function sandboxPageObservation(): AttemptSandboxPageObservation {
+  return {
+    schemaVersion: "oracle.attempt-sandbox-page-observation.v1",
+    composerPresent: true,
+    composerEmpty: true,
+    markerPresent: false,
+    attachmentPresent: false,
+    attachmentInputSelected: false,
+    userTurnPresent: false,
+    conversationRoutePresent: false,
+    recoveryWindowNamePresent: false,
+    recoveryStoragePresent: false,
+    promptSubmitted: false,
+  };
+}

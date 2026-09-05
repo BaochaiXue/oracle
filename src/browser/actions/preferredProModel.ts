@@ -21,7 +21,7 @@ export async function ensurePreferredProModel(
     if (!evidence.verified) {
       throw new Error("Pro model family could not be verified before Send.");
     }
-    await ensureThinkingTime(runtime, "pro", logger, model);
+    await ensureThinkingTime(runtime, "pro", logger, model, evidence);
     return { ...evidence, selectedModel: model };
   };
   try {

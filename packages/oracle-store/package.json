@@ -1,0 +1,9 @@
+{
+  "name": "@oracle-v2/store",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@oracle-v2/kernel": "workspace:*"
+  }
+}

@@ -5,6 +5,14 @@ MCP, dedicated-Chrome, exact-session recovery, explicit alternate transport,
 and Batch Oracle contracts. A contribution must not silently add package,
 release, signing, domain, account, or deployment authority.
 
+Oracle v2 is being built beside the current direct-CDP implementation. Follow
+[the v2 master plan](docs/oracle-v2-master-plan.md) and its explicit gate
+boundaries. Do not grow or broadly refactor `src/browser/**` for v2 features,
+import legacy browser code into `packages/*` or `apps/*`, or put ChatGPT
+page-reading/automation knowledge outside `packages/chatgpt-adapter`. The
+sanitized provider fixture may define simulated markup and scenarios only; do
+not put a second adapter or production selector policy there.
+
 ## Protect private data
 
 Issues and pull requests are public. Never upload, attach, paste, or commit:

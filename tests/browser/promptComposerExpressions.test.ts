@@ -5,12 +5,14 @@ class FakeElement {
   parentElement: FakeElement | null = null;
   readonly children: FakeElement[];
   readonly tagName: string;
+  clickCount = 0;
 
   constructor(
     tagName: string,
     private readonly attributes: Record<string, string> = {},
     children: FakeElement[] = [],
     private readonly ownText = "",
+    private readonly onClick?: () => void,
   ) {
     this.tagName = tagName.toUpperCase();
     this.children = children;
@@ -31,6 +33,15 @@ class FakeElement {
     return this.attributes[name] ?? null;
   }
 
+  setAttribute(name: string, value: string): void {
+    this.attributes[name] = value;
+  }
+
+  click(): void {
+    this.clickCount += 1;
+    this.onClick?.();
+  }
+
   closest(selector: string): FakeElement | null {
     if (matchesSelector(this, selector)) return this;
     return this.parentElement?.closest(selector) ?? null;
@@ -46,8 +57,23 @@ class FakeElement {
 }
 
 class FakeInputElement extends FakeElement {
-  constructor(readonly files: Array<{ name: string }>) {
+  private selectedFiles: Array<{ name: string }>;
+
+  constructor(files: Array<{ name: string }>) {
     super("input", { type: "file" });
+    this.selectedFiles = files;
+  }
+
+  get files(): Array<{ name: string }> {
+    return this.selectedFiles;
+  }
+
+  set value(value: string) {
+    if (value === "") this.selectedFiles = [];
+  }
+
+  replaceFiles(files: Array<{ name: string }>): void {
+    this.selectedFiles = files;
   }
 }
 
@@ -104,19 +130,27 @@ function matchesSingleSelector(element: FakeElement, selector: string): boolean 
 function evaluateAttachmentReadyExpression(
   attachmentNames: Array<string | { name: string; generatedBundle?: boolean }>,
   document: FakeDocument,
-): boolean {
-  const expression = buildAttachmentReadyExpressionForTest(attachmentNames);
+  requireExactSet = false,
+  cleanupMarker?: string,
+): unknown {
+  const expression = buildAttachmentReadyExpressionForTest(
+    attachmentNames,
+    requireExactSet,
+    cleanupMarker,
+  );
   const evaluate = new Function(
     "document",
     "HTMLElement",
     "HTMLInputElement",
+    "HTMLButtonElement",
     `return ${expression};`,
   ) as (
     document: FakeDocument,
     HTMLElement: typeof FakeElement,
     HTMLInputElement: typeof FakeInputElement,
-  ) => boolean;
-  return evaluate(document, FakeElement, FakeInputElement);
+    HTMLButtonElement: typeof FakeElement,
+  ) => unknown;
+  return evaluate(document, FakeElement, FakeInputElement, FakeElement);
 }
 
 describe("prompt composer attachment expressions", () => {
@@ -183,6 +217,157 @@ describe("prompt composer attachment expressions", () => {
     ]);
 
     expect(evaluateAttachmentReadyExpression([fileName], document)).toBe(true);
+  });
+
+  test("exact cleanup ownership rejects an added attachment before removing anything", () => {
+    const ownedName = "oracle-owned.txt";
+    const addedName = "user-added.txt";
+    const ownedRemove = new FakeElement("button", {
+      "aria-label": `Remove file 1: ${ownedName}`,
+    });
+    const addedRemove = new FakeElement("button", {
+      "aria-label": `Remove file 2: ${addedName}`,
+    });
+    const document = new FakeDocument([
+      new FakeElement("div", { "data-testid": "unified-composer" }, [
+        new FakeElement("div", { "data-testid": "attachment-chip" }, [
+          new FakeElement("span", {}, [], ownedName),
+          ownedRemove,
+        ]),
+        new FakeElement("div", { "data-testid": "attachment-chip" }, [
+          new FakeElement("span", {}, [], addedName),
+          addedRemove,
+        ]),
+      ]),
+    ]);
+
+    expect(evaluateAttachmentReadyExpression([ownedName], document)).toBe(true);
+    expect(evaluateAttachmentReadyExpression([ownedName], document, true)).toBe(false);
+    expect(evaluateAttachmentReadyExpression([ownedName], document, true, "snapshot-1")).toEqual({
+      exactSetMatched: false,
+      removeClicks: 0,
+    });
+    expect(ownedRemove.clickCount).toBe(0);
+    expect(addedRemove.clickCount).toBe(0);
+  });
+
+  test("targeted cleanup clicks only the controls captured by the exact snapshot", () => {
+    const ownedName = "oracle-owned.txt";
+    const ownedRemove = new FakeElement("button", {
+      "aria-label": `Remove file 1: ${ownedName}`,
+    });
+    const document = new FakeDocument([
+      new FakeElement("div", { "data-testid": "unified-composer" }, [
+        new FakeElement("div", { "data-testid": "attachment-chip" }, [
+          new FakeElement("span", {}, [], ownedName),
+          ownedRemove,
+        ]),
+      ]),
+    ]);
+
+    expect(evaluateAttachmentReadyExpression([ownedName], document, true, "snapshot-2")).toEqual({
+      exactSetMatched: true,
+      removeClicks: 1,
+    });
+    expect(ownedRemove.clickCount).toBe(1);
+    expect(ownedRemove.getAttribute("data-oracle-owned-attachment-cleanup")).toBe("snapshot-2");
+  });
+
+  test("targeted cleanup clears the exact stale file input after removing its chip", () => {
+    const ownedName = "oracle-owned.txt";
+    const ownedInput = new FakeInputElement([{ name: ownedName }]);
+    const ownedRemove = new FakeElement("button", {
+      "aria-label": `Remove file 1: ${ownedName}`,
+    });
+    const document = new FakeDocument([
+      new FakeElement("div", { "data-testid": "unified-composer" }, [
+        ownedInput,
+        new FakeElement("div", { "data-testid": "attachment-chip" }, [
+          new FakeElement("span", {}, [], ownedName),
+          ownedRemove,
+        ]),
+      ]),
+    ]);
+
+    expect(
+      evaluateAttachmentReadyExpression([ownedName], document, true, "snapshot-stale"),
+    ).toEqual({
+      exactSetMatched: true,
+      removeClicks: 1,
+    });
+    expect(ownedRemove.clickCount).toBe(1);
+    expect(ownedInput.files).toEqual([]);
+  });
+
+  test("targeted cleanup does not clear a file input whose set is not exactly owned", () => {
+    const ownedName = "oracle-owned.txt";
+    const mixedInput = new FakeInputElement([{ name: ownedName }, { name: "user-added.txt" }]);
+    const ownedRemove = new FakeElement("button", {
+      "aria-label": `Remove file 1: ${ownedName}`,
+    });
+    const document = new FakeDocument([
+      new FakeElement("div", { "data-testid": "unified-composer" }, [
+        mixedInput,
+        new FakeElement("div", { "data-testid": "attachment-chip" }, [
+          new FakeElement("span", {}, [], ownedName),
+          ownedRemove,
+        ]),
+      ]),
+    ]);
+
+    expect(
+      evaluateAttachmentReadyExpression([ownedName], document, true, "snapshot-mixed"),
+    ).toEqual({
+      exactSetMatched: true,
+      removeClicks: 1,
+    });
+    expect(mixedInput.files.map((file) => file.name)).toEqual([ownedName, "user-added.txt"]);
+  });
+
+  test("targeted cleanup revalidates a captured file input after the remove click", () => {
+    const ownedName = "oracle-owned.txt";
+    const ownedInput = new FakeInputElement([{ name: ownedName }]);
+    const ownedRemove = new FakeElement(
+      "button",
+      { "aria-label": `Remove file 1: ${ownedName}` },
+      [],
+      "",
+      () => ownedInput.replaceFiles([{ name: "user-added-after-click.txt" }]),
+    );
+    const document = new FakeDocument([
+      new FakeElement("div", { "data-testid": "unified-composer" }, [
+        ownedInput,
+        new FakeElement("div", { "data-testid": "attachment-chip" }, [
+          new FakeElement("span", {}, [], ownedName),
+          ownedRemove,
+        ]),
+      ]),
+    ]);
+
+    expect(
+      evaluateAttachmentReadyExpression([ownedName], document, true, "snapshot-rerender"),
+    ).toEqual({
+      exactSetMatched: true,
+      removeClicks: 1,
+    });
+    expect(ownedInput.files.map((file) => file.name)).toEqual(["user-added-after-click.txt"]);
+  });
+
+  test("an exact empty-set probe rejects a newly present attachment", () => {
+    const emptyDocument = new FakeDocument([
+      new FakeElement("div", { "data-testid": "unified-composer" }),
+    ]);
+    const attachedDocument = new FakeDocument([
+      new FakeElement("div", { "data-testid": "unified-composer" }, [
+        new FakeElement("div", { "data-testid": "attachment-chip" }, [
+          new FakeElement("span", {}, [], "new-user-file.txt"),
+          new FakeElement("button", { "aria-label": "Remove file 1: new-user-file.txt" }),
+        ]),
+      ]),
+    ]);
+
+    expect(evaluateAttachmentReadyExpression([], emptyDocument, true)).toBe(true);
+    expect(evaluateAttachmentReadyExpression([], attachedDocument, true)).toBe(false);
   });
 
   test("attachment ready check prefers composer roots over unrelated forms", () => {

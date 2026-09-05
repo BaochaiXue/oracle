@@ -86,6 +86,49 @@ oracle --followup <session-id> \
 
 Oracle records the committed turn identity and timing evidence and freezes the durable conversation ID as capture authority; if the same tab later navigates elsewhere, Oracle does not copy or accept that other conversation's answer. Recovery must return to the original conversation. A new attempt is allowed only on explicit resume after a durable receipt proves that the prompt was unsubmitted, uncommitted, and `retrySafe:true`.
 
+Legacy direct-CDP submission activates and revalidates the exact owned target before measuring a fresh trusted Send point; clicks and Enter share one exact-user-turn verification path. Every potentially submitting input event requires the dispatch boundary, current prompt digest, and pre-dispatch turn baseline to be established and durably persisted first; an unavailable baseline or persistence failure prevents the event. After persistence returns, Oracle revalidates exact target ownership, the complete prompt, attachment readiness, and the current hit-tested Send point before allowing `mousePressed` or Enter `keyDown`; trusted-click moves the pointer first and then repeats those checks immediately before `mousePressed`. Pro response timing uses a marker written immediately before the actual `mousePressed` or Enter `keyDown`, not the earlier boundary time, so post-boundary attachment processing is not counted as reasoning time. Oracle may move from an unavailable trusted-click path to Enter only before any submitting event has been emitted. After either event, it never changes methods or dispatches again automatically. If the exact commit cannot be verified, an ordinary headful dedicated-profile run is persisted as incomplete/recoverable with `retrySafe:false` and preserves the exact tab. `oracle session <session-id> --render` reconnects only to the stored exact target ID, never another tab for the same conversation or a new browser. Any run with a persisted current-prompt digest but no verified committed turn index—including a non-Pro dispatch-boundary interruption before `recoveryKind` was written—is also exact-target-only. Recovery must then reconcile the current prompt digest to one unique user turn after that baseline before capturing an answer, so an earlier turn—including the answer preceding an ambiguous follow-up—cannot become the result. Pre-dispatch retained/manual states reattach only for exact-tab inspection and never auto-capture or submit. Because `--copy-profile` always deletes its temporary profile and local `--browser-headless` does not retain its browser process, ambiguous, retained-draft, and manual outcomes are explicitly non-reattachable in those modes and still block automatic rerun. Remote Chrome ignores that local launch flag and preserves its own exact-target recovery semantics.
+
+When Oracle first observes a non-empty composer, it performs read-only checks for a bounded settle window of up to five seconds so transient profile/SPA restoration is not mistaken for stable draft state; persistent content still remains untouched and fails closed. Before a submission attempt begins any upload, typing, or dispatch, it proves that both composer text and the attachment set are empty, so a text-only run cannot carry an existing file; attachment-bearing runs likewise never sweep pre-existing attachment UI and later require their exact owned set before dispatch. If the Send control temporarily disappears while an attachment is processing, Oracle keeps waiting within the attachment timeout instead of immediately switching to Enter or emitting another dispatch. If attachment Send readiness fails before any submitting event, Oracle clears only that attempt's attachments and exact draft after re-verifying the exact target, ownership, and complete prompt. After targeted attachment removal, it resets a stale hidden file input only when that input's complete file set also belongs exactly to the attempt; mixed or unknown input remains retained. A final single DOM snapshot must prove that both composer text and the attachment set are empty before Oracle records `retrySafe:true`. When an automatic inline prompt changes to file fallback, Oracle likewise re-verifies the attempt's exact owned draft (using the observed truncated draft digest for `prompt-too-large`) and the first upload's exact owned attachment set before removing and re-uploading them. If any cleanup proof is missing, it preserves the exact tab with `retrySafe:false` and never clears or overwrites unknown content. A large prompt truncated before dispatch with no usable file fallback is likewise retained in its exact tab with `retrySafe:false`. A failure before any submitting event or draft exists is explicitly `retrySafe:true` and does not direct the user to reattach nonexistent retained state.
+
+The strict `Pro` effort slider path is selected by a visible, interactive, valid five-position ARIA structure rather than a model family. Model identity remains independently verified; reaching the maximum must also agree with an exact `Pro` semantic label or effort pill. Unicode whitespace and punctuation are accepted, while position-only, `Professional`, malformed ranges, and numeric/label contradictions fail closed.
+
+<!-- readme-sync:broker-candidate -->
+
+See the [upstream integration boundary](docs/upstream-integration.md). The broker below is explicit opt-in source; ordinary consultations and Batch retain shared CDP, without an implicit cutover or WSL retirement.
+
+## Oracle v2 broker candidate
+
+R8 exposes an explicit opt-in durable `broker` engine in source for CLI/MCP
+cutover validation. It is not the default engine, does not replace the
+`--engine browser` path above, and does not move Batch to v2 early. It requires
+an already certified v2 runtime and a separately running worker. Every live
+call must carry a stable idempotency key so a killed caller can return to the
+same job instead of repeating Send. The canonical v2 worker currently supports
+only macOS GUI sessions; native Windows and other non-macOS browser workers
+remain deferred, so ordinary Windows use stays on the legacy `browser` engine.
+
+Each v2 prompt object and sealed source bundle object must be no larger than 16
+MiB. CLI, MCP, and Batch check that boundary before writing durable client
+intent or attempting admission, so an oversized input does not leave a falsely
+recoverable job. A broker job that reaches `recoverable` returns its durable job
+handle and explicit resume/inspect action immediately instead of consuming the
+full host wait timeout.
+
+```bash
+oracle worker run
+oracle --engine broker \
+  --idempotency-key review-auth-boundary-v1 \
+  -p "Review this boundary." \
+  --file "src/**"
+oracle job <job-id> --events
+oracle session <job-id>
+```
+
+See the [CLI reference](docs/cli-reference.md) and [MCP](docs/mcp.md) for broker
+clients, job tools, and timeout/reconnect semantics. The legacy engine remains
+the default until the G3 owner gate; source-candidate completion is not
+installation, activation, or a default switch.
+
 <!-- readme-sync:batch -->
 
 ## Batch Oracle

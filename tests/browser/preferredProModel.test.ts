@@ -29,7 +29,13 @@ test("selects and verifies GPT-6 Pro first", async () => {
     verified: true,
   });
   expect(ensureModelSelection).toHaveBeenCalledTimes(1);
-  expect(ensureThinkingTime).toHaveBeenCalledWith(runtime, "pro", logger, "GPT-6");
+  expect(ensureThinkingTime).toHaveBeenCalledWith(
+    runtime,
+    "pro",
+    logger,
+    "GPT-6",
+    selected("GPT-6"),
+  );
 });
 
 test.each(["model-option-unavailable", "pro-effort-unavailable"])(
@@ -45,7 +51,13 @@ test.each(["model-option-unavailable", "pro-effort-unavailable"])(
       fallbackReason: code,
       verified: true,
     });
-    expect(ensureThinkingTime).toHaveBeenLastCalledWith(runtime, "pro", logger, "GPT-5.6 Sol");
+    expect(ensureThinkingTime).toHaveBeenLastCalledWith(
+      runtime,
+      "pro",
+      logger,
+      "GPT-5.6 Sol",
+      selected("GPT-5.6 Sol"),
+    );
   },
 );
 

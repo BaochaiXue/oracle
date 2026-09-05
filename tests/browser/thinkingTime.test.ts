@@ -1689,7 +1689,7 @@ describe("browser thinking-time selection expression", () => {
     expect(expression).toContain("diagnostic: collectPickerDiagnostic()");
   });
 
-  it("bounds and redacts model-picker diagnostic text", async () => {
+  it("omits model-picker field text from structural diagnostics", async () => {
     class FakeEventTarget {
       dispatchEvent(_event: unknown): boolean {
         return true;
@@ -1786,8 +1786,6 @@ describe("browser thinking-time selection expression", () => {
       FakeElement,
     );
     const serialized = JSON.stringify(result);
-    expect(serialized).toContain("[redacted-email]");
-    expect(serialized).toContain("[redacted]");
     expect(serialized).not.toContain("user@example.com");
     expect(serialized).not.toContain(secret);
   });
@@ -2941,7 +2939,12 @@ describe("unified Intelligence picker slider and Advanced effort controls", () =
     };
   }
 
-  function run(documentStub: unknown, level: string, model: string | null = "gpt-5.6-sol") {
+  function run(
+    documentStub: unknown,
+    level: string,
+    model: string | null = "gpt-5.6-sol",
+    modelSelectionEvidence?: Parameters<typeof buildThinkingTimeExpressionForTest>[2],
+  ) {
     let now = 0;
     const performanceStub = {
       now: () => {
@@ -2958,7 +2961,11 @@ describe("unified Intelligence picker slider and Advanced effort controls", () =
       "PointerEvent",
       "MouseEvent",
       "HTMLElement",
-      `return ${buildThinkingTimeExpressionForTest(level as ThinkingTimeLevel, model)};`,
+      `return ${buildThinkingTimeExpressionForTest(
+        level as ThinkingTimeLevel,
+        model,
+        modelSelectionEvidence,
+      )};`,
     ) as (...args: unknown[]) => Promise<{ status: string; label: string | null }>;
     return evaluate(
       documentStub,
@@ -2985,6 +2992,100 @@ describe("unified Intelligence picker slider and Advanced effort controls", () =
     });
     expect(dom.getSelectedTier()).toBe("Pro");
   });
+
+  function buildSliderDom({
+    initialNow = "3",
+    minimum = "0",
+    maximum = "4",
+    initialLabel = "Extra High, 4 of 5",
+    finalLabel = "Pro, 5 of 5",
+    initialPill = "Extra High",
+    finalPill = "Pro",
+    pageLocale = "en-US",
+    moveOnArrow = true,
+  }: {
+    initialNow?: string;
+    minimum?: string;
+    maximum?: string;
+    initialLabel?: string;
+    finalLabel?: string;
+    initialPill?: string;
+    finalPill?: string;
+    pageLocale?: string;
+    moveOnArrow?: boolean;
+  } = {}) {
+    const pill = new Node(initialPill, {
+      class: "__composer-pill",
+      "aria-expanded": "true",
+      "aria-haspopup": "menu",
+    });
+    const slider = new Node("", {
+      role: "slider",
+      "aria-valuenow": initialNow,
+      "aria-valuemin": minimum,
+      "aria-valuemax": maximum,
+      tabindex: "-1",
+    });
+    const power = new Node("", { role: "menuitem", "aria-label": "Power" }, [slider]);
+    const simpleView = new Node(
+      initialLabel,
+      { "data-testid": "composer-model-picker-slider-simple-view" },
+      [power],
+    );
+    power.onKeyDown = (_self, key) => {
+      if (key !== "ArrowRight" || !moveOnArrow) return;
+      const current = Number(slider.getAttribute("aria-valuenow"));
+      const max = Number(slider.getAttribute("aria-valuemax"));
+      if (!Number.isSafeInteger(current) || !Number.isSafeInteger(max) || current >= max) return;
+      const next = current + 1;
+      slider.setAttribute("aria-valuenow", String(next));
+      if (next === max) {
+        simpleView.textContent = finalLabel;
+        pill.textContent = finalPill;
+      }
+    };
+    const selectModel = new Node("Select model", {
+      role: "menuitem",
+      "aria-label": "Select model",
+      "aria-expanded": "false",
+    });
+    const modelView = new Node(
+      "GPT-5.6 SolGPT-5.5",
+      { "data-testid": "composer-model-picker-slider-advanced-view" },
+      [
+        new Node("GPT-5.6 Sol", { role: "menuitemradio", "aria-checked": "true" }),
+        new Node("GPT-5.5", { role: "menuitemradio", "aria-checked": "false" }),
+      ],
+    );
+    const pickerContent = new Node(
+      initialLabel,
+      { "data-testid": "composer-intelligence-picker-content", role: "group" },
+      [selectModel, simpleView, modelView],
+    );
+    const topMenu = new Node(initialLabel, { role: "menu" }, [pickerContent]);
+    const documentStub = {
+      body: new Node(""),
+      documentElement: { lang: pageLocale },
+      getElementById: () => null,
+      querySelector: (selector: string) => {
+        if (selector.includes("composer-intelligence-pro-thinking-effort-trigger")) return null;
+        if (selector.includes("composer-intelligence-picker-content")) return pickerContent;
+        if (selector.includes("composer-model-picker-slider-simple-view")) return simpleView;
+        if (selector.includes("composer-model-picker-slider-advanced-view")) return modelView;
+        if (selector.includes("__composer-pill")) return pill;
+        return null;
+      },
+      querySelectorAll: (selector: string) => {
+        if (selector.includes("composer-model-picker-slider-simple-view")) return [simpleView];
+        if (selector.includes("__composer-pill")) return [pill];
+        if (selector.includes('role="menu"') || selector.includes("data-radix")) return [topMenu];
+        if (selector.includes('role="menuitem"')) return [selectModel, power];
+        return [];
+      },
+      dispatchEvent: () => true,
+    };
+    return { documentStub, pill, power, slider, simpleView };
+  }
 
   it("selects Pro from the current slider-only 4-of-5 picker", async () => {
     let selectedIndex = 4;
@@ -3059,6 +3160,94 @@ describe("unified Intelligence picker slider and Advanced effort controls", () =
     expect(power.keydowns).toEqual(["ArrowRight"]);
     expect(selectedIndex).toBe(5);
     expect(pill.textContent).toBe("Pro");
+  });
+
+  it.each([
+    ["GPT-5.6 English", "gpt-5.6-sol", "Pro, 5 of 5", "en-US"],
+    ["GPT-5.5 Chinese punctuation", "gpt-5.5", "Pro，5/5", "zh-CN"],
+    ["current-model Japanese punctuation", null, "Pro、5件中5件目。", "ja-JP"],
+    ["moving alias Portuguese punctuation", "gpt-5-pro", "Pro, 5 de 5", "pt-BR"],
+    ["whitespace boundary", "gpt-5.6-sol", "Pro 5/5", "en-US"],
+    ["bare exact label", "gpt-5.6-sol", "Pro", "en-US"],
+  ])("verifies structural Pro for %s", async (_name, model, finalLabel, locale) => {
+    const dom = buildSliderDom({ finalLabel: finalLabel!, pageLocale: locale! });
+
+    await expect(run(dom.documentStub, "pro", model)).resolves.toEqual({
+      status: "switched",
+      label: "Pro",
+    });
+    expect(dom.slider.getAttribute("aria-valuenow")).toBe("4");
+    expect(dom.power.keydowns).toEqual(["ArrowRight"]);
+  });
+
+  it("accepts an exact effort pill as the semantic proof at slider maximum", async () => {
+    const dom = buildSliderDom({ initialNow: "4", initialLabel: "", initialPill: "Pro" });
+
+    await expect(run(dom.documentStub, "pro", null)).resolves.toEqual({
+      status: "already-selected",
+      label: "Pro",
+    });
+    expect(dom.power.keydowns).toEqual([]);
+  });
+
+  it.each([
+    [
+      "position without semantic Pro evidence",
+      { initialNow: "4", initialLabel: "", initialPill: "Extra High" },
+    ],
+    [
+      "Professional prefix",
+      { initialNow: "4", initialLabel: "Professional, 5 of 5", initialPill: "Professional" },
+    ],
+    [
+      "Pro label below maximum",
+      { initialNow: "3", initialLabel: "Pro, 4 of 5", initialPill: "Extra High" },
+    ],
+    [
+      "non-five-position range",
+      { initialNow: "4", maximum: "5", initialLabel: "Extra High, 5 of 6" },
+    ],
+  ])("fails closed for %s", async (_name, options) => {
+    const dom = buildSliderDom(options);
+    const result = await run(dom.documentStub, "pro", "gpt-5.6-sol");
+
+    expect(result).toMatchObject({ status: "selection-unverified" });
+    expect(dom.power.keydowns).toEqual([]);
+  });
+
+  it("records bounded structural picker evidence without page content", async () => {
+    const dom = buildSliderDom({
+      initialNow: "4",
+      initialLabel: "Professional, 5 of 5",
+      initialPill: "Professional",
+      pageLocale: "pt-BR",
+    });
+    const result = (await run(dom.documentStub, "pro", "gpt-5.5", {
+      requestedModel: "gpt-5.5",
+      resolvedLabel: "GPT-5.5",
+      strategy: "select",
+      status: "already-selected",
+      verified: true,
+      source: "chatgpt-model-picker",
+      capturedAt: "2026-09-02T00:00:00.000Z",
+    })) as { diagnostic?: Record<string, unknown> };
+
+    expect(result.diagnostic).toMatchObject({
+      requestedModelKey: "gpt-5.5",
+      requestedEffort: "pro",
+      observedModelLabel: "GPT-5.5",
+      modelVerified: true,
+      pageLocale: "pt-BR",
+      pickerShape: "five-position-power-slider",
+      sliderMinimum: 0,
+      sliderMaximum: 4,
+      sliderCurrent: 4,
+      boundedSelectedLabel: "Professional, 5 of 5",
+      powerSliderEligible: true,
+      failureStage: "selection-unverified",
+    });
+    expect(JSON.stringify(result.diagnostic)).not.toContain("conversation");
+    expect(JSON.stringify(result.diagnostic)).not.toContain("sidebar");
   });
 
   it("selects Pro through Japanese Advanced and Effort labels", async () => {

@@ -1,0 +1,9 @@
+{
+  "name": "@oracle-v2/worker",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@oracle-v2/kernel": "workspace:*",
+    "@oracle-v2/store": "workspace:*"
+  }
+}

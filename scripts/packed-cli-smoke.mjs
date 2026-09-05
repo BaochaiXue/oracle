@@ -37,6 +37,24 @@ try {
     "oracle-cli.js",
   );
   const packageRoot = join(installDir, "node_modules", "@steipete", "oracle");
+  // An explicit broker/worker must load from a production install, not rely
+  // on the development workspace's Playwright dependency. Imports do not
+  // launch a browser, open a profile, or start a worker.
+  for (const modulePath of [
+    "dist/packages/oracle-browser-runtime/src/index.js",
+    "dist/packages/chatgpt-adapter/src/index.js",
+    "dist/apps/oracle-worker/src/index.js",
+  ]) {
+    run(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `await import(${JSON.stringify(join(packageRoot, modulePath))})`,
+      ],
+      { cwd: installDir },
+    );
+  }
   for (const packagedPath of [
     "opencli-adapters/chatgpt/oracle-picker.generated.js",
     "opencli-adapters/chatgpt/submit-file-core.js",

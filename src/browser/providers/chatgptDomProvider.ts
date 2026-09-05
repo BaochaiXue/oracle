@@ -7,6 +7,7 @@ import { waitForAssistantResponse } from "../actions/assistantResponse.js";
 interface ChatgptDomProviderState {
   runtime: ChromeClient["Runtime"];
   input: ChromeClient["Input"];
+  page?: ChromeClient["Page"];
   logger: BrowserLogger;
   timeoutMs: number;
   inputTimeoutMs?: number;
@@ -15,6 +16,7 @@ interface ChatgptDomProviderState {
   attachmentNames?: AttachmentReadyExpectation[];
   committedTurns?: number | null;
   onPromptDispatched?: () => Promise<void> | void;
+  onPromptDispatchEvent?: () => Promise<void> | void;
   onPromptCommitted?: (
     committedTurns: number | null,
     committedUserTurnIndex: number | null,
@@ -46,11 +48,13 @@ async function submitPromptViaAdapter(ctx: ProviderDomFlowContext): Promise<void
     {
       runtime: state.runtime,
       input: state.input,
+      page: state.page,
       attachmentNames: state.attachmentNames ?? [],
       baselineTurns: state.baselineTurns ?? undefined,
       inputTimeoutMs: state.inputTimeoutMs ?? undefined,
       attachmentTimeoutMs: state.attachmentTimeoutMs ?? undefined,
       onPromptDispatched: state.onPromptDispatched,
+      onPromptDispatchEvent: state.onPromptDispatchEvent,
       onPromptCommitted: state.onPromptCommitted,
       onPromptCommitPending: state.onPromptCommitPending,
       isSubmissionOwner: state.isSubmissionOwner,

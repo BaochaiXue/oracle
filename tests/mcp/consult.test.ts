@@ -358,6 +358,38 @@ describe("summarizeModelRunsForConsult", () => {
     }
   });
 
+  test("rejects broker-only durability fields on a legacy MCP engine", async () => {
+    const home = mkdtempSync(path.join(tmpdir(), "oracle-home-"));
+    setOracleHomeDirOverrideForTest(home);
+    try {
+      const handlers: Array<(input: unknown) => Promise<unknown>> = [];
+      registerConsultTool({
+        registerTool: (_name: string, _def: unknown, fn: (input: unknown) => Promise<unknown>) => {
+          handlers.push(fn);
+        },
+        server: {
+          sendLoggingMessage: async () => undefined,
+        },
+      } as unknown as Parameters<typeof registerConsultTool>[0]);
+      const handler = handlers[0];
+      if (!handler) throw new Error("handler not registered");
+
+      const result = (await handler({
+        engine: "browser",
+        prompt: "Do not ignore broker durability fields.",
+        files: [],
+        idempotencyKey: "must-not-be-ignored",
+        waitTimeoutMs: 1_000,
+      })) as { isError?: boolean; content: Array<{ type: "text"; text: string }> };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toMatch(/broker-only/u);
+    } finally {
+      setOracleHomeDirOverrideForTest(null);
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test("rejects an MCP consult image path outside the generated output directory", async () => {
     const home = mkdtempSync(path.join(tmpdir(), "oracle-home-"));
     setOracleHomeDirOverrideForTest(home);

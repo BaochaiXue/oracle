@@ -290,9 +290,11 @@ export async function attachSession(
 
   const hasChromeDisconnect = metadata.response?.incompleteReason === "chrome-disconnected";
   const hasIncompleteCapture = metadata.response?.incompleteReason === "incomplete-capture";
+  const hasManualIntervention = metadata.response?.incompleteReason === "manual-intervention";
   const statusAllowsReattach =
     metadata.status === "running" ||
-    (metadata.status === "error" && (hasChromeDisconnect || hasIncompleteCapture));
+    (metadata.status === "error" &&
+      (hasChromeDisconnect || hasIncompleteCapture || hasManualIntervention));
   const hasFallbackSessionInfo = Boolean(
     runtime?.chromePort ||
     runtime?.chromeBrowserWSEndpoint ||
@@ -312,7 +314,10 @@ export async function attachSession(
     metadata.status === "completed" && deepResearchPlaceholderCapture;
   const hasRecoverableConversation = hasRecoverableChatGptConversation(runtime);
   const hasLiveChromeFallback = Boolean(
-    (metadata.status === "running" || hasIncompleteCapture || completedDeepResearchPlaceholder) &&
+    (metadata.status === "running" ||
+      hasIncompleteCapture ||
+      hasManualIntervention ||
+      completedDeepResearchPlaceholder) &&
     (runtime?.chromePort || runtime?.chromeBrowserWSEndpoint || runtime?.chromeProfileRoot),
   );
   const canReattach =
@@ -327,6 +332,7 @@ export async function attachSession(
       completedDeepResearchPlaceholder) &&
     (hasChromeDisconnect ||
       hasIncompleteCapture ||
+      hasManualIntervention ||
       completedDeepResearchPlaceholder ||
       (runtime?.controllerPid && !controllerAlive));
 

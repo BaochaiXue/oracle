@@ -63,10 +63,24 @@ const consultInputShape = {
     .optional()
     .describe("Multi-model fan-out (API engine only). Cannot be combined with browser automation."),
   engine: z
-    .enum(["api", "browser"])
+    .enum(["api", "browser", "broker"])
     .optional()
     .describe(
-      "Execution engine. `api` uses OpenAI/other providers. `browser` automates the ChatGPT web UI (supports attachments and ChatGPT-only model labels). When omitted, Oracle follows CLI defaults: config/ORACLE_ENGINE first, then `api` when OPENAI_API_KEY is set, otherwise `browser`.",
+      "Execution engine. `broker` is the opt-in Oracle v2 durable worker path; legacy `api` and `browser` defaults remain unchanged until G3.",
+    ),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Stable logical key for broker retries; the same key and inputs return one job."),
+  waitTimeoutMs: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      "Broker-only MCP host wait budget. Expiry returns jobId + state while the worker continues.",
     ),
   browserModelLabel: z
     .string()
@@ -215,9 +229,12 @@ const consultDryRunResolvedShape = z.object({
 
 export const consultOutputShape = {
   sessionId: z.string().optional(),
+  jobId: z.string().optional(),
   status: z.string(),
+  state: z.string().optional(),
   output: z.string(),
   dryRun: z.boolean().optional(),
+  timedOut: z.boolean().optional(),
   resolved: consultDryRunResolvedShape.optional(),
   models: z.array(consultModelSummaryShape).optional(),
   artifacts: z.array(consultArtifactSummaryShape).optional(),
@@ -519,6 +536,8 @@ export async function runConsultTool(
     model,
     models,
     engine,
+    idempotencyKey,
+    waitTimeoutMs,
     search,
     browserModelLabel,
     browserAttachments,
@@ -535,6 +554,15 @@ export async function runConsultTool(
     slug,
   } = parsedInput;
   const { config: userConfig } = await loadUserConfig();
+  const brokerRequested =
+    engine === "broker" ||
+    (!engine && (process.env.ORACLE_ENGINE ?? "").trim().toLowerCase() === "broker");
+  if (brokerRequested && models && models.length > 0) {
+    return {
+      isError: true,
+      content: textContent("Oracle broker supports exactly one GPT-5.6 Sol / Pro route."),
+    };
+  }
   let runOptions: RunOracleOptions;
   let resolvedEngine: EngineMode;
   try {
@@ -570,6 +598,61 @@ export async function runConsultTool(
         }),
       )
       .catch(() => {});
+
+  if (resolvedEngine === "broker") {
+    const browserOnlyInput =
+      browserModelLabel !== undefined ||
+      browserAttachments !== undefined ||
+      browserBundleFiles !== undefined ||
+      browserBundleFormat !== undefined ||
+      browserThinkingTime !== undefined ||
+      browserModelStrategy !== undefined ||
+      browserResearchMode !== undefined ||
+      (browserFollowUps?.length ?? 0) > 0 ||
+      browserKeepBrowser !== undefined ||
+      generateImage !== undefined ||
+      outputPath !== undefined;
+    if (browserOnlyInput || search !== undefined) {
+      return {
+        isError: true,
+        content: textContent(
+          "Oracle broker owns its fixed GPT-5.6 Sol / Pro route and sealed-bundle policy; browser/search overrides are unsupported.",
+        ),
+      };
+    }
+    if (models && models.length > 0) {
+      return {
+        isError: true,
+        content: textContent("Oracle broker supports exactly one GPT-5.6 Sol / Pro route."),
+      };
+    }
+    if (model && !["gpt-5.6-sol", "gpt-5.6", "gpt-5-pro"].includes(model.trim().toLowerCase())) {
+      return {
+        isError: true,
+        content: textContent("Oracle broker requires GPT-5.6 Sol with Pro effort."),
+      };
+    }
+    const { runBrokerMcpConsult } = await import("../brokerConsult.js");
+    return runBrokerMcpConsult({
+      prompt: runOptions.prompt,
+      files: runOptions.file,
+      maxFileSizeBytes: runOptions.maxFileSizeBytes,
+      idempotencyKey,
+      waitTimeoutMs,
+      dryRun,
+      cwd,
+      sendLog,
+    });
+  }
+
+  if (idempotencyKey !== undefined || waitTimeoutMs !== undefined) {
+    return {
+      isError: true,
+      content: textContent(
+        "idempotencyKey and waitTimeoutMs are broker-only; set engine to broker or remove them.",
+      ),
+    };
+  }
 
   const resolvedRemote = resolveRemoteServiceConfig({ userConfig, env: process.env });
   const imageOutputPath = runOptions.generateImage ?? runOptions.outputPath;

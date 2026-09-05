@@ -93,9 +93,6 @@ export async function resumeBrowserSession(
   if (runtime.browserTransport === "opencli") {
     return resumeOpenCliBrowserSession(runtime, config, logger);
   }
-  if (runtime.proTurnCommitted === false) {
-    throwUncommittedProTurn(runtime);
-  }
   const recoverSession =
     deps.recoverSession ??
     (async (runtimeMeta, configMeta) =>
@@ -108,6 +105,9 @@ export async function resumeBrowserSession(
   };
 
   if (!runtime.chromePort && !runtime.chromeBrowserWSEndpoint) {
+    if (requiresExactRecoveryTarget(runtime)) {
+      throwExactRecoveryTargetUnavailable(runtime);
+    }
     logger("No running Chrome detected; reopening browser to locate the session.");
     return recoverSession(runtime, config);
   }
@@ -128,6 +128,13 @@ export async function resumeBrowserSession(
         })) as TargetInfoLite[]);
     const targetList = (await listTargets()) as TargetInfoLite[];
     const target = pickTarget(targetList, liveRuntime);
+    if (
+      requiresExactRecoveryTarget(liveRuntime) &&
+      (!liveRuntime.chromeTargetId ||
+        (target?.targetId ?? target?.id) !== liveRuntime.chromeTargetId)
+    ) {
+      throwExactRecoveryTargetUnavailable(liveRuntime);
+    }
     const connection =
       browserWSEndpoint && !deps.connect
         ? await connectToRemoteChromeTarget(host, port ?? 9222, logger, {
@@ -204,6 +211,7 @@ export async function resumeBrowserSession(
       pingTimeoutMs,
       "Reattach target did not respond",
     );
+    assertResponseCaptureRecoveryKind(liveRuntime);
     await ensureConversationOpen();
     const waitForHydration =
       deps.waitForConversationHydration ?? waitForResumedConversationHydration;
@@ -216,9 +224,17 @@ export async function resumeBrowserSession(
       requirePromptReady: false,
       expectedConversationUrl: expectedConversationUrl ?? undefined,
     });
-    const verifiedProTurnIndex = await verifyCommittedProTurnIdentity(Runtime, liveRuntime);
+    const reconciledPrompt = await reconcileBrowserPromptIdentity(Runtime, liveRuntime);
+    if (reconciledPrompt.runtime !== liveRuntime) {
+      await deps.persistRuntime?.(reconciledPrompt.runtime);
+    }
+    const verifiedProTurnIndex = await verifyCommittedProTurnIdentity(
+      Runtime,
+      reconciledPrompt.runtime,
+    );
     const minTurnIndex =
       verifiedProTurnIndex ??
+      reconciledPrompt.turnIndex ??
       (await readPromptPreviewTurnIndex(Runtime, deps.promptPreview)) ??
       (deps.promptPreview ? null : await readConversationTurnIndex(Runtime, logger));
     if (config?.researchMode === "deep") {
@@ -234,7 +250,7 @@ export async function resumeBrowserSession(
       const responseRuntime = {
         ...verifyStoredProResponseWorkloadTiming({
           answer: researchResult.text,
-          runtime: liveRuntime,
+          runtime: reconciledPrompt.runtime,
           capturedAt: new Date(),
         }),
         browserDisposition: "completed" as const,
@@ -272,7 +288,7 @@ export async function resumeBrowserSession(
     const responseRuntime = {
       ...verifyStoredProResponseWorkloadTiming({
         answer: aligned.answerText,
-        runtime: liveRuntime,
+        runtime: reconciledPrompt.runtime,
         capturedAt: new Date(),
       }),
       browserDisposition: "completed" as const,
@@ -287,7 +303,11 @@ export async function resumeBrowserSession(
     };
   } catch (error) {
     await closeAttached();
-    if (isResponseTimingError(error)) {
+    if (
+      isResponseTimingError(error) ||
+      isPromptIdentityError(error) ||
+      requiresExactRecoveryTarget(runtime)
+    ) {
       throw error;
     }
     const message = error instanceof Error ? error.message : String(error);
@@ -630,12 +650,23 @@ async function resumeBrowserSessionViaNewChrome(
       requirePromptReady: false,
       expectedConversationUrl: conversationUrl ?? undefined,
     });
+    assertResponseCaptureRecoveryKind(runtime);
     const waitForResponse = deps.waitForAssistantResponse ?? waitForAssistantResponse;
     const captureMarkdown = deps.captureAssistantMarkdown ?? captureAssistantMarkdown;
     const timeoutMs = resolved.timeoutMs ?? 120_000;
-    const verifiedProTurnIndex = await verifyCommittedProTurnIdentity(Runtime, runtime);
+    const reconciledPrompt = await reconcileBrowserPromptIdentity(Runtime, runtime);
+    if (reconciledPrompt.runtime !== runtime) {
+      await deps.persistRuntime?.(
+        buildRuntime("active", startupReceipt.status !== "complete", reconciledPrompt.runtime),
+      );
+    }
+    const verifiedProTurnIndex = await verifyCommittedProTurnIdentity(
+      Runtime,
+      reconciledPrompt.runtime,
+    );
     const minTurnIndex =
       verifiedProTurnIndex ??
+      reconciledPrompt.turnIndex ??
       (await readPromptPreviewTurnIndex(Runtime, deps.promptPreview)) ??
       (deps.promptPreview ? null : await readConversationTurnIndex(Runtime, logger));
     if (resolved.researchMode === "deep") {
@@ -655,7 +686,7 @@ async function resumeBrowserSessionViaNewChrome(
         false,
         verifyStoredProResponseWorkloadTiming({
           answer: researchResult.text,
-          runtime,
+          runtime: reconciledPrompt.runtime,
           capturedAt: new Date(),
         }),
       );
@@ -683,7 +714,7 @@ async function resumeBrowserSessionViaNewChrome(
       false,
       verifyStoredProResponseWorkloadTiming({
         answer: aligned.answerText,
-        runtime,
+        runtime: reconciledPrompt.runtime,
         capturedAt: new Date(),
       }),
     );
@@ -701,6 +732,262 @@ async function resumeBrowserSessionViaNewChrome(
 
 function isResponseTimingError(error: unknown): boolean {
   return error instanceof BrowserAutomationError && error.details?.stage === "response-timing";
+}
+
+function isPromptIdentityError(error: unknown): boolean {
+  return (
+    error instanceof BrowserAutomationError &&
+    ["browser-prompt-identity", "browser-manual-recovery"].includes(
+      String(error.details?.stage ?? ""),
+    )
+  );
+}
+
+function isManualInspectionRecovery(runtime: BrowserRuntimeMetadata): boolean {
+  return (
+    runtime.recoveryKind === "draft-retained" || runtime.recoveryKind === "manual-intervention"
+  );
+}
+
+function requiresExactRecoveryTarget(runtime: BrowserRuntimeMetadata): boolean {
+  const currentPromptCommitUnverified =
+    runtime.proTurnCommitted === false ||
+    (typeof runtime.browserPromptSha256 === "string" &&
+      !(
+        typeof runtime.browserPromptCommittedTurnIndex === "number" &&
+        Number.isSafeInteger(runtime.browserPromptCommittedTurnIndex) &&
+        runtime.browserPromptCommittedTurnIndex >= 0
+      ));
+  return isManualInspectionRecovery(runtime) || currentPromptCommitUnverified;
+}
+
+function throwExactRecoveryTargetUnavailable(runtime: BrowserRuntimeMetadata): never {
+  const manualInspection = isManualInspectionRecovery(runtime);
+  throw new BrowserAutomationError(
+    manualInspection
+      ? "Oracle could not reattach the exact browser target retained for manual inspection and will not open or inspect another tab."
+      : "Oracle could not reattach the exact browser target retained after an indeterminate commit and will not open or inspect another tab.",
+    {
+      stage: manualInspection ? "browser-manual-recovery" : "browser-prompt-identity",
+      code: manualInspection
+        ? "browser-manual-target-unavailable"
+        : "browser-exact-target-unavailable",
+      runtime,
+      retrySafe: false,
+      recoverable: true,
+    },
+  );
+}
+
+function assertResponseCaptureRecoveryKind(runtime: BrowserRuntimeMetadata): void {
+  if (!isManualInspectionRecovery(runtime)) {
+    return;
+  }
+  throw new BrowserAutomationError(
+    "Oracle reattached the exact browser target for manual inspection; this retained state is not eligible for automatic answer capture or submission.",
+    {
+      stage: "browser-manual-recovery",
+      code: "browser-manual-intervention-required",
+      runtime,
+      retrySafe: false,
+      recoverable: true,
+    },
+  );
+}
+
+async function reconcileBrowserPromptIdentity(
+  Runtime: ChromeClient["Runtime"],
+  runtime: BrowserRuntimeMetadata,
+): Promise<{ runtime: BrowserRuntimeMetadata; turnIndex: number | null }> {
+  const expectedSha256 = runtime.browserPromptSha256;
+  if (typeof expectedSha256 !== "string") {
+    if (runtime.proTurnCommitted === false) {
+      throwUncommittedProTurn(runtime);
+    }
+    return { runtime, turnIndex: null };
+  }
+  if (!/^[a-f0-9]{64}$/u.test(expectedSha256)) {
+    throw new BrowserAutomationError(
+      "Oracle refused to reattach because the current browser prompt identity is invalid.",
+      {
+        stage: "browser-prompt-identity",
+        code: "browser-prompt-identity-missing",
+        runtime,
+        retrySafe: false,
+      },
+    );
+  }
+  if (runtime.proPromptSha256 !== undefined && runtime.proPromptSha256 !== expectedSha256) {
+    throw new BrowserAutomationError(
+      "Oracle refused to reattach because the current browser and Pro prompt identities conflict.",
+      {
+        stage: "browser-prompt-identity",
+        code: "browser-prompt-identity-mismatch",
+        runtime,
+        retrySafe: false,
+      },
+    );
+  }
+
+  const baselineTurns =
+    typeof runtime.browserPromptBaselineTurns === "number" &&
+    Number.isSafeInteger(runtime.browserPromptBaselineTurns) &&
+    runtime.browserPromptBaselineTurns >= 0
+      ? runtime.browserPromptBaselineTurns
+      : null;
+  const recordedTurnIndex =
+    typeof runtime.browserPromptCommittedTurnIndex === "number" &&
+    Number.isSafeInteger(runtime.browserPromptCommittedTurnIndex) &&
+    runtime.browserPromptCommittedTurnIndex >= 0
+      ? runtime.browserPromptCommittedTurnIndex
+      : null;
+  if (baselineTurns === null && recordedTurnIndex === null) {
+    throw new BrowserAutomationError(
+      "Oracle refused to reattach because the current browser prompt has neither a pre-dispatch baseline nor an exact committed turn index.",
+      {
+        stage: "browser-prompt-identity",
+        code: "browser-prompt-baseline-missing",
+        runtime,
+        retrySafe: false,
+        recoverable: true,
+      },
+    );
+  }
+  if (baselineTurns !== null && recordedTurnIndex !== null && recordedTurnIndex < baselineTurns) {
+    throw new BrowserAutomationError(
+      "Oracle refused to reattach because the committed browser prompt index precedes its pre-dispatch baseline.",
+      {
+        stage: "browser-prompt-identity",
+        code: "browser-prompt-identity-mismatch",
+        runtime,
+        retrySafe: false,
+        recoverable: true,
+      },
+    );
+  }
+  const { result } = await Runtime.evaluate({
+    expression: `(async () => {
+      const EXPECTED_PROMPT_SHA256 = ${JSON.stringify(expectedSha256)};
+      const BASELINE_TURNS = ${baselineTurns === null ? "null" : baselineTurns};
+      const RECORDED_TURN_INDEX = ${recordedTurnIndex === null ? "null" : recordedTurnIndex};
+      const normalize = (value) => {
+        let text = String(value || '').toLowerCase();
+        text = text.replace(/\`\`\`[^\\n]*\\n([\\s\\S]*?)\`\`\`/g, ' $1 ');
+        text = text.replace(/\`\`\`/g, ' ');
+        text = text.replace(/\`([^\`]*)\`/g, '$1');
+        return text.replace(/\\s+/g, ' ').trim();
+      };
+      const turns = ${buildConversationTurnListExpression()};
+      const matches = [];
+      const userTurnIndices = [];
+      for (const [index, node] of turns.entries()) {
+        const recoveryBoundary = BASELINE_TURNS !== null
+          ? BASELINE_TURNS
+          : RECORDED_TURN_INDEX;
+        if (recoveryBoundary !== null && index < recoveryBoundary) {
+          continue;
+        }
+        const role = String(
+          node.getAttribute?.('data-message-author-role') ||
+          node.getAttribute?.('data-turn') ||
+          node.dataset?.turn ||
+          '',
+        ).toLowerCase();
+        const roleNode = role === 'user'
+          ? node
+          : node.querySelector?.('[data-message-author-role="user"], [data-turn="user"]');
+        if (!roleNode) continue;
+        userTurnIndices.push(index);
+        const messageNode = roleNode.querySelector?.('.whitespace-pre-wrap') || roleNode;
+        const normalized = normalize(messageNode.innerText || messageNode.textContent || '');
+        if (!normalized) continue;
+        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
+        const actualSha256 = Array.from(new Uint8Array(digest))
+          .map((byte) => byte.toString(16).padStart(2, '0'))
+          .join('');
+        if (actualSha256 === EXPECTED_PROMPT_SHA256) matches.push(index);
+      }
+      return { matches, userTurnIndices };
+    })()`,
+    returnByValue: true,
+    awaitPromise: true,
+  });
+  const promptIdentity = result?.value as
+    | { matches?: unknown; userTurnIndices?: unknown }
+    | undefined;
+  const matches = Array.isArray(promptIdentity?.matches)
+    ? promptIdentity.matches.filter(
+        (value): value is number =>
+          typeof value === "number" &&
+          Number.isSafeInteger(value) &&
+          value >= 0 &&
+          (recordedTurnIndex === null || value === recordedTurnIndex) &&
+          (baselineTurns === null || value >= baselineTurns),
+      )
+    : [];
+  const postBaselineUserTurnIndices = Array.isArray(promptIdentity?.userTurnIndices)
+    ? promptIdentity.userTurnIndices.filter(
+        (value): value is number =>
+          typeof value === "number" &&
+          Number.isSafeInteger(value) &&
+          value >= 0 &&
+          (baselineTurns === null || value >= baselineTurns) &&
+          (baselineTurns !== null || recordedTurnIndex === null || value >= recordedTurnIndex),
+      )
+    : [];
+  if (matches.length === 0) {
+    throw new BrowserAutomationError(
+      "Oracle has not yet observed the exact current prompt as a committed user turn in the retained tab.",
+      {
+        stage: "browser-prompt-identity",
+        code: "browser-prompt-not-observed",
+        runtime,
+        retrySafe: false,
+        recoverable: true,
+        baselineTurns,
+      },
+    );
+  }
+  if (
+    matches.length !== 1 ||
+    postBaselineUserTurnIndices.length !== 1 ||
+    postBaselineUserTurnIndices[0] !== matches[0] ||
+    (recordedTurnIndex !== null && matches[0] !== recordedTurnIndex)
+  ) {
+    throw new BrowserAutomationError(
+      "Oracle refused to capture a response because the current prompt identity did not resolve to one exact user turn.",
+      {
+        stage: "browser-prompt-identity",
+        code: "browser-prompt-identity-ambiguous",
+        runtime,
+        retrySafe: false,
+        recoverable: true,
+        baselineTurns,
+        matchingTurnIndices: matches,
+        postBaselineUserTurnIndices,
+        recordedTurnIndex,
+      },
+    );
+  }
+
+  const turnIndex = matches[0] as number;
+  const reconciledRuntime: BrowserRuntimeMetadata = {
+    ...runtime,
+    browserPromptCommittedTurnIndex: turnIndex,
+    ...(runtime.proTurnCommitted === false
+      ? { proTurnCommitted: true, proCommittedTurnIndex: turnIndex }
+      : {}),
+  };
+  return {
+    runtime:
+      reconciledRuntime.browserPromptCommittedTurnIndex ===
+        runtime.browserPromptCommittedTurnIndex &&
+      reconciledRuntime.proTurnCommitted === runtime.proTurnCommitted &&
+      reconciledRuntime.proCommittedTurnIndex === runtime.proCommittedTurnIndex
+        ? runtime
+        : reconciledRuntime,
+    turnIndex,
+  };
 }
 
 async function verifyCommittedProTurnIdentity(
@@ -860,5 +1147,6 @@ export const __test__ = {
   buildConversationUrl,
   openConversationFromSidebar,
   readPromptPreviewTurnIndex,
+  reconcileBrowserPromptIdentity,
   verifyCommittedProTurnIdentity,
 };

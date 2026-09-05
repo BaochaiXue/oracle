@@ -1,3 +1,7 @@
+packages:
+  - "packages/*"
+  - "apps/*"
+
 overrides:
   devtools-protocol: 0.0.1676105
   hono: 4.13.1

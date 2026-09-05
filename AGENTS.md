@@ -1,6 +1,6 @@
 # Oracle fork agent contract
 
-This repository is the public `IndelibleVivi/oracle` fork. Keep changes
+This repository is `BaochaiXue/oracle`, a public fork of `IndelibleVivi/oracle`. Keep changes
 portable and public-safe: never add personal account URLs, private machine
 paths, signing-key locations, credentials, OTP procedures, private continuity,
 or maintainer-only release instructions.
@@ -22,6 +22,24 @@ or maintainer-only release instructions.
   verified rendering.
 - Never click or auto-click ChatGPT's `Answer now` control. A quiet Pro run is
   recovered by reattaching its exact stored session, not by resubmitting.
+
+## Upstream integration boundary
+
+- The integration decision is recorded in `docs/upstream-integration.md`.
+  Upstream v2 plans and evidence describe the upstream project, not a local
+  runtime certification, owner decision, or instruction to retire this fork.
+- Keep ordinary browser and Batch direct-CDP execution available on Linux/WSL
+  and Windows. Latest/GPT-6 Pro remains the browser default. Do not replace
+  these paths with the macOS-only v2 worker or freeze normal use implicitly.
+- Imported v2 kernel/store/client/worker, adapter, and disposable-sandbox
+  primitives remain opt-in source. `--engine broker` is explicit, retains its
+  upstream GPT-5.6 contract, and is never an automatic browser fallback.
+- New v2 source in `packages/*` and `apps/*` must not import `src/browser/**`.
+  Page selectors belong in `packages/chatgpt-adapter`; fixtures are not a
+  second production adapter. Preserve the upstream boundary checker.
+- Auth-seed migration, real sandbox probes, worker activation, Batch cutover,
+  and legacy removal need a separate supported-platform acceptance decision.
+  Do not change or destroy the shared Chrome profile to satisfy upstream gates.
 
 ## Batch Oracle source and documentation
 
@@ -64,7 +82,9 @@ pnpm check
 pnpm test
 pnpm build
 pnpm docs:check
+pnpm public:check
 pnpm test:packed-cli
+git diff --check
 ```
 
 Do not relax recovery, prompt-identity, target-ownership, Pro timing, or
