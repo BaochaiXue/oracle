@@ -30,7 +30,7 @@ describe("canonical Oracle skill contract", () => {
     expect(skill).toContain("one same-task ChatGPT conversation until evidence-based consensus");
   });
 
-  test("pins the GPT-5.6 Pro direct-CDP browser lane without provider fallback", async () => {
+  test("pins GPT-6 Pro direct-CDP with an explicit pre-Send fallback", async () => {
     const skill = await readSkill();
 
     expect(skill).toContain("--engine browser --browser-transport cdp --model gpt-5-pro");
@@ -76,7 +76,7 @@ describe("canonical Oracle skill contract", () => {
     expect(skill).toContain("## Long runs and host timeouts");
     expect(skill).toContain("requests a detached worker");
     expect(skill).toContain("`lifecycle.detached` in the session's `meta.json` must be `true`");
-    expect(skill).toContain("Non-Pro aliases do not detach either.");
+    expect(skill).toContain("Base aliases without resolved Pro effort do not detach.");
     expect(skill).toContain("oracle status --hours 72");
     // Recovery reads the artifact, not a CLI flag that the root parser shadows.
     expect(skill).toContain("~/.oracle/sessions/<id>/artifacts/transcript.md");
@@ -89,14 +89,14 @@ describe("canonical Oracle skill contract", () => {
     expect(skill).not.toContain("`gpt-5-pro` selects ChatGPT's `Pro` target");
   });
 
-  test("supports only GPT-5.6 Sol Pro and never issues a GPT-5.5 alias", async () => {
+  test("prefers GPT-6 Pro and limits fallback to GPT-5.6 Sol Pro", async () => {
     const skill = await readSkill();
 
-    expect(skill).toContain("This skill supports exactly one target: GPT-5.6 Sol Pro.");
-    expect(skill).toContain("GPT-5.5 and GPT-5.5 Pro are no longer supported here");
+    expect(skill).toContain("GPT-6 Pro is the default. GPT-5.6 Sol Pro is the only fallback");
+    expect(skill).toContain("unavailable before Send");
     expect(skill).not.toMatch(/--model\s+"?gpt-5\.5/i);
     expect(skill).toContain(
-      "base aliases leave ChatGPT's current tier untouched, while the Pro alias `gpt-5-pro` defaults the tier to Pro",
+      "Do not start a new conversation to upgrade an existing exchange to GPT-6.",
     );
     expect(skill).toContain("--browser-bundle-format auto|text|zip");
     expect(skill).toContain("## API preflight (operator-only CLI reference)");
@@ -135,7 +135,7 @@ describe("canonical Oracle skill contract", () => {
   test("tells the agent to show GPT-5.6 Pro visual evidence and names the media traps", async () => {
     const skill = await readSkill();
 
-    expect(skill).toContain("GPT-5.6 Pro is multimodal");
+    expect(skill).toContain("GPT-6 Pro is multimodal");
     expect(skill).toContain("## Showing the model visual evidence");
     // Media routing matches src/browser/prompt.ts MEDIA_EXTENSIONS, including .heif.
     expect(skill).toContain("`.heic`, `.heif`");

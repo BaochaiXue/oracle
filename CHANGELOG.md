@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.18.0 — Unreleased
+
+- Browser default: GPT-6 Pro, with verified GPT-5.6 Sol Pro fallback only before
+  Send when the model or Pro effort is unavailable. Accept the current `6Pro`
+  composer and `Latest` navigation row while requiring observed version proof.
+- Preserve actual selected model and fallback reason in session evidence and
+  same-conversation follow-ups. CLI and skill/plugin versions are now 0.18.0.
+
 ## 0.17.3 — Unreleased
 
 ### Added

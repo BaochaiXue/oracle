@@ -205,6 +205,10 @@ export type BrowserModelSelectionEvidenceStatus =
   | "unavailable";
 
 export interface BrowserModelSelectionEvidence {
+  /** Actual model family whose Pro effort was verified before Send. */
+  selectedModel?: string;
+  /** Explicit pre-Send availability failure permitting the configured fallback. */
+  fallbackReason?: string;
   requestedModel?: string | null;
   resolvedLabel?: string | null;
   strategy?: BrowserModelStrategy;

@@ -56,7 +56,9 @@ export function resolveRunOptionsFromConfig({
     .map((entry) => normalizeModelOption(entry))
     .filter(Boolean);
 
-  const cliModelArg = normalizeModelOption(model ?? userConfig?.model) || DEFAULT_MODEL;
+  const cliModelArg =
+    normalizeModelOption(model ?? userConfig?.model) ||
+    (resolvedEngine === "browser" ? "gpt-5-pro" : DEFAULT_MODEL);
   const apiModel = resolveApiModel(cliModelArg);
   // Browser label inference is intentionally engine-scoped: API model ids such as
   // gpt-5.6-luna must remain provider values even though browser mode rejects

@@ -87,9 +87,9 @@ describe("buildBrowserConfig", () => {
     },
   );
 
-  test("maps the moving gpt-5-pro alias to GPT-5.6 Sol with Pro effort", async () => {
+  test("maps the moving gpt-5-pro alias to GPT-6 with Pro effort", async () => {
     await expect(buildBrowserConfig({ model: "gpt-5-pro" })).resolves.toMatchObject({
-      desiredModel: "GPT-5.6 Sol",
+      desiredModel: "GPT-6",
       thinkingTime: "pro",
     });
   });
@@ -547,7 +547,7 @@ describe("resolveBrowserModelLabel", () => {
     expect(resolveBrowserModelLabel("gpt-5.5", "gpt-5.5")).toBe("Thinking 5.5");
     expect(resolveBrowserModelLabel("gpt-5.4-pro", "gpt-5.4-pro")).toBe("GPT-5.5");
     expect(resolveBrowserModelLabel("gpt-5.4", "gpt-5.4")).toBe("Thinking 5.4");
-    expect(resolveBrowserModelLabel("gpt-5-pro", "gpt-5-pro")).toBe("GPT-5.6 Sol");
+    expect(resolveBrowserModelLabel("gpt-5-pro", "gpt-5-pro")).toBe("GPT-6");
     expect(resolveBrowserModelLabel("gpt-5.2-pro", "gpt-5.2-pro")).toBe("GPT-5.5");
     expect(resolveBrowserModelLabel("gpt-5.1-pro", "gpt-5.1-pro")).toBe("GPT-5.5");
     expect(resolveBrowserModelLabel("GPT-5.1", "gpt-5.1")).toBe("GPT-5.2");

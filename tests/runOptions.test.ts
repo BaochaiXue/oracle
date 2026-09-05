@@ -4,6 +4,20 @@ import { estimateRequestTokens } from "../src/oracle/tokenEstimate.js";
 import { DEFAULT_MODEL, MODEL_CONFIGS } from "../src/oracle/config.js";
 
 describe("resolveRunOptionsFromConfig", () => {
+  it("defaults browser consultations to the moving Pro alias and supports explicit GPT-6 Pro", () => {
+    expect(
+      resolveRunOptionsFromConfig({ prompt: "Review code", engine: "browser", env: {} }).runOptions
+        .model,
+    ).toBe("gpt-5-pro");
+    expect(
+      resolveRunOptionsFromConfig({
+        prompt: "Review code",
+        engine: "browser",
+        model: "gpt-6-pro",
+        env: {},
+      }).runOptions.model,
+    ).toBe("gpt-6-pro");
+  });
   const basePrompt = "This prompt is comfortably above twenty characters.";
 
   it("uses config engine when none provided and env lacks OPENAI_API_KEY", () => {

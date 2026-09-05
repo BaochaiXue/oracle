@@ -36,7 +36,6 @@ import {
   ensureChatMode,
   waitForResumedConversationHydration,
   installJavaScriptDialogAutoDismissal,
-  ensureModelSelection,
   clearPromptComposer,
   waitForAssistantResponse,
   captureAssistantMarkdown,
@@ -49,6 +48,7 @@ import {
 import { INPUT_SELECTORS } from "./constants.js";
 import { uploadAttachmentViaDataTransfer } from "./actions/remoteFileTransfer.js";
 import { ensureThinkingTime } from "./actions/thinkingTime.js";
+import { ensurePreferredProModel } from "./actions/preferredProModel.js";
 import { startThinkingStatusMonitor } from "./actions/thinkingStatus.js";
 import {
   activateDeepResearch,
@@ -1647,7 +1647,13 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       modelSelectionEvidence = await raceWithDisconnect(
         ensureModelSelectionWithTargetRepair({
           select: () =>
-            ensureModelSelection(Runtime, config.desiredModel as string, logger, modelStrategy),
+            ensurePreferredProModel(
+              Runtime,
+              config.desiredModel as string,
+              logger,
+              modelStrategy,
+              config.researchMode === "deep" ? null : config.thinkingTime,
+            ),
           repair: async () => {
             await navigateToChatGPT(Page, Runtime, config.url, logger);
             await ensureNotBlocked(Runtime, config.headless, logger);
@@ -1680,7 +1686,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     const deepResearch = config.researchMode === "deep";
     // Handle thinking time selection if specified. Deep Research owns its own effort flow.
     const thinkingTime = config.thinkingTime;
-    if (thinkingTime && !deepResearch) {
+    if (thinkingTime && !deepResearch && !modelSelectionEvidence?.selectedModel) {
       const thinkingTargetModel = modelStrategy === "select" ? config.desiredModel : null;
       await raceWithDisconnect(
         withRetries(() => ensureThinkingTime(Runtime, thinkingTime, logger, thinkingTargetModel), {
@@ -3482,7 +3488,13 @@ async function runRemoteBrowserMode(
     if (config.desiredModel && modelStrategy !== "ignore" && !config.resumeConversationUrl) {
       modelSelectionEvidence = await ensureModelSelectionWithTargetRepair({
         select: () =>
-          ensureModelSelection(Runtime, config.desiredModel as string, logger, modelStrategy),
+          ensurePreferredProModel(
+            Runtime,
+            config.desiredModel as string,
+            logger,
+            modelStrategy,
+            config.researchMode === "deep" ? null : config.thinkingTime,
+          ),
         repair: async () => {
           await navigateToChatGPT(Page, Runtime, config.url, logger);
           await ensureNotBlocked(Runtime, config.headless, logger);
@@ -3510,7 +3522,7 @@ async function runRemoteBrowserMode(
     const deepResearch = config.researchMode === "deep";
     // Handle thinking time selection if specified. Deep Research owns its own effort flow.
     const thinkingTime = config.thinkingTime;
-    if (thinkingTime && !deepResearch) {
+    if (thinkingTime && !deepResearch && !modelSelectionEvidence?.selectedModel) {
       const thinkingTargetModel = modelStrategy === "select" ? config.desiredModel : null;
       await withRetries(
         () => ensureThinkingTime(Runtime, thinkingTime, logger, thinkingTargetModel),

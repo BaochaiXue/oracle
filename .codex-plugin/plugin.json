@@ -1,7 +1,7 @@
 {
   "name": "oracle",
-  "version": "0.17.3+codex.20260904173400",
-  "description": "Evidence-driven GPT-5.6 Pro review with repository context and recoverable conversations.",
+  "version": "0.18.0+codex.20260905134011",
+  "description": "GPT-6 Pro review with repository context, recoverable conversations, and GPT-5.6 Sol Pro fallback.",
   "author": {
     "name": "Oracle fork maintainers"
   },
@@ -9,8 +9,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Oracle",
-    "shortDescription": "Debate code and designs with GPT-5.6 Pro",
-    "longDescription": "Review difficult code and research decisions with GPT-5.6 Pro, explicit repository provenance, evidence-based rebuttals, and recoverable same-conversation follow-ups.",
+    "shortDescription": "Debate code and designs with GPT-6 Pro",
+    "longDescription": "Review with GPT-6 Pro by default. Fall back to GPT-5.6 Sol Pro only on verified unavailability before Send; retain repository provenance and same-conversation follow-ups.",
     "developerName": "Oracle fork maintainers",
     "category": "Developer Tools",
     "capabilities": ["Code review", "Repository context", "Browser automation"],

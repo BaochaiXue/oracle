@@ -11,7 +11,7 @@ JSON5 parsing, so trailing commas and comments are allowed.
 {
   // Default engine/model when neither CLI flags nor env override them
   engine: "browser", // or "api"
-  model: "gpt-5-pro", // moving browser alias → GPT-5.6 Sol + Pro
+  model: "gpt-5-pro", // moving browser alias → GPT-6 + Pro, pre-Send Sol Pro fallback
   search: "on", // "on" | "off"
 
   notify: {

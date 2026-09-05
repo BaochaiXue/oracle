@@ -298,6 +298,9 @@ export function isGpt56BrowserLabel(modelValue: string): boolean {
 export function inferModelFromLabel(modelValue: string): ModelName {
   assertOracleModelAllowed(modelValue);
   const normalized = normalizeModelOption(modelValue).toLowerCase();
+  if (/^(?:(?:gpt|chatgpt)[ -]*)?6(?:[ -]pro)?$/.test(normalized)) {
+    return normalized.endsWith("pro") ? "gpt-6-pro" : "gpt-6";
+  }
   if (!normalized) {
     return DEFAULT_MODEL;
   }

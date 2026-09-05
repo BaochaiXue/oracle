@@ -11,7 +11,7 @@
 
 # Oracle / IndelibleVivi fork
 
-> Recoverable GPT-5.6 Pro consultations — one durable session or a declared parallel batch.
+> Recoverable GPT-6 Pro consultations — one durable session or a declared parallel batch.
 
 > **Unofficial / unsupported automation boundary:** This independently maintained source fork is not affiliated with, endorsed by, or authorized by OpenAI. ChatGPT UI, account policy, and platform terms may change and may affect browser automation. This repository makes no claim of OpenAI authorization or terms compliance; operators are responsible for evaluating applicable terms and account risk.
 
@@ -19,7 +19,7 @@ A high-cost Pro run should not depend on one fragile browser tab. This public fo
 
 Oracle owns the prompt bundle, browser actions, session truth, recovery, and follow-up lineage. The human owns the first sign-in, real account challenges, and explicit owner decisions required by Batch Oracle. OpenCLI remains an explicit alternative transport for ordinary consultations; it never takes over a failed CDP run automatically.
 
-`GPT-5.6 Pro` is the current human-facing target. The CLI uses the stable alias `gpt-5-pro` and selects and verifies the current GPT-5.6 Sol + Pro combination in the submission tab.
+`GPT-6 Pro` is the browser default (`gpt-5-pro`, also `gpt-6-pro`). Only confirmed GPT-6/model-effort unavailability before Send permits fallback to GPT-5.6 Sol Pro. Sessions record the actual model and reason; follow-ups retain that model.
 
 → [Read the bilingual public launch note: why every Pro consultation needs a way back](./LAUNCH.md)
 

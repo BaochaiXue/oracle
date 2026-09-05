@@ -11,7 +11,7 @@
 
 # Oracle / IndelibleVivi fork
 
-> 可恢复的 GPT-5.6 Pro 咨询：单会话，或声明式并行批次。
+> 可恢复的 GPT-6 Pro 咨询：单会话，或声明式并行批次。
 
 > **非官方 / unsupported automation boundary：** 这是独立维护的 source fork，不隶属于 OpenAI，也未获 OpenAI 认可、背书或授权。ChatGPT UI、账户策略与 platform terms 可能变化并影响 browser automation；本仓库不声称 OpenAI 授权或 terms compliance，使用者须自行判断适用条款与账户风险。
 
@@ -19,7 +19,7 @@
 
 Oracle 负责 prompt bundle、browser action、session truth、恢复和 follow-up lineage。人负责首次登录、真实账户挑战，以及 Batch Oracle 中需要明确记录的 owner decision。OpenCLI 保留为普通咨询的显式替代 transport，不会自动接管失败的 CDP 运行。
 
-`GPT-5.6 Pro` 是当前的人类可读目标。CLI 使用稳定别名 `gpt-5-pro`，并在提交标签页中选择和核验当前的 GPT-5.6 Sol + Pro 组合。
+`GPT-6 Pro` 是默认浏览器目标（CLI `gpt-5-pro`，也支持 `gpt-6-pro`）。只有发送前明确确认 GPT-6 或 Pro 档位不可用，才回退到 GPT-5.6 Sol Pro；实际模型和原因写入 session，后续追问保留该模型。
 
 → [阅读双语公开发布说明：为什么每一次 Pro consultation 都该有一条回来的路](./LAUNCH.md)
 

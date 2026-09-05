@@ -34,6 +34,8 @@ const OPENCLI_PRO_TARGET = "GPT-5.6 Pro";
 // Ordered array: most specific models first to ensure correct selection.
 // The browser label is passed to the model picker which fuzzy-matches against ChatGPT's UI.
 const BROWSER_MODEL_LABELS: [ModelName, string][] = [
+  ["gpt-6-pro", "GPT-6"],
+  ["gpt-6", "GPT-6"],
   // Most specific first (e.g., "gpt-5.2-thinking" before "gpt-5.2")
   ["gpt-5.6-sol", "GPT-5.6 Sol"],
   ["gpt-5.6", "GPT-5.6 Sol"],
@@ -45,7 +47,7 @@ const BROWSER_MODEL_LABELS: [ModelName, string][] = [
   ["gpt-5.2-instant", "GPT-5.2 Instant"],
   ["gpt-5.2-pro", "Pro"],
   ["gpt-5.1-pro", "Pro"],
-  ["gpt-5-pro", "GPT-5.6 Sol"],
+  ["gpt-5-pro", "GPT-6"],
   // Base models last (least specific)
   ["gpt-5.4", "Thinking 5.4"],
   ["gpt-5.2", "GPT-5.2"], // Selects "Auto" in ChatGPT UI
@@ -107,6 +109,8 @@ export function normalizeChatGptModelForBrowser(model: ModelName): ModelName {
   }
 
   if (
+    normalized === "gpt-6-pro" ||
+    normalized === "gpt-6" ||
     normalized === "gpt-5-pro" ||
     normalized === "gpt-5.6-sol" ||
     normalized === "gpt-5.6" ||
@@ -119,7 +123,7 @@ export function normalizeChatGptModelForBrowser(model: ModelName): ModelName {
   }
 
   // Versioned legacy Pro aliases remain pinned to the GPT-5.5 browser family.
-  // The unversioned gpt-5-pro alias above tracks the current GPT-5.6 Sol + Pro lane.
+  // The unversioned browser alias tracks GPT-6 + Pro; API IDs remain separate.
   if (
     normalized === "gpt-5.1-pro" ||
     normalized === "gpt-5.2-pro" ||
@@ -194,7 +198,9 @@ export async function buildBrowserConfig(
   const thinkingTime =
     normalizeThinkingTimeLevel(options.browserThinkingTime) ??
     (modelStrategy === "select" &&
-    (normalizedBrowserModel === "gpt-5-pro" || normalizedBrowserModel === "gpt-5.5-pro")
+    (normalizedBrowserModel === "gpt-6-pro" ||
+      normalizedBrowserModel === "gpt-5-pro" ||
+      normalizedBrowserModel === "gpt-5.5-pro")
       ? "pro"
       : undefined);
   const browserTimeoutFallbackMs =

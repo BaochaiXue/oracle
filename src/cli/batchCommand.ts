@@ -14,7 +14,7 @@ import { buildBatchStatusProjection } from "../batch/render.js";
 export function registerBatchCommand(program: Command): void {
   const batch = program
     .command("batch")
-    .description("Run recoverable parallel GPT-5.6 Pro consultation lanes and optional synthesis.");
+    .description("Run recoverable parallel GPT-6 Pro consultation lanes and optional synthesis.");
 
   batch
     .command("validate <manifest.json5>")

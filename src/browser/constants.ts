@@ -1,7 +1,7 @@
 import type { BrowserModelStrategy } from "./types.js";
 
 export const CHATGPT_URL = "https://chatgpt.com/";
-export const DEFAULT_MODEL_TARGET = "Pro";
+export const DEFAULT_MODEL_TARGET = "GPT-6";
 export const DEFAULT_MODEL_STRATEGY: BrowserModelStrategy = "select";
 export const DEFAULT_BROWSER_ATTACHMENT_TIMEOUT_MS = 3 * 60 * 1000;
 export const PRO_BROWSER_CAPTURE_ATTEMPT_TIMEOUT_MS = 60 * 60 * 1000;

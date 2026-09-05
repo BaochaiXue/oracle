@@ -11,6 +11,38 @@ const expectContains = (arr: string[], value: string) => {
   expect(arr).toContain(value);
 };
 
+it.each(["6 Pro", "6Pro", "6Extra High", "GPT-6", "GPT-6 Astra"])(
+  "recognizes observed GPT-6 label %s",
+  (label) => {
+    expect(() => assertResolvedModelSelectionForTest("GPT-6", label)).not.toThrow();
+    expect(evaluateImmediateModelSelectionExpression("GPT-6", label)).toMatchObject({
+      status: "already-selected",
+    });
+  },
+);
+
+it.each(["Latest", "Pro", "GPT-5.6 Sol", "GPT-5.6 Pro", "GPT-16", "GPT-6.1", "GPT-6 Luna"])(
+  "rejects %s as GPT-6 family proof",
+  (label) => {
+    expect(() => assertResolvedModelSelectionForTest("GPT-6", label)).toThrow(/requires GPT-6/);
+  },
+);
+
+it("verifies version 6 after navigating the Latest menu item", async () => {
+  expect(
+    await evaluateMenuModelSelectionExpression("GPT-6", { label: "Latest", selectedLabel: "6Pro" }),
+  ).toMatchObject({ status: "switched", label: "6Pro" });
+});
+
+it("selects GPT-6 from a model menu without mistaking GPT-5.6", async () => {
+  expect(
+    await evaluateMenuModelSelectionExpression("GPT-6", [
+      { label: "GPT-5.6 Sol", testId: "model-switcher-gpt-5-6" },
+      { label: "GPT-6", testId: "model-switcher-gpt-6" },
+    ]),
+  ).toMatchObject({ status: "switched", label: "GPT-6" });
+});
+
 const evaluateImmediateModelSelectionExpression = (
   targetModel: string,
   buttonLabel: string,
@@ -77,7 +109,9 @@ const evaluateImmediateModelSelectionExpression = (
 
 const evaluateMenuModelSelectionExpression = async (
   targetModel: string,
-  option: { label: string; testId?: string } | Array<{ label: string; testId?: string }>,
+  option:
+    | { label: string; testId?: string; selectedLabel?: string }
+    | Array<{ label: string; testId?: string; selectedLabel?: string }>,
   extraMenus: unknown[] = [],
 ): Promise<unknown> => {
   class FakeEventTarget {
@@ -143,7 +177,7 @@ const evaluateMenuModelSelectionExpression = async (
   const modelOptions = options.map(
     (item) =>
       new FakeElement(item.label, item.testId ? { "data-testid": item.testId } : {}, [], () => {
-        modelButton.textContent = item.label;
+        modelButton.textContent = item.selectedLabel ?? item.label;
       }),
   );
   const menu = new FakeElement(

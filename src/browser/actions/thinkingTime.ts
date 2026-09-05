@@ -7,6 +7,7 @@ import {
 } from "../constants.js";
 import { logDomFailure } from "../domDebug.js";
 import { buildClickDispatcher } from "./domEvents.js";
+import { BrowserAutomationError } from "../../oracle/errors.js";
 
 // Snapshot of the model-picker / thinking-effort subtree, captured at the moment
 // detection fails so a chip-not-found can be diagnosed without re-running with
@@ -95,7 +96,17 @@ export async function ensureThinkingTime(
       const message = `Thinking time: ${result.status.replaceAll("-", " ")}${kindHint} (requested ${capitalizedLevel})`;
       if (strictProEffort) {
         const target = level === "pro" ? "Pro" : "Pro Extended";
-        throw new Error(`${message}; refusing to submit without confirmed ${target}.`);
+        throw new BrowserAutomationError(
+          `${message}; refusing to submit without confirmed ${target}.`,
+          {
+            stage: "model-selection",
+            code:
+              result.status === "option-not-found"
+                ? "pro-effort-unavailable"
+                : "pro-effort-unverified",
+            promptSubmitted: false,
+          },
+        );
       }
       // "selection-unverified" is the one status here that already dispatched a
       // click, so the effort may or may not have moved. Every other status left
@@ -201,7 +212,8 @@ export function buildThinkingTimeExpression(
   const targetLevelLiteral = JSON.stringify(level.toLowerCase());
   const targetModelKindLiteral = JSON.stringify(inferThinkingTargetModelKind(desiredModel));
   const targetIsGpt56ModelLiteral = JSON.stringify(
-    /(?:^|[^0-9])5[._ -]6(?:[^0-9]|$)/i.test(desiredModel ?? ""),
+    /(?:^|[^0-9])5[._ -]6(?:[^0-9]|$)/i.test(desiredModel ?? "") ||
+      /^(?:GPT[- ]?)?6(?: Pro)?$/i.test(desiredModel ?? ""),
   );
 
   return `(async () => {

@@ -1,8 +1,8 @@
 {
   "name": "@steipete/oracle",
-  "version": "0.17.2",
+  "version": "0.18.0",
   "private": true,
-  "description": "CLI and MCP server for GPT-5.6 Pro through an isolated persistent Chrome profile and loopback CDP, with OpenCLI as an alternative transport.",
+  "description": "CLI and MCP server for GPT-6 Pro over isolated Chrome/CDP, with GPT-5.6 Sol Pro fallback before Send.",
   "keywords": [],
   "homepage": "https://github.com/IndelibleVivi/oracle#readme",
   "bugs": {

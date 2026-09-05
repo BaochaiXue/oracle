@@ -98,5 +98,8 @@ export function formatBrowserModelSelectionEvidence(
   const resolvedLabel = cleanLabel(evidence.resolvedLabel) ?? "(unavailable)";
   const strategy = evidence.strategy ?? "(default)";
   const verified = evidence.verified ? "yes" : "no";
-  return `requestedKey=${requestedKey}; target=${target}; resolvedLabel=${resolvedLabel}; status=${evidence.status}; strategy=${strategy}; verified=${verified}; source=${evidence.source}; capturedAt=${evidence.capturedAt}`;
+  const fallback = evidence.fallbackReason
+    ? `; fallback=${evidence.selectedModel}; reason=${evidence.fallbackReason}`
+    : "";
+  return `requestedKey=${requestedKey}; target=${target}; resolvedLabel=${resolvedLabel}; status=${evidence.status}; strategy=${strategy}; verified=${verified}; source=${evidence.source}; capturedAt=${evidence.capturedAt}${fallback}`;
 }

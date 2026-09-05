@@ -13,6 +13,27 @@ const baseMetadata: SessionMetadata = {
 };
 
 describe("browser follow-up resolution", () => {
+  test("pins follow-ups to the verified fallback model in the same conversation", async () => {
+    const metadata = {
+      ...baseMetadata,
+      mode: "browser",
+      model: "gpt-5-pro",
+      options: { browserConfig: { desiredModel: "GPT-6", thinkingTime: "pro" } },
+      browser: {
+        modelSelection: {
+          selectedModel: "GPT-5.6 Sol",
+          fallbackReason: "model-option-unavailable",
+          verified: true,
+        },
+        runtime: { conversationId: "same-thread" },
+      },
+    } as SessionMetadata;
+    const result = await resolveBrowserFollowupReference("session-1", {
+      readSession: async () => metadata,
+    });
+    expect(result?.resumeConversationUrl).toBe("https://chatgpt.com/c/same-thread");
+    expect(result?.browserConfig.desiredModel).toBe("GPT-5.6 Sol");
+  });
   test("derives a resume URL from conversationId", () => {
     const metadata: SessionMetadata = {
       ...baseMetadata,

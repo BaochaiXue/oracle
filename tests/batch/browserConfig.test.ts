@@ -9,7 +9,7 @@ describe("canonical Batch Oracle browser config", () => {
     expect(config).toEqual(
       expect.objectContaining({
         transport: "cdp",
-        desiredModel: "GPT-5.6 Sol",
+        desiredModel: "GPT-6",
         modelStrategy: "select",
         thinkingTime: "pro",
         maxConcurrentTabs: 3,

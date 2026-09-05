@@ -241,10 +241,7 @@ export async function runBrowserSessionExecution(
     modelStrategy: browserConfig.modelStrategy,
   });
   const headerLine = `Launching browser mode (${launchModel}) with ~${promptArtifacts.estimatedInputTokens.toLocaleString()} tokens.`;
-  const reviewTarget =
-    runOptions.model === "gpt-5-pro"
-      ? "GPT-5.6 Pro"
-      : (launchModel.match(/target=([^;]+)/u)?.[1]?.trim() ?? "ChatGPT");
+  let reviewTarget = launchModel.match(/target=([^;]+)/u)?.[1]?.trim() ?? "ChatGPT";
   let sentPhaseLogged = false;
   const logSentPhase = (): void => {
     if (sentPhaseLogged) return;
@@ -300,6 +297,11 @@ export async function runBrowserSessionExecution(
       outputPath: runOptions.outputPath,
       followUpPrompts: runOptions.browserFollowUps,
       runtimeHintCb: async (runtime, modelSelection) => {
+        if (modelSelection?.verified && modelSelection.resolvedLabel) {
+          reviewTarget = modelSelection.selectedModel
+            ? `${modelSelection.selectedModel} Pro`
+            : modelSelection.resolvedLabel;
+        }
         if (runtime.promptSubmitted === true) {
           logSentPhase();
         }

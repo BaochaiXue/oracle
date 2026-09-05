@@ -1,6 +1,6 @@
 ---
 title: Quickstart
-description: "From an isolated ChatGPT sign-in to a recoverable GPT-5.6 Pro consultation, API run, or local render."
+description: "From an isolated ChatGPT sign-in to a recoverable GPT-6 Pro consultation, API run, or local render."
 ---
 
 This guide gets one useful answer back without hiding the browser/account
@@ -142,7 +142,7 @@ The fork defaults to `transport:"cdp"`, `manualLogin:true`, `cookieSync:false`,
 and `browserLifetime:"while-needed"` even when these fields are omitted. Writing them explicitly
 is useful for a shared setup because it makes the capability boundary visible.
 
-## 5. Send a GPT-5.6 Pro consultation
+## 5. Send a GPT-6 Pro consultation
 
 Normal browser consultations dispatch directly:
 
@@ -166,14 +166,14 @@ oracle --dry-run summary --files-report --engine browser \
 ```
 
 The ordinary terminal output stays at the task level: `Preparing review…`,
-`Review sent.`, `Waiting for GPT-5.6 Pro…`, and `Review complete.` A bounded
+`Review sent.`, `Waiting for GPT-6 Pro…`, and `Review complete.` A bounded
 self-repair adds only `Repairing Oracle’s dedicated browser…`. If startup
 cannot become safe before Send, Oracle says that the review was not sent and
 does not describe it as a started consultation.
 
-`gpt-5-pro` maps to the current browser lane: model `GPT-5.6 Sol` plus
-reasoning tier `Pro`. Oracle verifies both controls in the submission tab and
-stores model-selection evidence with the session.
+`gpt-5-pro` maps to GPT-6 with reasoning tier `Pro`. Only confirmed unavailability
+before Send permits fallback to GPT-5.6 Sol Pro. Oracle verifies both controls
+and records the actual model with the session; follow-ups retain that model.
 
 A picker receipt is not server-routing proof. Oracle also records the elapsed
 time from dispatch to the first stable answer. Tiny workloads (at most 256

@@ -1,12 +1,12 @@
 ---
 name: oracle
-description: "Debate hard bugs, stuck investigations, designs, and refactors with ChatGPT GPT-5.6 Pro using real repository context. Challenge wrong or over-defensive answers and keep one same-task ChatGPT conversation until evidence-based consensus."
+description: "Debate hard bugs, stuck investigations, designs, and refactors with ChatGPT GPT-6 Pro using real repository context. Challenge wrong or over-defensive answers and keep one same-task ChatGPT conversation until evidence-based consensus."
 ---
 
 # Oracle (CLI) — best use
 
-Oracle bundles a prompt and selected files for a ChatGPT GPT-5.6 Pro
-second-model review with real repository context. GPT-5.6 Pro is multimodal:
+Oracle bundles a prompt and selected files for a ChatGPT GPT-6 Pro
+second-model review with real repository context. GPT-6 Pro is multimodal:
 plots, screenshots, and diagrams attached with `--file` are uploaded as native
 image attachments and read visually (see "Showing the model visual evidence").
 Oracle guarantees only the upload; whether ChatGPT interprets a video or the
@@ -18,7 +18,7 @@ verify them against the codebase and tests, and argue back in the same
 conversation when they are wrong or over-engineered (see "Arguing with the
 model").
 
-This fork reserves the canonical Oracle lane for ChatGPT GPT-5.6 Pro. Use
+This fork reserves the canonical Oracle lane for ChatGPT GPT-6 Pro. Use
 OpenCLI separately for incidental Gemini queries; Oracle never dispatches or
 falls back to Gemini.
 
@@ -58,66 +58,27 @@ the installed plugin or start a new agent context first.
      sent. Correct only the transport failure and retry the same task once.
    - An unknown submission state is indeterminate and must not be resent.
 
-## Main use case (browser, GPT-5.6)
+## Model policy (browser, version 0.18.0)
 
-Use browser mode with GPT-5.6 when the ChatGPT account exposes it. Base Sol and
-Sol Pro are two execution tiers of the same model row, not two model rows: base
-Sol tops out at the Extra High effort setting, while Pro is the top tier of the
-same Intelligence picker, reserved for difficult or long-running work. Without a
-`--browser-thinking-time` value, base aliases leave ChatGPT's current tier
-untouched, while the Pro alias `gpt-5-pro` defaults the tier to Pro.
+GPT-6 Pro is the default. GPT-5.6 Sol Pro is the only fallback, permitted
+only when the model picker explicitly reports GPT-6 or its Pro effort as
+unavailable before Send. The CLI verifies both the selected family and Pro
+effort, records the actual selected model and fallback reason, and never
+treats a generic selector failure as proof of model unavailability.
 
-This skill supports exactly one target: GPT-5.6 Sol Pro. GPT-5.5 and GPT-5.5
-Pro are no longer supported here. The CLI still parses their legacy aliases for
-compatibility, but this skill never issues them; a request that needs GPT-5.5
-is out of scope and must be reported as such rather than dispatched.
+- `gpt-5-pro`: moving browser alias, now GPT-6 with Pro effort.
+- `gpt-6-pro`: explicit browser alias for the same GPT-6-first policy.
+- `gpt-6`: GPT-6 family only; specify Pro effort for Pro work.
+- `gpt-5.6-sol --browser-thinking-time pro`: explicit fallback target.
+- `--browser-timeout` controls browser capture; `--timeout` is API-only.
+  Pro allows 60 minutes per attempt and one same-conversation reload.
+- Use `--browser-keep-browser`: close only terminal owned tabs, retaining
+  the shared Chrome process and active/recoverable work.
 
-Recommended defaults:
-
-- Engine: browser (`--engine browser`)
-- Browser transport: direct CDP (`--browser-transport cdp`)
-- Window: visible while needed and never activated for submission. Invoke the
-  canonical browser lane with `--browser-keep-browser` so the dedicated Chrome
-  process remains available across users and sessions. A terminal run closes
-  only its exact Oracle-owned tab; incomplete, foreign, and unowned meaningful
-  tabs remain open. macOS cold starts use LaunchServices background-open
-  semantics with Chrome's no-startup-window switch, new tabs use `focus:false`,
-  and page-side focus emulation supports trusted input without changing the
-  frontmost app
-- Base Sol: `--model gpt-5.6-sol`
-- Base Sol maximum reasoning: `--browser-thinking-time extra-high` (Extra High)
-- Explicit Pro effort: `--browser-thinking-time pro` (fails closed if Pro cannot
-  be confirmed). Pair it with `--model gpt-5-pro`, not with a non-Pro alias; see
-  "GPT-5.6 model selection" for why the alias changes run behavior.
-- API Pro maximum reasoning: `--model gpt-5.6-sol --reasoning-mode pro --reasoning-effort max`
-- Browser Pro capture: 60 minutes per bound-conversation attempt, with one
-  same-conversation reload and no resubmission, for a two-hour default ceiling
-- Attachments: directories/globs plus excludes; never attach secrets by default
-
-GPT-5.6 availability is account-dependent. Confirm the base Sol picker and
-retain model-selection evidence. A bare `Pro` picker label proves picker
-selection but does not, by itself, prove the server-side Pro generation. If the
-Pro target cannot be confirmed, fail closed; do not substitute another model.
-
-## GPT-5.6 model selection
-
-This version supports GPT-5.6 on both surfaces, but Pro selection differs:
-
-- `gpt-5.6`: follow the GPT-5.6 family default
-- `gpt-5.6-sol`: pin ChatGPT's `GPT-5.6 Sol` entry
-- Browser: `gpt-5-pro` is the stable CLI alias for the canonical lane. It selects
-  the `GPT-5.6 Sol` model row and then drives the `Pro` effort tier. There is no
-  separate `Pro` model row to select.
-- API: `--reasoning-mode pro` enables Pro execution on `gpt-5.6-sol`; pair it with `--reasoning-effort max` for maximum reasoning
-
-Use `--model gpt-5-pro` for every canonical browser consult. `--model
-gpt-5.6-sol` reaches the same ChatGPT model row, but the CLI does not classify
-it as a Pro-tier alias: it neither defaults the effort tier to Pro nor starts
-the run in a detached worker. Requesting Pro effort on a non-Pro alias leaves a
-capture of up to two hours attached to the foreground process, where any host
-timeout destroys it.
-
-For the canonical GPT-5.6 Pro browser lane, use:
+The current picker may name GPT-6 as `Latest`. That row is only a navigation
+entry: the composer must subsequently show version 6 (including `6Pro`) and
+the Pro effort must be verified. `Latest` or bare `Pro` alone is insufficient.
+There is no separate `Pro` model row to select.
 
 ```bash
 oracle --engine browser --browser-transport cdp --model gpt-5-pro \
@@ -128,31 +89,22 @@ oracle --engine browser --browser-transport cdp --model gpt-5-pro \
   -p "<task>" --file "src/**"
 ```
 
-For GPT-5.6 Sol Pro through the Responses API, use:
+A timeout, attachment error, authentication challenge, missing selector,
+unverified prompt identity, or any failure after Send is not a fallback
+trigger. Recover the original session without another submission. If the
+fallback cannot be verified either, fail closed; do not substitute another model.
 
-```bash
-oracle --engine api --model gpt-5.6-sol \
-  --reasoning-mode pro \
-  --reasoning-effort max \
-  -p "<task>" --file "src/**"
-```
+Keep the model already used by a continued conversation. Follow-ups inherit
+the parent's actual selected model, including GPT-5.6 Sol after fallback.
+Do not start a new conversation to upgrade an existing exchange to GPT-6.
 
-Do not use `--model "GPT-5.6 Sol Pro"`. Pro is intentionally handled as a
-browser effort tier and an API reasoning mode, never as a model slug. Browser
-label validation rejects unknown future variants such as `gpt-5.6-luna` instead
-of silently falling back to Sol; API runs preserve such provider model IDs
-unchanged.
+Pro browser work requests a detached worker; verify `lifecycle.detached`.
+The resolved Pro effort also enables detachment for explicit Sol fallback.
+Base aliases without Pro effort do not imply Pro work or detachment.
 
-Browser mode maps these aliases to ChatGPT's Sol picker. API and multi-model
-runs preserve the corresponding first-party OpenAI model IDs; provider-qualified
-and unrelated custom IDs remain pass-through values.
-
-The GPT-5.6 browser support depends on the unified Intelligence picker. It
-recognizes the current English and Chinese effort labels, avoids matching
-`高` inside `极高`, drives the current five-step Power slider through its ARIA
-position and keyboard-owning row when Pro is not a static menu option, and
-re-queries the composer pill after React replaces it so selection verification
-cannot rely on a detached stale node.
+This change is browser-scoped. API/provider defaults remain explicit and
+separate. OpenCLI retains its GPT-5.6 Pro adapter contract and is not used
+as an automatic transport fallback. GPT-5.5 is outside this skill's workflow.
 
 ## Golden path
 
@@ -164,7 +116,7 @@ cannot rely on a detached stale node.
 3. Run the browser consultation directly. Normal consults must not run
    dry-runs, smoke tests, live tests, doctor, or preflight validation unless a
    concrete bundle/runtime uncertainty makes that diagnostic material.
-4. Use browser mode, direct CDP, and the GPT-5.6 Pro target. Do not switch
+4. Use browser mode, direct CDP, and the GPT-6 Pro target. Do not switch
    model, tier, provider, or transport silently.
 5. If a run detaches or times out, reattach to the stored session instead of
    starting a duplicate. A host tool timeout is not a failed review; see
@@ -176,7 +128,7 @@ cannot rely on a detached stale node.
 
 ## Arguing with the model
 
-GPT-5.6 Pro is a strong reviewer, not an authority. The agent is expected to
+GPT-6 Pro is a strong reviewer, not an authority. The agent is expected to
 disagree with it, and to keep the disagreement inside one conversation until
 both sides converge.
 
@@ -273,7 +225,7 @@ the local commit changed.
 
 ## GitHub repository context (mandatory)
 
-Every GPT-5.6 Pro consultation about a project already published on GitHub MUST
+Every GPT-6 Pro consultation about a project already published on GitHub MUST
 actively instruct ChatGPT to open that repository through its connected GitHub
 app/connector. This is not optional and not a fallback: the connector is how the
 model reads commit history, issues, pull requests, and the files you chose not
@@ -522,14 +474,14 @@ A detached worker survives a tool timeout, not a restart of the agent harness:
 reloading Claude Code has been observed to kill the worker while the session
 stays `running` in `meta.json`. Do not resend. Run `oracle session <id> --live`;
 it reopens the saved conversation in the shared Chrome and tails it. While
-GPT-5.6 Pro is still working, ChatGPT shows a progress card and no Stop button
+GPT-6 Pro is still working, ChatGPT shows a progress card and no Stop button
 with the last message still being yours; that state is `running`, and the
 answer arrives as a new assistant message.
 
 Detachment is off in two cases: `ORACLE_NO_DETACH=1` in the environment, and
 remote execution through `--remote-host`. Never set the first for a Pro consult
-from an agent harness. Non-Pro aliases do not detach either. Do not request Pro
-effort on one and then leave it in the foreground.
+from an agent harness. Base aliases without resolved Pro effort do not detach. Verify the stored
+detached-worker receipt when explicitly using the Sol fallback.
 
 ## Commands
 
@@ -656,7 +608,7 @@ are essential to the question.
 
 ## Showing the model visual evidence
 
-GPT-5.6 Pro reads images. When the question is about a training curve, a
+GPT-6 Pro reads images. When the question is about a training curve, a
 distribution, a confusion matrix, an attention map, a UI rendering, a diagram,
 or anything else a human would judge by looking, attach the picture instead of
 transcribing numbers into prose. A plot carries the shape, the outliers, and
@@ -731,7 +683,7 @@ Images the model returns are downloaded as session artifacts; pass
 ## Engines and browser controls
 
 - The canonical skill invocation explicitly selects browser mode, direct CDP,
-  and GPT-5.6 Pro; it does not rely on engine auto-selection.
+  and GPT-6 Pro; it does not rely on engine auto-selection.
 - Browser mode in this fork supports ChatGPT GPT targets only. API-only models
   remain available only when the operator explicitly intends an API run.
 - API runs require explicit user consent because they may incur usage costs.
@@ -748,7 +700,7 @@ Images the model returns are downloaded as session artifacts; pass
 ## API preflight (operator-only CLI reference)
 
 This section is outside the skill's supported workflow: the skill dispatches
-only GPT-5.6 Sol Pro. It is kept as operator reference for deliberate API runs
+GPT-6 Pro with the stated GPT-5.6 Sol Pro fallback. This is operator reference for deliberate API runs
 and must not be read as permission to route an agent consult to another model.
 Before an API run, check provider readiness without printing secrets:
 

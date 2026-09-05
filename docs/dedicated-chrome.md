@@ -346,7 +346,7 @@ For a normal Pro consultation Oracle:
    Oracle-owned target, reloads that same target once and retries model
    verification; it never redirects an attached user-owned tab or creates a
    replacement target for this repair;
-6. verifies ChatGPT login, model `GPT-5.6 Sol`, and reasoning tier `Pro`;
+6. verifies ChatGPT login, GPT-6 and reasoning tier `Pro`; only confirmed model/effort unavailability before Send permits GPT-5.6 Sol Pro fallback;
 7. re-reads the visible composer and refuses to send if its exact contents were
    changed after Oracle populated it;
 8. records dispatch intent at the actual Send boundary while keeping
@@ -586,7 +586,7 @@ The automated suite covers:
 - dedicated-profile defaults and disabling personal cookie sync;
 - owner-only profile-root creation;
 - loopback debugging address on Oracle-launched Chrome;
-- current `gpt-5-pro` → `GPT-5.6 Sol` + `Pro` mapping;
+- current `gpt-5-pro` → GPT-6 + `Pro` mapping with explicit pre-Send GPT-5.6 Sol Pro fallback;
 - dispatch receipt persistence through session results and reconnect errors;
 - acceptance of fast tiny workloads and fail-closed rejection of fast
   substantive workloads;

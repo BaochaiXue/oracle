@@ -93,6 +93,9 @@ export async function resolveBrowserFollowupReference(
     model,
     browserConfig: {
       ...parentBrowserConfig,
+      ...(metadata.browser?.modelSelection?.selectedModel
+        ? { desiredModel: metadata.browser.modelSelection.selectedModel }
+        : {}),
       browserTabRef: null,
       resumeConversationUrl,
       researchMode: "off",

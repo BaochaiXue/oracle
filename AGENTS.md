@@ -7,8 +7,10 @@ or maintainer-only release instructions.
 
 ## Canonical product boundary
 
-- The ordinary canonical consultation lane is ChatGPT GPT-5.6 Pro through the
-  local dedicated Chrome for Testing profile and loopback direct CDP.
+- The ordinary canonical consultation lane is ChatGPT GPT-6 Pro through the
+  local dedicated Chrome for Testing profile and loopback direct CDP. GPT-5.6
+  Sol Pro is the sole fallback, only on verified model/effort unavailability
+  before Send. Preserve the actual model for same-conversation follow-ups.
 - OpenCLI is an explicit alternative transport for ordinary consultations. It
   is never an automatic fallback.
 - Batch Oracle v1 uses direct CDP only. It does not dispatch through API,

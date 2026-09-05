@@ -376,7 +376,7 @@ program.hook("preAction", async (thisCommand) => {
 program
   .name("oracle")
   .description(
-    "One-shot GPT-5.6 Pro browser / GPT-5.5 Pro API / multi-provider tool for hard questions that benefit from large file context.",
+    "GPT-6 Pro browser (GPT-5.6 Sol Pro fallback) / GPT-5.5 Pro API / multi-provider tool for hard questions that benefit from large file context.",
   )
   .version(VERSION)
   .argument("[prompt]", "Prompt text (shorthand for --prompt).")
@@ -435,7 +435,7 @@ program
   .option("-s, --slug <words>", "Custom session slug (3-5 words).")
   .option(
     "-m, --model <model>",
-    "Model to target (gpt-5.5-pro API default). In browser mode, gpt-5-pro is the stable alias for the effective GPT-5.6 Pro target: ChatGPT selects model GPT-5.6 Sol with reasoning tier Pro. GPT-5.6 aliases gpt-5.6 and gpt-5.6-sol work with the OpenAI API or ChatGPT browser. Browser mode also supports current GPT-5.5/GPT-5.4 targets; retired GPT-5.2 base/Instant/Thinking aliases are API-only. Other API targets include gpt-5.1-codex, gpt-5.2, gpt-5.2-instant, Claude, and custom model IDs.",
+    "Model to target (gpt-5.5-pro API default). In browser mode, gpt-5-pro defaults to GPT-6 Pro; gpt-6-pro is an explicit alias. Only verified pre-Send model/effort unavailability allows fallback to GPT-5.6 Sol Pro. Use gpt-5.6-sol with --browser-thinking-time pro to pin the fallback. GPT-5.6 aliases gpt-5.6 and gpt-5.6-sol work with the OpenAI API or ChatGPT browser. Browser mode also supports current GPT-5.5/GPT-5.4 targets; retired GPT-5.2 base/Instant/Thinking aliases are API-only. Other API targets include gpt-5.1-codex, gpt-5.2, gpt-5.2-instant, Claude, and custom model IDs.",
     normalizeModelOption,
   )
   .addOption(
@@ -2209,7 +2209,8 @@ async function runRootCommand(options: CliOptions): Promise<void> {
     ? Array.from(new Set(options.models!.map((entry) => resolveApiModel(entry))))
     : [];
   const cliModelArg =
-    normalizeModelOption(options.model) || (multiModelProvided ? "" : DEFAULT_MODEL);
+    normalizeModelOption(options.model) ||
+    (multiModelProvided ? "" : engine === "browser" ? "gpt-5-pro" : DEFAULT_MODEL);
   const resolvedModelCandidate: ModelName = multiModelProvided
     ? normalizedMultiModels[0]
     : engine === "browser"
